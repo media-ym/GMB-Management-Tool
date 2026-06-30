@@ -1,0 +1,52 @@
+"use client";
+
+import { useAppStore } from "@/lib/store";
+import { canAccessView } from "@/lib/permissions";
+import { DashboardView } from "@/components/views/dashboard-view";
+import { LocationsView } from "@/components/views/locations-view";
+import { ReviewsView } from "@/components/views/reviews-view";
+import { PostsView } from "@/components/views/posts-view";
+import { AnalyticsView } from "@/components/views/analytics-view";
+import { SeoView } from "@/components/views/seo-view";
+import { AiView } from "@/components/views/ai-view";
+import { NotificationsView } from "@/components/views/notifications-view";
+import { AuditView } from "@/components/views/audit-view";
+import { SettingsView } from "@/components/views/settings-view";
+import { useAppStore as useStore } from "@/lib/store";
+import { ShieldAlert } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+
+export function ViewRouter() {
+  const view = useAppStore((s) => s.view);
+  const user = useStore((s) => s.user);
+
+  if (user && !canAccessView(user.role, view)) {
+    return (
+      <div className="p-6 sm:p-8">
+        <Card>
+          <CardContent className="p-10 text-center">
+            <ShieldAlert className="size-12 mx-auto text-amber-500 mb-3" />
+            <h2 className="text-lg font-semibold">Access restricted</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Your role ({user.role.replace("_", " ")}) doesn't have permission to view this module.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  switch (view) {
+    case "dashboard": return <DashboardView />;
+    case "locations": return <LocationsView />;
+    case "reviews": return <ReviewsView />;
+    case "posts": return <PostsView />;
+    case "analytics": return <AnalyticsView />;
+    case "seo": return <SeoView />;
+    case "ai": return <AiView />;
+    case "notifications": return <NotificationsView />;
+    case "audit": return <AuditView />;
+    case "settings": return <SettingsView />;
+    default: return <DashboardView />;
+  }
+}

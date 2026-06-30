@@ -1,0 +1,264 @@
+// MyFNG Local AI Manager — Prisma Schema
+// Adapted from Supabase PostgreSQL spec to Prisma + SQLite (per environment).
+// All enums are stored as String (SQLite limitation) and validated in code.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// AUTH & USERS
+// ────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String
+  password           String // bcrypt hashed
+  role               String    @default("viewer") // super_admin | marketing_manager | branch_manager | customer_support | viewer
+  avatar             String?
+  phone              String?
+  assignedLocationIds String? // CSV of Location ids (used by branch_manager)
+  active             Boolean   @default(true)
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  reviews            Review[]  @relation("ReviewRepliedBy")
+  posts              Post[]    @relation("PostAuthor")
+  aiHistories        AIHistory[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// LOCATIONS (MyFNG branches across 15+ cities)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Location {
+  id               String    @id @default(cuid())
+  name             String // e.g. "MyFNG Mumbai"
+  city             String
+  region           String    @default("Maharashtra")
+  address          String
+  phone            String?
+  website          String?
+  googleLocationId String?   @unique
+  placeId          String?
+  latitude         Float?
+  longitude        Float?
+  status           String    @default("active") // active | paused | error
+  syncStatus       String    @default("pending") // synced | syncing | pending | error
+  lastSyncedAt     DateTime?
+  avgRating        Float     @default(0)
+  reviewCount      Int       @default(0)
+  healthScore      Int       @default(0) // 0-100
+  visibilityScore  Int       @default(0) // 0-100
+  categoriesJson   String? // JSON string of categories
+  servicesJson     String? // JSON string of services
+  hoursJson        String? // JSON string of business hours
+  attributesJson   String? // JSON string of attributes
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  reviews          Review[]
+  posts            Post[]
+  analytics        AnalyticDaily[]
+  keywords         Keyword[]
+  keywordRankings  KeywordRanking[]
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// REVIEWS & REPLIES
+// ────────────────────────────────────────────────────────────────────────────
+
+model Review {
+  id             String    @id @default(cuid())
+  locationId     String
+  googleReviewId String    @unique
+  authorName     String
+  authorPhoto    String?
+  rating         Int // 1-5
+  text           String
+  sentiment      String    @default("neutral") // positive | neutral | negative
+  replyText      String?
+  replyBy        String?
+  replySource    String? // manual | ai
+  replyStatus    String    @default("pending") // pending | replied | ignored
+  repliedAt      DateTime?
+  createdAt      DateTime
+  updatedAt      DateTime  @updatedAt
+
+  location       Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  user           User?     @relation("ReviewRepliedBy", fields: [replyBy], references: [id])
+
+  @@index([locationId])
+  @@index([replyStatus])
+  @@index([rating])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// GOOGLE POSTS
+// ────────────────────────────────────────────────────────────────────────────
+
+model Post {
+  id           String    @id @default(cuid())
+  locationId   String
+  type         String // whats_new | offer | event | update
+  title        String
+  content      String
+  ctaType      String? // book | order | sign_up | call | learn_more
+  ctaUrl       String?
+  startDate    DateTime?
+  endDate      DateTime?
+  status       String    @default("draft") // draft | scheduled | published | failed
+  source       String    @default("manual") // manual | ai
+  googlePostId String?
+  scheduledAt  DateTime?
+  publishedAt  DateTime?
+  authorId     String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  location     Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  author       User?     @relation("PostAuthor", fields: [authorId], references: [id])
+
+  @@index([locationId])
+  @@index([status])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// ANALYTICS (daily aggregates from Google Performance API)
+// ────────────────────────────────────────────────────────────────────────────
+
+model AnalyticDaily {
+  id                String   @id @default(cuid())
+  locationId        String
+  date              DateTime
+  searchViews       Int      @default(0)
+  mapsViews         Int      @default(0)
+  websiteClicks     Int      @default(0)
+  phoneCalls        Int      @default(0)
+  directionRequests Int      @default(0)
+
+  location          Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, date])
+  @@index([date])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// LOCAL SEO — KEYWORDS & GEO-GRID RANKINGS
+// ────────────────────────────────────────────────────────────────────────────
+
+model Keyword {
+  id         String   @id @default(cuid())
+  locationId String?
+  keyword    String
+  city       String?
+  status     String   @default("active")
+  createdAt  DateTime @default(now())
+
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  rankings   KeywordRanking[]
+
+  @@index([locationId])
+}
+
+model KeywordRanking {
+  id         String   @id @default(cuid())
+  keywordId  String
+  locationId String
+  lat        Float
+  lng        Float
+  rank       Int // 1-50; 0 = not ranked
+  checkedAt  DateTime @default(now())
+
+  keyword    Keyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([keywordId])
+  @@index([locationId])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// NOTIFICATIONS
+// ────────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String? // null = broadcast to all
+  type      String // review | sync | ai_alert | ranking | system | manual
+  title     String
+  message   String
+  severity  String   @default("info") // info | warning | critical | success
+  read      Boolean  @default(false)
+  link      String? // view + optional context
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, read])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// AUDIT LOGS (immutable)
+// ────────────────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  userId        String?
+  userName      String?
+  action        String // login | logout | review.reply | post.publish | settings.update | ai.generate | role.change | sync.run ...
+  entity        String?
+  entityId      String?
+  previousValue String? // JSON
+  newValue      String? // JSON
+  ip            String?
+  status        String   @default("success") // success | failed
+  createdAt     DateTime @default(now())
+
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// AI HISTORY (every AI request is logged for audit + cost tracking)
+// ────────────────────────────────────────────────────────────────────────────
+
+model AIHistory {
+  id         String   @id @default(cuid())
+  userId     String
+  promptType String // review_reply | post | seo | summary | description | faq | audit | chat
+  model      String   @default("glm-4.6")
+  input      String // JSON
+  output     String // JSON
+  tokens     Int      @default(0)
+  durationMs Int      @default(0)
+  status     String   @default("success") // success | failed
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([promptType])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SETTINGS (key/value store)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Setting {
+  id       String   @id @default(cuid())
+  key      String   @unique
+  value    String // JSON
+  updatedAt DateTime @updatedAt
+}
