@@ -1,0 +1,794 @@
+     1→"use client";
+     2→
+     3→import { useMemo, useState } from "react";
+     4→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+     5→import { api } from "@/lib/api-client";
+     6→import { useAppStore } from "@/lib/store";
+     7→import { useUser } from "@/lib/user-context";
+     8→import { useLocations } from "@/hooks/use-locations";
+     9→import { can } from "@/lib/permissions";
+    10→import { PageHeader } from "@/components/shared/page-header";
+    11→import { StatCard } from "@/components/shared/stat-card";
+    12→import { RatingStars, SentimentBadge } from "@/components/shared/badges";
+    13→import type { ReviewWithLocation } from "@/lib/types";
+    14→import { Button } from "@/components/ui/button";
+    15→import { Card, CardContent } from "@/components/ui/card";
+    16→import { Input } from "@/components/ui/input";
+    17→import { Skeleton } from "@/components/ui/skeleton";
+    18→import { Badge } from "@/components/ui/badge";
+    19→import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+    20→import { Textarea } from "@/components/ui/textarea";
+    21→import {
+    22→  Dialog,
+    23→  DialogContent,
+    24→  DialogHeader,
+    25→  DialogTitle,
+    26→  DialogDescription,
+    27→  DialogFooter,
+    28→  DialogClose,
+    29→} from "@/components/ui/dialog";
+    30→import {
+    31→  Select,
+    32→  SelectTrigger,
+    33→  SelectValue,
+    34→  SelectContent,
+    35→  SelectItem,
+    36→} from "@/components/ui/select";
+    37→import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    38→import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+    39→import {
+    40→  Star,
+    41→  RefreshCw,
+    42→  Search,
+    43→  Sparkles,
+    44→  Send,
+    45→  EyeOff,
+    46→  Inbox,
+    47→  Loader2,
+    48→  MessageSquare,
+    49→  CheckCircle2,
+    50→  Ban,
+    51→} from "lucide-react";
+    52→import { toast } from "sonner";
+    53→import { formatDistanceToNow } from "date-fns";
+    54→import { cn } from "@/lib/utils";
+    55→
+    56→type StatusFilter = "all" | "pending" | "replied" | "ignored";
+    57→type SentimentFilter = "all" | "positive" | "neutral" | "negative";
+    58→type RatingFilter = "all" | "5" | "4" | "3" | "low";
+    59→
+    60→const AVATAR_COLORS = [
+    61→  "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+    62→  "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+    63→  "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+    64→  "bg-rose-500/15 text-rose-700 dark:text-rose-300",
+    65→  "bg-slate-500/15 text-slate-700 dark:text-slate-300",
+    66→];
+    67→
+    68→function initials(name: string) {
+    69→  return (
+    70→    name
+    71→      .split(" ")
+    72→      .map((p) => p[0])
+    73→      .filter(Boolean)
+    74→      .slice(0, 2)
+    75→      .join("")
+    76→      .toUpperCase() || "?"
+    77→  );
+    78→}
+    79→
+    80→function colorFor(name: string) {
+    81→  let h = 0;
+    82→  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    83→  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+    84→}
+    85→
+    86→const MAX_REPLY = 4096;
+    87→
+    88→export function ReviewsView() {
+    89→  const user = useUser();
+    90→  const activeLocationId = useAppStore((s) => s.activeLocationId);
+    91→  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+    92→  const qc = useQueryClient();
+    93→
+    94→  const canReply = can(user.role, "reviews.reply");
+    95→  const canAiReply = can(user.role, "reviews.ai_reply");
+    96→
+    97→  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+    98→  const [sentimentFilter, setSentimentFilter] = useState<SentimentFilter>("all");
+    99→  const [ratingFilter, setRatingFilter] = useState<RatingFilter>("all");
+   100→  const [search, setSearch] = useState("");
+   101→
+   102→  // reply editor state
+   103→  const [editorOpen, setEditorOpen] = useState(false);
+   104→  const [activeReviewId, setActiveReviewId] = useState<string | null>(null);
+   105→  const [drafts, setDrafts] = useState<Record<string, string>>({});
+   106→  const [aiLoadingId, setAiLoadingId] = useState<string | null>(null);
+   107→  const [editorText, setEditorText] = useState("");
+   108→
+   109→  const { data: locations } = useLocations();
+   110→
+   111→  // Build reviews query URL from active filters
+   112→  const reviewsUrl = useMemo(() => {
+   113→    const params = new URLSearchParams();
+   114→    if (activeLocationId && activeLocationId !== "all")
+   115→      params.set("locationId", activeLocationId);
+   116→    if (statusFilter !== "all") params.set("status", statusFilter);
+   117→    if (sentimentFilter !== "all") params.set("sentiment", sentimentFilter);
+   118→    if (ratingFilter === "5") {
+   119→      params.set("minRating", "5");
+   120→      params.set("maxRating", "5");
+   121→    } else if (ratingFilter === "4") {
+   122→      params.set("minRating", "4");
+   123→      params.set("maxRating", "4");
+   124→    } else if (ratingFilter === "3") {
+   125→      params.set("minRating", "3");
+   126→      params.set("maxRating", "3");
+   127→    } else if (ratingFilter === "low") {
+   128→      params.set("minRating", "1");
+   129→      params.set("maxRating", "2");
+   130→    }
+   131→    params.set("limit", "200");
+   132→    return `/api/reviews?${params.toString()}`;
+   133→  }, [activeLocationId, statusFilter, sentimentFilter, ratingFilter]);
+   134→
+   135→  const { data: reviews, isLoading } = useQuery<ReviewWithLocation[]>({
+   136→    queryKey: ["reviews", reviewsUrl],
+   137→    queryFn: () => api<ReviewWithLocation[]>(reviewsUrl),
+   138→  });
+   139→
+   140→  // Client-side search across author / text / location
+   141→  const filtered = useMemo(() => {
+   142→    if (!reviews) return [];
+   143→    if (!search.trim()) return reviews;
+   144→    const q = search.toLowerCase();
+   145→    return reviews.filter(
+   146→      (r) =>
+   147→        r.authorName.toLowerCase().includes(q) ||
+   148→        r.text.toLowerCase().includes(q) ||
+   149→        r.locationName.toLowerCase().includes(q) ||
+   150→        r.locationCity.toLowerCase().includes(q),
+   151→    );
+   152→  }, [reviews, search]);
+   153→
+   154→  // Stats — computed from fetched set (pre-search) so card counts don't jitter while typing
+   155→  const stats = useMemo(() => {
+   156→    const list = reviews ?? [];
+   157→    const total = list.length;
+   158→    const pending = list.filter((r) => r.replyStatus === "pending").length;
+   159→    const negative = list.filter((r) => r.rating <= 2).length;
+   160→    const avg = total > 0 ? list.reduce((s, r) => s + r.rating, 0) / total : 0;
+   161→    return { total, pending, negative, avg };
+   162→  }, [reviews]);
+   163→
+   164→  // Mutations
+   165→  const aiDraftMut = useMutation({
+   166→    mutationFn: (id: string) =>
+   167→      api<{ reply: string }>(`/api/reviews/${id}/reply`),
+   168→  });
+   169→
+   170→  const publishMut = useMutation({
+   171→    mutationFn: ({ id, replyText }: { id: string; replyText: string }) =>
+   172→      api(`/api/reviews/${id}/reply`, {
+   173→        method: "POST",
+   174→        body: JSON.stringify({ replyText }),
+   175→      }),
+   176→    onSuccess: () => {
+   177→      qc.invalidateQueries({ queryKey: ["reviews"] });
+   178→      toast.success("Reply published to Google Business Profile");
+   179→      setEditorOpen(false);
+   180→    },
+   181→    onError: (e: unknown) => {
+   182→      const msg = e instanceof Error ? e.message : "Failed to publish reply";
+   183→      toast.error(msg);
+   184→    },
+   185→  });
+   186→
+   187→  const ignoreMut = useMutation({
+   188→    mutationFn: (id: string) =>
+   189→      api(`/api/reviews/${id}/reply`, {
+   190→        method: "PATCH",
+   191→        body: JSON.stringify({ action: "ignore" }),
+   192→      }),
+   193→    onSuccess: () => {
+   194→      qc.invalidateQueries({ queryKey: ["reviews"] });
+   195→      toast.success("Review marked as ignored");
+   196→    },
+   197→    onError: (e: unknown) => {
+   198→      const msg = e instanceof Error ? e.message : "Failed to ignore review";
+   199→      toast.error(msg);
+   200→    },
+   201→  });
+   202→
+   203→  async function handleSync() {
+   204→    try {
+   205→      toast.loading("Triggering Google sync…", { id: "sync-rev" });
+   206→      await api("/api/dashboard", { method: "POST", body: JSON.stringify({}) });
+   207→      qc.invalidateQueries();
+   208→      toast.success("Sync complete.", { id: "sync-rev" });
+   209→    } catch (e: unknown) {
+   210→      const msg = e instanceof Error ? e.message : "Sync failed";
+   211→      toast.error(msg, { id: "sync-rev" });
+   212→    }
+   213→  }
+   214→
+   215→  async function handleAiDraft(review: ReviewWithLocation) {
+   216→    setActiveReviewId(review.id);
+   217→    setAiLoadingId(review.id);
+   218→    try {
+   219→      const { reply } = await aiDraftMut.mutateAsync(review.id);
+   220→      setDrafts((d) => ({ ...d, [review.id]: reply }));
+   221→      setEditorText(reply);
+   222→      setEditorOpen(true);
+   223→      toast.success("MiSA AI draft ready");
+   224→    } catch (e: unknown) {
+   225→      const msg = e instanceof Error ? e.message : "AI draft failed";
+   226→      toast.error(msg);
+   227→    } finally {
+   228→      setAiLoadingId(null);
+   229→    }
+   230→  }
+   231→
+   232→  function handleOpenEditor(review: ReviewWithLocation) {
+   233→    setActiveReviewId(review.id);
+   234→    const existing = drafts[review.id] ?? review.replyText ?? "";
+   235→    setEditorText(existing);
+   236→    setEditorOpen(true);
+   237→  }
+   238→
+   239→  function handleSaveDraft() {
+   240→    if (!activeReviewId) return;
+   241→    setDrafts((d) => ({ ...d, [activeReviewId]: editorText }));
+   242→    setEditorOpen(false);
+   243→    toast.info("Draft saved locally");
+   244→  }
+   245→
+   246→  function handlePublish() {
+   247→    if (!activeReviewId) return;
+   248→    if (editorText.trim().length < 3) {
+   249→      toast.error("Reply must be at least 3 characters");
+   250→      return;
+   251→    }
+   252→    publishMut.mutate({ id: activeReviewId, replyText: editorText.trim() });
+   253→  }
+   254→
+   255→  function handleIgnore(id: string) {
+   256→    ignoreMut.mutate(id);
+   257→  }
+   258→
+   259→  const activeReview =
+   260→    reviews?.find((r) => r.id === activeReviewId) ?? null;
+   261→  const hasActiveFilters =
+   262→    statusFilter !== "all" ||
+   263→    sentimentFilter !== "all" ||
+   264→    ratingFilter !== "all" ||
+   265→    !!search.trim();
+   266→
+   267→  return (
+   268→    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
+   269→      <PageHeader
+   270→        title="Reviews"
+   271→        description="Sync, monitor & reply to Google Business Profile reviews"
+   272→        icon={Star}
+   273→        actions={
+   274→          <>
+   275→            <Select
+   276→              value={activeLocationId}
+   277→              onValueChange={(v) => setActiveLocationId(v as string | "all")}
+   278→            >
+   279→              <SelectTrigger size="sm" className="min-w-[180px]">
+   280→                <SelectValue placeholder="All locations" />
+   281→              </SelectTrigger>
+   282→              <SelectContent>
+   283→                <SelectItem value="all">All locations</SelectItem>
+   284→                {locations?.map((l) => (
+   285→                  <SelectItem key={l.id} value={l.id}>
+   286→                    {l.name} · {l.city}
+   287→                  </SelectItem>
+   288→                ))}
+   289→              </SelectContent>
+   290→            </Select>
+   291→            <Button size="sm" onClick={handleSync}>
+   292→              <RefreshCw className="size-3.5 mr-1.5" /> Sync
+   293→            </Button>
+   294→          </>
+   295→        }
+   296→      />
+   297→
+   298→      {/* Stat row */}
+   299→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+   300→        {isLoading ? (
+   301→          Array.from({ length: 4 }).map((_, i) => (
+   302→            <Skeleton key={i} className="h-28 rounded-xl" />
+   303→          ))
+   304→        ) : (
+   305→          <>
+   306→            <StatCard
+   307→              label="Total Reviews"
+   308→              value={stats.total}
+   309→              icon={Star}
+   310→              accent="emerald"
+   311→              hint="In current filter"
+   312→            />
+   313→            <StatCard
+   314→              label="Pending Reply"
+   315→              value={stats.pending}
+   316→              icon={MessageSquare}
+   317→              accent="amber"
+   318→              hint="Awaiting response"
+   319→            />
+   320→            <StatCard
+   321→              label="Avg Rating"
+   322→              value={stats.avg.toFixed(2)}
+   323→              icon={Star}
+   324→              accent="teal"
+   325→              hint="0–5 scale"
+   326→            />
+   327→            <StatCard
+   328→              label="Negative Reviews"
+   329→              value={stats.negative}
+   330→              icon={Ban}
+   331→              accent="rose"
+   332→              hint="Rating ≤ 2 stars"
+   333→            />
+   334→          </>
+   335→        )}
+   336→      </div>
+   337→
+   338→      {/* Filter bar */}
+   339→      <Card>
+   340→        <CardContent className="p-3 sm:p-4">
+   341→          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+   342→            <Tabs
+   343→              value={statusFilter}
+   344→              onValueChange={(v) => setStatusFilter(v as StatusFilter)}
+   345→            >
+   346→              <TabsList>
+   347→                <TabsTrigger value="all">All</TabsTrigger>
+   348→                <TabsTrigger value="pending">Pending</TabsTrigger>
+   349→                <TabsTrigger value="replied">Replied</TabsTrigger>
+   350→                <TabsTrigger value="ignored">Ignored</TabsTrigger>
+   351→              </TabsList>
+   352→            </Tabs>
+   353→
+   354→            <div className="flex flex-wrap items-center gap-2">
+   355→              <Select
+   356→                value={sentimentFilter}
+   357→                onValueChange={(v) =>
+   358→                  setSentimentFilter(v as SentimentFilter)
+   359→                }
+   360→              >
+   361→                <SelectTrigger size="sm" className="min-w-[140px]">
+   362→                  <SelectValue placeholder="Sentiment" />
+   363→                </SelectTrigger>
+   364→                <SelectContent>
+   365→                  <SelectItem value="all">All sentiment</SelectItem>
+   366→                  <SelectItem value="positive">Positive</SelectItem>
+   367→                  <SelectItem value="neutral">Neutral</SelectItem>
+   368→                  <SelectItem value="negative">Negative</SelectItem>
+   369→                </SelectContent>
+   370→              </Select>
+   371→
+   372→              <ToggleGroup
+   373→                type="single"
+   374→                value={ratingFilter}
+   375→                onValueChange={(v) =>
+   376→                  setRatingFilter((v as RatingFilter) || "all")
+   377→                }
+   378→                variant="outline"
+   379→                size="sm"
+   380→              >
+   381→                <ToggleGroupItem value="all" className="min-h-9 px-3">
+   382→                  All
+   383→                </ToggleGroupItem>
+   384→                <ToggleGroupItem value="5" className="min-h-9 px-3">
+   385→                  5★
+   386→                </ToggleGroupItem>
+   387→                <ToggleGroupItem value="4" className="min-h-9 px-3">
+   388→                  4★
+   389→                </ToggleGroupItem>
+   390→                <ToggleGroupItem value="3" className="min-h-9 px-3">
+   391→                  3★
+   392→                </ToggleGroupItem>
+   393→                <ToggleGroupItem
+   394→                  value="low"
+   395→                  className="min-h-9 px-3 text-rose-600 dark:text-rose-400"
+   396→                >
+   397→                  1–2★
+   398→                </ToggleGroupItem>
+   399→              </ToggleGroup>
+   400→
+   401→              <div className="relative">
+   402→                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+   403→                <Input
+   404→                  placeholder="Search reviews…"
+   405→                  value={search}
+   406→                  onChange={(e) => setSearch(e.target.value)}
+   407→                  className="pl-8 min-w-[180px] h-9"
+   408→                  aria-label="Search reviews by author, text, or location"
+   409→                />
+   410→              </div>
+   411→            </div>
+   412→          </div>
+   413→        </CardContent>
+   414→      </Card>
+   415→
+   416→      {/* Reviews list (independently scrollable) */}
+   417→      <div className="max-h-[calc(100vh-20rem)] overflow-y-auto scroll-area pr-1 -mr-1">
+   418→        {isLoading ? (
+   419→          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+   420→            {Array.from({ length: 6 }).map((_, i) => (
+   421→              <Skeleton key={i} className="h-56 rounded-xl" />
+   422→            ))}
+   423→          </div>
+   424→        ) : filtered.length === 0 ? (
+   425→          <EmptyState hasFilters={hasActiveFilters} />
+   426→        ) : (
+   427→          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+   428→            {filtered.map((r) => (
+   429→              <ReviewCard
+   430→                key={r.id}
+   431→                review={r}
+   432→                canReply={canReply}
+   433→                canAiReply={canAiReply}
+   434→                aiLoading={aiLoadingId === r.id}
+   435→                onAiDraft={() => handleAiDraft(r)}
+   436→                onReply={() => handleOpenEditor(r)}
+   437→                onIgnore={() => handleIgnore(r.id)}
+   438→                ignoring={
+   439→                  ignoreMut.isPending && ignoreMut.variables === r.id
+   440→                }
+   441→              />
+   442→            ))}
+   443→          </div>
+   444→        )}
+   445→      </div>
+   446→
+   447→      {/* Reply editor dialog */}
+   448→      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
+   449→        <DialogContent className="sm:max-w-2xl">
+   450→          <DialogHeader>
+   451→            <DialogTitle className="flex items-center gap-2">
+   452→              <MessageSquare className="size-5 text-primary" />
+   453→              Reply to review
+   454→            </DialogTitle>
+   455→            <DialogDescription>
+   456→              {activeReview ? (
+   457→                <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+   458→                  <span>
+   459→                    Replying to{" "}
+   460→                    <span className="font-medium text-foreground">
+   461→                      {activeReview.authorName}
+   462→                    </span>
+   463→                  </span>
+   464→                  <span className="inline-flex items-center gap-1">
+   465→                    · <RatingStars rating={activeReview.rating} size={12} />
+   466→                  </span>
+   467→                  {drafts[activeReview.id] && (
+   468→                    <Badge
+   469→                      variant="outline"
+   470→                      className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
+   471→                    >
+   472→                      <Sparkles className="size-3 mr-1" /> Draft
+   473→                    </Badge>
+   474→                  )}
+   475→                </span>
+   476→              ) : (
+   477→                "Compose your reply"
+   478→              )}
+   479→            </DialogDescription>
+   480→          </DialogHeader>
+   481→
+   482→          {activeReview && (
+   483→            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+   484→              <p className="text-muted-foreground italic line-clamp-4">
+   485→                &ldquo;{activeReview.text}&rdquo;
+   486→              </p>
+   487→            </div>
+   488→          )}
+   489→
+   490→          <div className="space-y-2">
+   491→            <Textarea
+   492→              value={editorText}
+   493→              onChange={(e) => setEditorText(e.target.value)}
+   494→              placeholder="Write a thoughtful, on-brand reply…"
+   495→              className="min-h-[140px] resize-y"
+   496→              maxLength={MAX_REPLY}
+   497→              aria-label="Reply text"
+   498→            />
+   499→            <div className="flex items-center justify-between text-xs text-muted-foreground">
+   500→              <span className="flex items-center gap-1.5">
+   501→                <Sparkles className="size-3 text-amber-500" />
+   502→                MiSA AI drafts are suggestions — review before publishing.
+   503→              </span>
+   504→              <span
+   505→                className={cn(
+   506→                  "tabular-nums",
+   507→                  editorText.length > MAX_REPLY && "text-rose-500",
+   508→                )}
+   509→              >
+   510→                {editorText.length} / {MAX_REPLY}
+   511→              </span>
+   512→            </div>
+   513→          </div>
+   514→
+   515→          <DialogFooter>
+   516→            <DialogClose asChild>
+   517→              <Button variant="outline">Cancel</Button>
+   518→            </DialogClose>
+   519→            <Button
+   520→              variant="secondary"
+   521→              onClick={handleSaveDraft}
+   522→              disabled={publishMut.isPending}
+   523→            >
+   524→              Save draft
+   525→            </Button>
+   526→            <Button
+   527→              onClick={handlePublish}
+   528→              disabled={
+   529→                publishMut.isPending || editorText.trim().length < 3
+   530→              }
+   531→            >
+   532→              {publishMut.isPending ? (
+   533→                <>
+   534→                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />{" "}
+   535→                  Publishing…
+   536→                </>
+   537→              ) : (
+   538→                <>
+   539→                  <Send className="size-3.5 mr-1.5" /> Publish to Google
+   540→                </>
+   541→              )}
+   542→            </Button>
+   543→          </DialogFooter>
+   544→        </DialogContent>
+   545→      </Dialog>
+   546→    </div>
+   547→  );
+   548→}
+   549→
+   550→// ---------- subcomponents ----------
+   551→
+   552→function ReviewCard({
+   553→  review,
+   554→  canReply,
+   555→  canAiReply,
+   556→  aiLoading,
+   557→  onAiDraft,
+   558→  onReply,
+   559→  onIgnore,
+   560→  ignoring,
+   561→}: {
+   562→  review: ReviewWithLocation;
+   563→  canReply: boolean;
+   564→  canAiReply: boolean;
+   565→  aiLoading: boolean;
+   566→  onReply: () => void;
+   567→  onAiDraft: () => void;
+   568→  onIgnore: () => void;
+   569→  ignoring: boolean;
+   570→}) {
+   571→  const [expanded, setExpanded] = useState(false);
+   572→  const isNegative = review.rating <= 2;
+   573→  const hasReply =
+   574→    !!review.replyText && review.replyStatus === "replied";
+   575→  const isLong = review.text.length > 180;
+   576→
+   577→  return (
+   578→    <Card
+   579→      className={cn(
+   580→        "p-0 overflow-hidden transition-shadow hover:shadow-md",
+   581→        isNegative && "border-l-4 border-l-rose-500",
+   582→      )}
+   583→    >
+   584→      <CardContent className="p-4 space-y-3">
+   585→        {/* header */}
+   586→        <div className="flex items-start gap-3">
+   587→          <Avatar className="size-10">
+   588→            {review.authorPhoto && (
+   589→              <AvatarImage src={review.authorPhoto} alt={review.authorName} />
+   590→            )}
+   591→            <AvatarFallback className={colorFor(review.authorName)}>
+   592→              {initials(review.authorName)}
+   593→            </AvatarFallback>
+   594→          </Avatar>
+   595→          <div className="min-w-0 flex-1">
+   596→            <div className="flex items-start justify-between gap-2">
+   597→              <div className="min-w-0">
+   598→                <div className="text-sm font-semibold truncate">
+   599→                  {review.authorName}
+   600→                </div>
+   601→                <div className="text-xs text-muted-foreground truncate">
+   602→                  {review.locationName} · {review.locationCity}
+   603→                </div>
+   604→              </div>
+   605→              <RatingStars rating={review.rating} size={16} />
+   606→            </div>
+   607→            <div className="text-[11px] text-muted-foreground mt-0.5">
+   608→              {formatDistanceToNow(new Date(review.createdAt), {
+   609→                addSuffix: true,
+   610→              })}
+   611→            </div>
+   612→          </div>
+   613→        </div>
+   614→
+   615→        {/* review text */}
+   616→        <div>
+   617→          <p
+   618→            className={cn(
+   619→              "text-sm leading-relaxed text-foreground/90 whitespace-pre-line",
+   620→              !expanded && "line-clamp-4",
+   621→            )}
+   622→          >
+   623→            {review.text}
+   624→          </p>
+   625→          {isLong && (
+   626→            <button
+   627→              type="button"
+   628→              onClick={() => setExpanded((e) => !e)}
+   629→              className="text-xs text-primary hover:underline mt-1"
+   630→            >
+   631→              {expanded ? "Show less" : "Show more"}
+   632→            </button>
+   633→          )}
+   634→        </div>
+   635→
+   636→        {/* tags */}
+   637→        <div className="flex flex-wrap items-center gap-2">
+   638→          <SentimentBadge sentiment={review.sentiment} />
+   639→          <ReplyStatusBadge
+   640→            status={review.replyStatus}
+   641→            source={review.replySource}
+   642→          />
+   643→        </div>
+   644→
+   645→        {/* existing reply */}
+   646→        {hasReply && review.replyText && (
+   647→          <div className="rounded-lg bg-muted/40 border border-muted p-3">
+   648→            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+   649→              <MessageSquare className="size-3.5 text-muted-foreground" />
+   650→              <span className="text-[11px] font-medium text-muted-foreground">
+   651→                {review.replySource === "ai"
+   652→                  ? "Replied by MiSA AI"
+   653→                  : "Replied manually"}
+   654→              </span>
+   655→              {review.replySource === "ai" && (
+   656→                <Badge
+   657→                  variant="outline"
+   658→                  className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
+   659→                >
+   660→                  <Sparkles className="size-2.5 mr-0.5" /> AI
+   661→                </Badge>
+   662→              )}
+   663→              {review.repliedAt && (
+   664→                <span className="text-[10px] text-muted-foreground ml-auto">
+   665→                  {formatDistanceToNow(new Date(review.repliedAt), {
+   666→                    addSuffix: true,
+   667→                  })}
+   668→                </span>
+   669→              )}
+   670→            </div>
+   671→            <p className="text-xs text-foreground/80 leading-relaxed line-clamp-3">
+   672→              {review.replyText}
+   673→            </p>
+   674→          </div>
+   675→        )}
+   676→
+   677→        {/* actions */}
+   678→        {canReply && (
+   679→          <div className="flex flex-wrap items-center gap-2 pt-1 border-t">
+   680→            {canAiReply && (
+   681→              <Button
+   682→                size="sm"
+   683→                variant="outline"
+   684→                onClick={onAiDraft}
+   685→                disabled={aiLoading}
+   686→                className="min-h-11 border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
+   687→              >
+   688→                {aiLoading ? (
+   689→                  <>
+   690→                    <Loader2 className="size-3.5 mr-1.5 animate-spin" /> MiSA
+   691→                    AI…
+   692→                  </>
+   693→                ) : (
+   694→                  <>
+   695→                    <Sparkles className="size-3.5 mr-1.5" /> MiSA AI draft
+   696→                  </>
+   697→                )}
+   698→              </Button>
+   699→            )}
+   700→            <Button
+   701→              size="sm"
+   702→              variant="outline"
+   703→              onClick={onReply}
+   704→              className="min-h-11"
+   705→            >
+   706→              <MessageSquare className="size-3.5 mr-1.5" />{" "}
+   707→              {hasReply ? "Edit reply" : "Reply"}
+   708→            </Button>
+   709→            {review.replyStatus !== "ignored" && (
+   710→              <Button
+   711→                size="sm"
+   712→                variant="ghost"
+   713→                onClick={onIgnore}
+   714→                disabled={ignoring}
+   715→                className="min-h-11 ml-auto text-muted-foreground hover:text-rose-600"
+   716→              >
+   717→                {ignoring ? (
+   718→                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+   719→                ) : (
+   720→                  <EyeOff className="size-3.5 mr-1.5" />
+   721→                )}
+   722→                Ignore
+   723→              </Button>
+   724→            )}
+   725→          </div>
+   726→        )}
+   727→      </CardContent>
+   728→    </Card>
+   729→  );
+   730→}
+   731→
+   732→function ReplyStatusBadge({
+   733→  status,
+   734→  source,
+   735→}: {
+   736→  status: ReviewWithLocation["replyStatus"];
+   737→  source: ReviewWithLocation["replySource"];
+   738→}) {
+   739→  if (status === "replied") {
+   740→    return (
+   741→      <Badge
+   742→        variant="outline"
+   743→        className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
+   744→      >
+   745→        <CheckCircle2 className="size-3 mr-1" />
+   746→        Replied
+   747→        {source === "ai"
+   748→          ? " · AI"
+   749→          : source === "manual"
+   750→            ? " · Manual"
+   751→            : ""}
+   752→      </Badge>
+   753→    );
+   754→  }
+   755→  if (status === "ignored") {
+   756→    return (
+   757→      <Badge
+   758→        variant="outline"
+   759→        className="bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20"
+   760→      >
+   761→        <EyeOff className="size-3 mr-1" /> Ignored
+   762→      </Badge>
+   763→    );
+   764→  }
+   765→  return (
+   766→    <Badge
+   767→      variant="outline"
+   768→      className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
+   769→    >
+   770→      <MessageSquare className="size-3 mr-1" /> Pending
+   771→    </Badge>
+   772→  );
+   773→}
+   774→
+   775→function EmptyState({ hasFilters }: { hasFilters: boolean }) {
+   776→  return (
+   777→    <Card>
+   778→      <CardContent className="p-12 text-center">
+   779→        <div className="mx-auto size-14 rounded-full bg-muted flex items-center justify-center mb-4">
+   780→          <Inbox className="size-7 text-muted-foreground" />
+   781→        </div>
+   782→        <h3 className="text-sm font-semibold">
+   783→          {hasFilters ? "No reviews match your filters" : "No reviews yet"}
+   784→        </h3>
+   785→        <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+   786→          {hasFilters
+   787→            ? "Try adjusting the status, sentiment, rating, or search filters to find what you're looking for."
+   788→            : "Reviews will appear here once they sync from Google Business Profile. Hit Sync to fetch the latest."}
+   789→        </p>
+   790→      </CardContent>
+   791→    </Card>
+   792→  );
+   793→}
+   794→

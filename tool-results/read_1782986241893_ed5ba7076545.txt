@@ -1,0 +1,1067 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { cn } from "@/lib/utils";
+     5→import { useQuery, useQueryClient } from "@tanstack/react-query";
+     6→import { api } from "@/lib/api-client";
+     7→import { useAppStore } from "@/lib/store";
+     8→import { useUser } from "@/lib/user-context";
+     9→import { can } from "@/lib/permissions";
+    10→import { useLocations } from "@/hooks/use-locations";
+    11→import { PageHeader } from "@/components/shared/page-header";
+    12→import { StatCard } from "@/components/shared/stat-card";
+    13→import { PostStatusBadge } from "@/components/shared/badges";
+    14→import { Button } from "@/components/ui/button";
+    15→import { Card, CardContent } from "@/components/ui/card";
+    16→import { Skeleton } from "@/components/ui/skeleton";
+    17→import { Badge } from "@/components/ui/badge";
+    18→import { Input } from "@/components/ui/input";
+    19→import { Label } from "@/components/ui/label";
+    20→import { Textarea } from "@/components/ui/textarea";
+    21→import {
+    22→  Tabs, TabsList, TabsTrigger,
+    23→} from "@/components/ui/tabs";
+    24→import {
+    25→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    26→} from "@/components/ui/select";
+    27→import {
+    28→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+    29→} from "@/components/ui/dialog";
+    30→import {
+    31→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    32→  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    33→} from "@/components/ui/alert-dialog";
+    34→import {
+    35→  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+    36→} from "@/components/ui/dropdown-menu";
+    37→import {
+    38→  Popover, PopoverContent, PopoverTrigger,
+    39→} from "@/components/ui/popover";
+    40→import { Calendar } from "@/components/ui/calendar";
+    41→import {
+    42→  FileText, Newspaper, Tag, CalendarDays, Info, Plus, MoreVertical,
+    43→  Send, CalendarClock, Pencil, Trash2, Sparkles, ArrowRight, CheckCircle2,
+    44→  Clock, Wand2, ExternalLink, MapPin, Loader2,
+    45→} from "lucide-react";
+    46→import { toast } from "sonner";
+    47→import { formatDistanceToNow, format, isToday, isTomorrow } from "date-fns";
+    48→import type { PostWithLocation, PostType } from "@/lib/types";
+    49→
+    50→/* ---------- Static metadata ---------- */
+    51→
+    52→type StatusFilter = "all" | "published" | "scheduled" | "draft";
+    53→type TypeFilter = "all" | PostType;
+    54→
+    55→interface TypeMeta {
+    56→  icon: React.ComponentType<{ className?: string }>;
+    57→  label: string;
+    58→  tint: string;
+    59→}
+    60→
+    61→const TYPE_META: Record<PostType, TypeMeta> = {
+    62→  whats_new: { icon: Newspaper,   label: "What's New", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+    63→  offer:     { icon: Tag,         label: "Offer",      tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    64→  event:     { icon: CalendarDays,label: "Event",      tint: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
+    65→  update:    { icon: Info,        label: "Update",     tint: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
+    66→};
+    67→
+    68→const CTA_OPTIONS = [
+    69→  { value: "book",       label: "Book" },
+    70→  { value: "order",      label: "Order" },
+    71→  { value: "sign_up",    label: "Sign up" },
+    72→  { value: "call",       label: "Call" },
+    73→  { value: "learn_more", label: "Learn more" },
+    74→] as const;
+    75→
+    76→const CTA_LABEL: Record<string, string> = {
+    77→  book: "Book",
+    78→  order: "Order",
+    79→  sign_up: "Sign up",
+    80→  call: "Call",
+    81→  learn_more: "Learn more",
+    82→};
+    83→
+    84→/* ---------- Helpers ---------- */
+    85→
+    86→function postTypeLabel(t: string): string {
+    87→  return TYPE_META[t as PostType]?.label ?? t;
+    88→}
+    89→
+    90→function postTypeMeta(t: string): TypeMeta {
+    91→  return TYPE_META[t as PostType] ?? TYPE_META.update;
+    92→}
+    93→
+    94→function relativeTime(iso: string | null): string | null {
+    95→  if (!iso) return null;
+    96→  try {
+    97→    return formatDistanceToNow(new Date(iso), { addSuffix: true });
+    98→  } catch {
+    99→    return null;
+   100→  }
+   101→}
+   102→
+   103→function scheduleLabel(iso: string | null): string {
+   104→  if (!iso) return "";
+   105→  try {
+   106→    const d = new Date(iso);
+   107→    if (isToday(d)) return `Today, ${format(d, "h:mm a")}`;
+   108→    if (isTomorrow(d)) return `Tomorrow, ${format(d, "h:mm a")}`;
+   109→    return format(d, "d MMM yyyy, h:mm a");
+   110→  } catch {
+   111→    return "";
+   112→  }
+   113→}
+   114→
+   115→/* ---------- Main view ---------- */
+   116→
+   117→export function PostsView() {
+   118→  const user = useUser();
+   119→  const activeLocationId = useAppStore((s) => s.activeLocationId);
+   120→  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+   121→  const qc = useQueryClient();
+   122→  const { data: locations } = useLocations();
+   123→
+   124→  const canManage = can(user.role, "posts.manage");
+   125→
+   126→  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
+   127→  const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
+   128→  const [editorOpen, setEditorOpen] = React.useState(false);
+   129→  const [editingPost, setEditingPost] = React.useState<PostWithLocation | null>(null);
+   130→  const [deletingPost, setDeletingPost] = React.useState<PostWithLocation | null>(null);
+   131→
+   132→  // Build query params
+   133→  const params = new URLSearchParams();
+   134→  if (activeLocationId && activeLocationId !== "all") params.set("locationId", activeLocationId);
+   135→  if (statusFilter !== "all") params.set("status", statusFilter);
+   136→  params.set("limit", "500");
+   137→
+   138→  const { data: posts, isLoading } = useQuery<PostWithLocation[]>({
+   139→    queryKey: ["posts", activeLocationId, statusFilter],
+   140→    queryFn: () => api<PostWithLocation[]>(`/api/posts?${params.toString()}`),
+   141→  });
+   142→
+   143→  const allPosts = posts ?? [];
+   144→
+   145→  // Compute stats from a fuller dataset when possible.
+   146→  // We re-fetch unfiltered counts only if user is filtering so the stat row reflects totals.
+   147→  const { data: allPostsData } = useQuery<PostWithLocation[]>({
+   148→    queryKey: ["posts", activeLocationId, "all"],
+   149→    queryFn: () => {
+   150→      const p = new URLSearchParams();
+   151→      if (activeLocationId && activeLocationId !== "all") p.set("locationId", activeLocationId);
+   152→      p.set("limit", "500");
+   153→      return api<PostWithLocation[]>(`/api/posts?${p.toString()}`);
+   154→    },
+   155→  });
+   156→  const statsSource = allPostsData ?? allPosts;
+   157→
+   158→  const stats = React.useMemo(() => {
+   159→    const published = statsSource.filter((p) => p.status === "published").length;
+   160→    const scheduled = statsSource.filter((p) => p.status === "scheduled").length;
+   161→    const drafts = statsSource.filter((p) => p.status === "draft").length;
+   162→    const aiGenerated = statsSource.filter((p) => p.source === "ai").length;
+   163→    return { published, scheduled, drafts, aiGenerated };
+   164→  }, [statsSource]);
+   165→
+   166→  const filtered = React.useMemo(() => {
+   167→    let list = allPosts;
+   168→    if (typeFilter !== "all") list = list.filter((p) => p.type === typeFilter);
+   169→    return list;
+   170→  }, [allPosts, typeFilter]);
+   171→
+   172→  function openCreate() {
+   173→    setEditingPost(null);
+   174→    setEditorOpen(true);
+   175→  }
+   176→  function openEdit(p: PostWithLocation) {
+   177→    setEditingPost(p);
+   178→    setEditorOpen(true);
+   179→  }
+   180→  function closeEditor() {
+   181→    setEditorOpen(false);
+   182→    setEditingPost(null);
+   183→  }
+   184→
+   185→  async function publishNow(p: PostWithLocation) {
+   186→    try {
+   187→      toast.loading("Publishing to Google…", { id: `pub-${p.id}` });
+   188→      await api(`/api/posts/${p.id}`, {
+   189→        method: "PATCH",
+   190→        body: JSON.stringify({ status: "published" }),
+   191→      });
+   192→      qc.invalidateQueries({ queryKey: ["posts"] });
+   193→      toast.success("Post published to Google Business Profile", { id: `pub-${p.id}` });
+   194→    } catch (e: any) {
+   195→      toast.error(e?.message || "Failed to publish", { id: `pub-${p.id}` });
+   196→    }
+   197→  }
+   198→
+   199→  async function deletePost(p: PostWithLocation) {
+   200→    try {
+   201→      toast.loading("Deleting post…", { id: `del-${p.id}` });
+   202→      await api(`/api/posts/${p.id}`, { method: "DELETE" });
+   203→      qc.invalidateQueries({ queryKey: ["posts"] });
+   204→      toast.success("Post deleted", { id: `del-${p.id}` });
+   205→      setDeletingPost(null);
+   206→    } catch (e: any) {
+   207→      toast.error(e?.message || "Failed to delete", { id: `del-${p.id}` });
+   208→    }
+   209→  }
+   210→
+   211→  function handleSaved() {
+   212→    qc.invalidateQueries({ queryKey: ["posts"] });
+   213→    closeEditor();
+   214→  }
+   215→
+   216→  return (
+   217→    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
+   218→      <PageHeader
+   219→        title="Google Posts"
+   220→        description="Create, schedule & publish posts to Google Business Profile"
+   221→        icon={FileText}
+   222→        actions={
+   223→          <>
+   224→            <Select value={activeLocationId} onValueChange={(v) => setActiveLocationId(v as any)}>
+   225→              <SelectTrigger size="sm" className="w-full sm:w-[200px]">
+   226→                <MapPin className="size-3.5 mr-1 text-muted-foreground" />
+   227→                <SelectValue placeholder="All locations" />
+   228→              </SelectTrigger>
+   229→              <SelectContent>
+   230→                <SelectItem value="all">All locations</SelectItem>
+   231→                {(locations ?? []).map((l) => (
+   232→                  <SelectItem key={l.id} value={l.id}>
+   233→                    {l.name} — {l.city}
+   234→                  </SelectItem>
+   235→                ))}
+   236→              </SelectContent>
+   237→            </Select>
+   238→            {canManage && (
+   239→              <Button size="sm" onClick={openCreate}>
+   240→                <Plus className="size-3.5 mr-1.5" /> New post
+   241→              </Button>
+   242→            )}
+   243→          </>
+   244→        }
+   245→      />
+   246→
+   247→      {/* Stat row */}
+   248→      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+   249→        {isLoading ? (
+   250→          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)
+   251→        ) : (
+   252→          <>
+   253→            <StatCard label="Published"    value={stats.published}   icon={CheckCircle2} accent="emerald" hint="Live on Google" />
+   254→            <StatCard label="Scheduled"    value={stats.scheduled}   icon={CalendarClock} accent="amber"   hint="Queued for later" />
+   255→            <StatCard label="Drafts"       value={stats.drafts}      icon={FileText}     accent="slate"   hint="Not yet published" />
+   256→            <StatCard label="AI-Generated" value={stats.aiGenerated} icon={Sparkles}     accent="amber"   hint="By MiSA AI" />
+   257→          </>
+   258→        )}
+   259→      </div>
+   260→
+   261→      {/* Filter bar */}
+   262→      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+   263→        <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+   264→          <TabsList>
+   265→            <TabsTrigger value="all">
+   266→              All
+   267→              {statsSource.length > 0 && (
+   268→                <span className="ml-1 text-[10px] text-muted-foreground tabular-nums">
+   269→                  {statsSource.length}
+   270→                </span>
+   271→              )}
+   272→            </TabsTrigger>
+   273→            <TabsTrigger value="published">Published</TabsTrigger>
+   274→            <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+   275→            <TabsTrigger value="draft">Drafts</TabsTrigger>
+   276→          </TabsList>
+   277→        </Tabs>
+   278→
+   279→        <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeFilter)}>
+   280→          <SelectTrigger size="sm" className="w-full sm:w-[180px]">
+   281→            <SelectValue placeholder="All types" />
+   282→          </SelectTrigger>
+   283→          <SelectContent>
+   284→            <SelectItem value="all">All types</SelectItem>
+   285→            <SelectItem value="whats_new">What's New</SelectItem>
+   286→            <SelectItem value="offer">Offer</SelectItem>
+   287→            <SelectItem value="event">Event</SelectItem>
+   288→            <SelectItem value="update">Update</SelectItem>
+   289→          </SelectContent>
+   290→        </Select>
+   291→      </div>
+   292→
+   293→      {/* Posts grid */}
+   294→      {isLoading ? (
+   295→        <PostsGridSkeleton />
+   296→      ) : filtered.length === 0 ? (
+   297→        <EmptyState canManage={canManage} onCreate={openCreate} />
+   298→      ) : (
+   299→        <div className="max-h-[calc(100vh-22rem)] overflow-y-auto scroll-area pr-0.5">
+   300→          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-2">
+   301→            {filtered.map((p) => (
+   302→              <PostCard
+   303→                key={p.id}
+   304→                post={p}
+   305→                canManage={canManage}
+   306→                onPublish={publishNow}
+   307→                onEdit={openEdit}
+   308→                onDelete={setDeletingPost}
+   309→              />
+   310→            ))}
+   311→          </div>
+   312→        </div>
+   313→      )}
+   314→
+   315→      {/* Editor dialog */}
+   316→      <PostEditorDialog
+   317→        open={editorOpen}
+   318→        onOpenChange={(o) => (o ? setEditorOpen(true) : closeEditor())}
+   319→        post={editingPost}
+   320→        locations={locations ?? []}
+   321→        defaultLocationId={activeLocationId !== "all" ? activeLocationId : undefined}
+   322→        onSaved={handleSaved}
+   323→      />
+   324→
+   325→      {/* Delete confirm */}
+   326→      <AlertDialog open={!!deletingPost} onOpenChange={(o) => !o && setDeletingPost(null)}>
+   327→        <AlertDialogContent>
+   328→          <AlertDialogHeader>
+   329→            <AlertDialogTitle>Delete this post?</AlertDialogTitle>
+   330→            <AlertDialogDescription>
+   331→              {deletingPost && (
+   332→                <>
+   333→                  This will permanently delete <span className="font-medium text-foreground">"{deletingPost.title}"</span>.
+   334→                  This action cannot be undone.
+   335→                </>
+   336→              )}
+   337→            </AlertDialogDescription>
+   338→          </AlertDialogHeader>
+   339→          <AlertDialogFooter>
+   340→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+   341→            <AlertDialogAction
+   342→              className="bg-destructive text-white hover:bg-destructive/90"
+   343→              onClick={() => deletingPost && deletePost(deletingPost)}
+   344→            >
+   345→              <Trash2 className="size-3.5 mr-1.5" /> Delete post
+   346→            </AlertDialogAction>
+   347→          </AlertDialogFooter>
+   348→        </AlertDialogContent>
+   349→      </AlertDialog>
+   350→    </div>
+   351→  );
+   352→}
+   353→
+   354→/* ---------- Post card ---------- */
+   355→
+   356→function PostCard({
+   357→  post, canManage, onPublish, onEdit, onDelete,
+   358→}: {
+   359→  post: PostWithLocation;
+   360→  canManage: boolean;
+   361→  onPublish: (p: PostWithLocation) => void;
+   362→  onEdit: (p: PostWithLocation) => void;
+   363→  onDelete: (p: PostWithLocation) => void;
+   364→}) {
+   365→  const meta = postTypeMeta(post.type);
+   366→  const Icon = meta.icon;
+   367→  const [scheduleOpen, setScheduleOpen] = React.useState(false);
+   368→  const [scheduleDate, setScheduleDate] = React.useState<Date | null>(
+   369→    post.scheduledAt ? new Date(post.scheduledAt) : null,
+   370→  );
+   371→  const [scheduling, setScheduling] = React.useState(false);
+   372→  const qc = useQueryClient();
+   373→
+   374→  const relPublished = relativeTime(post.publishedAt);
+   375→  const relScheduled = relativeTime(post.scheduledAt);
+   376→  const relCreated = relativeTime(post.createdAt);
+   377→
+   378→  async function applySchedule() {
+   379→    if (!scheduleDate) return;
+   380→    setScheduling(true);
+   381→    try {
+   382→      await api(`/api/posts/${post.id}`, {
+   383→        method: "PATCH",
+   384→        body: JSON.stringify({ status: "scheduled", scheduledAt: scheduleDate.toISOString() }),
+   385→      });
+   386→      qc.invalidateQueries({ queryKey: ["posts"] });
+   387→      toast.success(`Scheduled for ${scheduleLabel(scheduleDate.toISOString())}`);
+   388→      setScheduleOpen(false);
+   389→    } catch (e: any) {
+   390→      toast.error(e?.message || "Failed to schedule");
+   391→    } finally {
+   392→      setScheduling(false);
+   393→    }
+   394→  }
+   395→
+   396→  return (
+   397→    <Card className="group relative hover:shadow-md transition-shadow overflow-hidden">
+   398→      <CardContent className="p-4 space-y-3">
+   399→        {/* Header: type + actions */}
+   400→        <div className="flex items-start justify-between gap-2">
+   401→          <div className="flex items-center gap-2 min-w-0">
+   402→            <span className={cn("size-8 rounded-lg flex items-center justify-center shrink-0", meta.tint)}>
+   403→              <Icon className="size-4" />
+   404→            </span>
+   405→            <div className="min-w-0">
+   406→              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+   407→                {meta.label}
+   408→              </div>
+   409→              <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1">
+   410→                <MapPin className="size-2.5" />
+   411→                {post.locationName}
+   412→              </div>
+   413→            </div>
+   414→          </div>
+   415→
+   416→          {canManage && (
+   417→            <DropdownMenu>
+   418→              <DropdownMenuTrigger asChild>
+   419→                <Button variant="ghost" size="icon" className="size-7 -mt-1 -mr-1 opacity-60 group-hover:opacity-100 transition-opacity">
+   420→                  <MoreVertical className="size-4" />
+   421→                </Button>
+   422→              </DropdownMenuTrigger>
+   423→              <DropdownMenuContent align="end" className="w-44">
+   424→                {(post.status === "draft" || post.status === "scheduled" || post.status === "failed") && (
+   425→                  <DropdownMenuItem onClick={() => onPublish(post)}>
+   426→                    <Send className="size-3.5 mr-2 text-emerald-500" /> Publish now
+   427→                  </DropdownMenuItem>
+   428→                )}
+   429→                <DropdownMenuItem onClick={() => setScheduleOpen(true)}>
+   430→                  <CalendarClock className="size-3.5 mr-2 text-amber-500" /> Schedule…
+   431→                </DropdownMenuItem>
+   432→                <DropdownMenuItem onClick={() => onEdit(post)}>
+   433→                  <Pencil className="size-3.5 mr-2" /> Edit
+   434→                </DropdownMenuItem>
+   435→                <DropdownMenuSeparator />
+   436→                <DropdownMenuItem
+   437→                  className="text-rose-600 dark:text-rose-400 focus:text-rose-700"
+   438→                  onClick={() => onDelete(post)}
+   439→                >
+   440→                  <Trash2 className="size-3.5 mr-2" /> Delete
+   441→                </DropdownMenuItem>
+   442→              </DropdownMenuContent>
+   443→            </DropdownMenu>
+   444→          )}
+   445→        </div>
+   446→
+   447→        {/* Title */}
+   448→        <h3 className="font-semibold text-sm leading-snug line-clamp-1">{post.title || "Untitled post"}</h3>
+   449→
+   450→        {/* Content preview */}
+   451→        <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed">
+   452→          {post.content}
+   453→        </p>
+   454→
+   455→        {/* Status + AI badge */}
+   456→        <div className="flex items-center gap-1.5 flex-wrap">
+   457→          <PostStatusBadge status={post.status} />
+   458→          {post.source === "ai" && (
+   459→            <Badge
+   460→              variant="outline"
+   461→              className="text-[10px] py-0 px-1.5 gap-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-medium"
+   462→            >
+   463→              <Sparkles className="size-2.5" />
+   464→              MiSA AI
+   465→            </Badge>
+   466→          )}
+   467→          {post.ctaType && (
+   468→            <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-normal">
+   469→              <ArrowRight className="size-2.5 mr-0.5" />
+   470→              {CTA_LABEL[post.ctaType] ?? post.ctaType}
+   471→            </Badge>
+   472→          )}
+   473→        </div>
+   474→
+   475→        {/* Footer: time + CTA */}
+   476→        <div className="flex items-center justify-between gap-2 pt-2 border-t text-[10px] text-muted-foreground">
+   477→          <span className="inline-flex items-center gap-1 min-w-0 truncate">
+   478→            {post.status === "published" && relPublished ? (
+   479→              <>
+   480→                <CheckCircle2 className="size-2.5 text-emerald-500 shrink-0" />
+   481→                <span className="truncate">Published {relPublished}</span>
+   482→              </>
+   483→            ) : post.status === "scheduled" && relScheduled ? (
+   484→              <>
+   485→                <Clock className="size-2.5 text-amber-500 shrink-0" />
+   486→                <span className="truncate">Goes live {relScheduled}</span>
+   487→              </>
+   488→            ) : (
+   489→              <>
+   490→                <Clock className="size-2.5 shrink-0" />
+   491→                <span className="truncate">Created {relCreated}</span>
+   492→              </>
+   493→            )}
+   494→          </span>
+   495→          {post.ctaUrl && (
+   496→            <a
+   497→              href={post.ctaUrl}
+   498→              target="_blank"
+   499→              rel="noopener noreferrer"
+   500→              className="inline-flex items-center gap-0.5 text-primary hover:underline shrink-0"
+   501→              onClick={(e) => e.stopPropagation()}
+   502→            >
+   503→              <ExternalLink className="size-2.5" /> Link
+   504→            </a>
+   505→          )}
+   506→        </div>
+   507→      </CardContent>
+   508→
+   509→      {/* Schedule popover */}
+   510→      <Dialog open={scheduleOpen} onOpenChange={(o) => setScheduleOpen(o)}>
+   511→        <DialogContent className="sm:max-w-md">
+   512→          <DialogHeader>
+   513→            <DialogTitle>Schedule post</DialogTitle>
+   514→            <DialogDescription>
+   515→              Pick when this post should go live on Google Business Profile.
+   516→            </DialogDescription>
+   517→          </DialogHeader>
+   518→          <div className="flex flex-col items-center gap-3">
+   519→            <Popover>
+   520→              <PopoverTrigger asChild>
+   521→                <Button variant="outline" className="w-full justify-start text-left font-normal">
+   522→                  <CalendarClock className="size-4 mr-2 text-amber-500" />
+   523→                  {scheduleDate ? scheduleLabel(scheduleDate.toISOString()) : "Pick a date & time"}
+   524→                </Button>
+   525→              </PopoverTrigger>
+   526→              <PopoverContent className="w-auto p-0">
+   527→                <Calendar
+   528→                  mode="single"
+   529→                  selected={scheduleDate ?? undefined}
+   530→                  onSelect={(d) => d && setScheduleDate(d)}
+   531→                  disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+   532→                />
+   533→              </PopoverContent>
+   534→            </Popover>
+   535→            <Input
+   536→              type="time"
+   537→              value={scheduleDate ? format(scheduleDate, "HH:mm") : "10:00"}
+   538→              onChange={(e) => {
+   539→                const [h, m] = e.target.value.split(":").map(Number);
+   540→                const d = scheduleDate ? new Date(scheduleDate) : new Date();
+   541→                d.setHours(h, m, 0, 0);
+   542→                setScheduleDate(d);
+   543→              }}
+   544→            />
+   545→          </div>
+   546→          <DialogFooter>
+   547→            <Button variant="outline" onClick={() => setScheduleOpen(false)}>Cancel</Button>
+   548→            <Button onClick={applySchedule} disabled={!scheduleDate || scheduling}>
+   549→              {scheduling ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <CalendarClock className="size-3.5 mr-1.5" />}
+   550→              Schedule post
+   551→            </Button>
+   552→          </DialogFooter>
+   553→        </DialogContent>
+   554→      </Dialog>
+   555→    </Card>
+   556→  );
+   557→}
+   558→
+   559→/* ---------- Empty state ---------- */
+   560→
+   561→function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () => void }) {
+   562→  return (
+   563→    <Card>
+   564→      <CardContent className="p-12 flex flex-col items-center justify-center text-center">
+   565→        <div className="size-14 rounded-full bg-amber-500/10 flex items-center justify-center mb-4">
+   566→          <Sparkles className="size-7 text-amber-500" />
+   567→        </div>
+   568→        <h3 className="text-base font-semibold">No posts yet</h3>
+   569→        <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+   570→          Create your first post or let MiSA AI generate one. Posts help your locations stay
+   571→          visible and engage customers on Google Search & Maps.
+   572→        </p>
+   573→        {canManage && (
+   574→          <Button className="mt-4" size="sm" onClick={onCreate}>
+   575→            <Plus className="size-3.5 mr-1.5" /> New post
+   576→          </Button>
+   577→        )}
+   578→      </CardContent>
+   579→    </Card>
+   580→  );
+   581→}
+   582→
+   583→/* ---------- Skeleton ---------- */
+   584→
+   585→function PostsGridSkeleton() {
+   586→  return (
+   587→    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+   588→      {Array.from({ length: 6 }).map((_, i) => (
+   589→        <Card key={i}>
+   590→          <CardContent className="p-4 space-y-3">
+   591→            <div className="flex items-center gap-2">
+   592→              <Skeleton className="size-8 rounded-lg" />
+   593→              <div className="space-y-1.5 flex-1">
+   594→                <Skeleton className="h-2.5 w-16" />
+   595→                <Skeleton className="h-2 w-24" />
+   596→              </div>
+   597→            </div>
+   598→            <Skeleton className="h-4 w-3/4" />
+   599→            <Skeleton className="h-3 w-full" />
+   600→            <Skeleton className="h-3 w-full" />
+   601→            <Skeleton className="h-3 w-2/3" />
+   602→            <div className="flex gap-2 pt-2">
+   603→              <Skeleton className="h-5 w-16 rounded-full" />
+   604→              <Skeleton className="h-5 w-20 rounded-full" />
+   605→            </div>
+   606→          </CardContent>
+   607→        </Card>
+   608→      ))}
+   609→    </div>
+   610→  );
+   611→}
+   612→
+   613→/* ---------- Post editor dialog ---------- */
+   614→
+   615→type EditorStatus = "draft" | "scheduled" | "published";
+   616→
+   617→interface EditorState {
+   618→  locationId: string;
+   619→  type: PostType;
+   620→  title: string;
+   621→  content: string;
+   622→  ctaType: string;
+   623→  ctaUrl: string;
+   624→  status: EditorStatus;
+   625→  scheduledAt: Date | null;
+   626→  source: "manual" | "ai";
+   627→}
+   628→
+   629→function PostEditorDialog({
+   630→  open, onOpenChange, post, locations, defaultLocationId, onSaved,
+   631→}: {
+   632→  open: boolean;
+   633→  onOpenChange: (o: boolean) => void;
+   634→  post: PostWithLocation | null;
+   635→  locations: { id: string; name: string; city: string }[];
+   636→  defaultLocationId?: string;
+   637→  onSaved: () => void;
+   638→}) {
+   639→  const isEdit = !!post;
+   640→
+   641→  const [state, setState] = React.useState<EditorState>(() => ({
+   642→    locationId: post?.locationId ?? defaultLocationId ?? locations[0]?.id ?? "",
+   643→    type: post?.type ?? "whats_new",
+   644→    title: post?.title ?? "",
+   645→    content: post?.content ?? "",
+   646→    ctaType: post?.ctaType ?? "learn_more",
+   647→    ctaUrl: post?.ctaUrl ?? "",
+   648→    status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : "draft") as EditorStatus,
+   649→    scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : null,
+   650→    source: post?.source ?? "manual",
+   651→  }));
+   652→
+   653→  // Reset when opening
+   654→  React.useEffect(() => {
+   655→    if (open) {
+   656→      setState({
+   657→        locationId: post?.locationId ?? defaultLocationId ?? locations[0]?.id ?? "",
+   658→        type: post?.type ?? "whats_new",
+   659→        title: post?.title ?? "",
+   660→        content: post?.content ?? "",
+   661→        ctaType: post?.ctaType ?? "learn_more",
+   662→        ctaUrl: post?.ctaUrl ?? "",
+   663→        status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : "draft") as EditorStatus,
+   664→        scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : null,
+   665→        source: post?.source ?? "manual",
+   666→      });
+   667→    }
+   668→  }, [open, post, defaultLocationId, locations]);
+   669→
+   670→  const [aiTopic, setAiTopic] = React.useState("");
+   671→  const [aiLoading, setAiLoading] = React.useState(false);
+   672→  const [saving, setSaving] = React.useState(false);
+   673→
+   674→  const titleCount = state.title.length;
+   675→  const contentWords = state.content.trim() ? state.content.trim().split(/\s+/).length : 0;
+   676→
+   677→  function update<K extends keyof EditorState>(k: K, v: EditorState[K]) {
+   678→    setState((s) => ({ ...s, [k]: v }));
+   679→  }
+   680→
+   681→  async function generateWithAi() {
+   682→    if (!state.locationId) {
+   683→      toast.error("Pick a location first");
+   684→      return;
+   685→    }
+   686→    if (!aiTopic.trim()) {
+   687→      toast.error("Enter a topic for MiSA AI to write about");
+   688→      return;
+   689→    }
+   690→    setAiLoading(true);
+   691→    try {
+   692→      const gen = await api<{ title: string; content: string; ctaType: string }>(
+   693→        "/api/posts",
+   694→        {
+   695→          method: "POST",
+   696→          body: JSON.stringify({
+   697→            action: "ai_generate",
+   698→            locationId: state.locationId,
+   699→            type: state.type,
+   700→            topic: aiTopic.trim(),
+   701→          }),
+   702→        },
+   703→      );
+   704→      setState((s) => ({
+   705→        ...s,
+   706→        title: gen.title ?? s.title,
+   707→        content: gen.content ?? s.content,
+   708→        ctaType: gen.ctaType ?? s.ctaType,
+   709→        source: "ai",
+   710→      }));
+   711→      toast.success("MiSA AI drafted a post. Review & tweak before publishing.");
+   712→    } catch (e: any) {
+   713→      toast.error(e?.message || "MiSA AI generation failed");
+   714→    } finally {
+   715→      setAiLoading(false);
+   716→    }
+   717→  }
+   718→
+   719→  async function save() {
+   720→    if (!state.locationId) { toast.error("Select a location"); return; }
+   721→    if (!state.title.trim()) { toast.error("Title is required"); return; }
+   722→    if (!state.content.trim()) { toast.error("Content is required"); return; }
+   723→    if (state.status === "scheduled" && !state.scheduledAt) {
+   724→      toast.error("Pick a schedule date & time");
+   725→      return;
+   726→    }
+   727→
+   728→    setSaving(true);
+   729→    try {
+   730→      if (isEdit && post) {
+   731→        await api(`/api/posts/${post.id}`, {
+   732→          method: "PATCH",
+   733→          body: JSON.stringify({
+   734→            title: state.title,
+   735→            content: state.content,
+   736→            ctaType: state.ctaType || null,
+   737→            ctaUrl: state.ctaUrl || null,
+   738→            status: state.status,
+   739→            scheduledAt: state.status === "scheduled" ? state.scheduledAt?.toISOString() : null,
+   740→          }),
+   741→        });
+   742→        toast.success(state.status === "published" ? "Post published" : state.status === "scheduled" ? "Post scheduled" : "Post saved");
+   743→      } else {
+   744→        await api("/api/posts", {
+   745→          method: "POST",
+   746→          body: JSON.stringify({
+   747→            locationId: state.locationId,
+   748→            type: state.type,
+   749→            title: state.title,
+   750→            content: state.content,
+   751→            ctaType: state.ctaType || null,
+   752→            ctaUrl: state.ctaUrl || null,
+   753→            status: state.status,
+   754→            scheduledAt: state.status === "scheduled" ? state.scheduledAt?.toISOString() : null,
+   755→            source: state.source,
+   756→          }),
+   757→        });
+   758→        toast.success(state.status === "published" ? "Post published to Google Business Profile" : state.status === "scheduled" ? "Post scheduled" : "Draft saved");
+   759→      }
+   760→      onSaved();
+   761→    } catch (e: any) {
+   762→      toast.error(e?.message || "Failed to save post");
+   763→    } finally {
+   764→      setSaving(false);
+   765→    }
+   766→  }
+   767→
+   768→  const meta = postTypeMeta(state.type);
+   769→  const TypeIcon = meta.icon;
+   770→
+   771→  return (
+   772→    <Dialog open={open} onOpenChange={onOpenChange}>
+   773→      <DialogContent className="sm:max-w-5xl max-h-[calc(100vh-2rem)] overflow-y-auto scroll-area">
+   774→        <DialogHeader>
+   775→          <DialogTitle className="flex items-center gap-2">
+   776→            <FileText className="size-4 text-primary" />
+   777→            {isEdit ? "Edit post" : "Create post"}
+   778→          </DialogTitle>
+   779→          <DialogDescription>
+   780→            {isEdit
+   781→              ? "Update post content, CTA, or schedule."
+   782→              : "Write a new Google Business Profile post or let MiSA AI draft one for you."}
+   783→          </DialogDescription>
+   784→        </DialogHeader>
+   785→
+   786→        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+   787→          {/* Left: form */}
+   788→          <div className="space-y-4">
+   789→            {/* AI generator */}
+   790→            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+   791→              <div className="flex items-center gap-2">
+   792→                <Sparkles className="size-4 text-amber-500" />
+   793→                <span className="text-sm font-semibold">Generate with MiSA AI</span>
+   794→                <Badge variant="outline" className="ml-auto text-[10px] py-0 px-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+   795→                  AI
+   796→                </Badge>
+   797→              </div>
+   798→              <p className="text-xs text-muted-foreground">
+   799→                Tell MiSA the topic (e.g. "Monsoon modular kitchen offer") and we&apos;ll draft title, body & CTA.
+   800→              </p>
+   801→              <div className="flex flex-col sm:flex-row gap-2">
+   802→                <Input
+   803→                  placeholder="Topic, offer or event…"
+   804→                  value={aiTopic}
+   805→                  onChange={(e) => setAiTopic(e.target.value)}
+   806→                  onKeyDown={(e) => { if (e.key === "Enter" && !aiLoading) generateWithAi(); }}
+   807→                  className="flex-1"
+   808→                />
+   809→                <Button
+   810→                  type="button"
+   811→                  variant="outline"
+   812→                  onClick={generateWithAi}
+   813→                  disabled={aiLoading}
+   814→                  className="border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
+   815→                >
+   816→                  {aiLoading ? (
+   817→                    <><Loader2 className="size-3.5 mr-1.5 animate-spin" /> Generating…</>
+   818→                  ) : (
+   819→                    <><Wand2 className="size-3.5 mr-1.5" /> Generate</>
+   820→                  )}
+   821→                </Button>
+   822→              </div>
+   823→            </div>
+   824→
+   825→            {/* Location & type */}
+   826→            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+   827→              <div className="space-y-1.5">
+   828→                <Label className="text-xs">Location <span className="text-rose-500">*</span></Label>
+   829→                <Select value={state.locationId} onValueChange={(v) => update("locationId", v)}>
+   830→                  <SelectTrigger className="w-full">
+   831→                    <MapPin className="size-3.5 mr-1 text-muted-foreground" />
+   832→                    <SelectValue placeholder="Select location" />
+   833→                  </SelectTrigger>
+   834→                  <SelectContent>
+   835→                    {locations.map((l) => (
+   836→                      <SelectItem key={l.id} value={l.id}>{l.name} — {l.city}</SelectItem>
+   837→                    ))}
+   838→                  </SelectContent>
+   839→                </Select>
+   840→              </div>
+   841→              <div className="space-y-1.5">
+   842→                <Label className="text-xs">Post type <span className="text-rose-500">*</span></Label>
+   843→                <Select value={state.type} onValueChange={(v) => update("type", v as PostType)}>
+   844→                  <SelectTrigger className="w-full">
+   845→                    <SelectValue />
+   846→                  </SelectTrigger>
+   847→                  <SelectContent>
+   848→                    {Object.entries(TYPE_META).map(([k, m]) => (
+   849→                      <SelectItem key={k} value={k}>
+   850→                        <span className="inline-flex items-center gap-2">
+   851→                          <m.icon className="size-3.5" /> {m.label}
+   852→                        </span>
+   853→                      </SelectItem>
+   854→                    ))}
+   855→                  </SelectContent>
+   856→                </Select>
+   857→              </div>
+   858→            </div>
+   859→
+   860→            {/* Title */}
+   861→            <div className="space-y-1.5">
+   862→              <div className="flex items-center justify-between">
+   863→                <Label className="text-xs">Title <span className="text-rose-500">*</span></Label>
+   864→                <span className={cn("text-[10px] tabular-nums", titleCount > 60 ? "text-rose-500" : "text-muted-foreground")}>
+   865→                  {titleCount}/60
+   866→                </span>
+   867→              </div>
+   868→              <Input
+   869→                value={state.title}
+   870→                maxLength={80}
+   871→                onChange={(e) => update("title", e.target.value.slice(0, 60))}
+   872→                placeholder="e.g. Monsoon Sale — Up to 30% off modular kitchens"
+   873→              />
+   874→            </div>
+   875→
+   876→            {/* Content */}
+   877→            <div className="space-y-1.5">
+   878→              <div className="flex items-center justify-between">
+   879→                <Label className="text-xs">Content <span className="text-rose-500">*</span></Label>
+   880→                <span className="text-[10px] text-muted-foreground tabular-nums">
+   881→                  {contentWords} words · {state.content.length} chars
+   882→                </span>
+   883→              </div>
+   884→              <Textarea
+   885→                value={state.content}
+   886→                onChange={(e) => update("content", e.target.value)}
+   887→                rows={5}
+   888→                placeholder="Write 100–180 words. Mention the offer, time window & how to redeem…"
+   889→                className="resize-y min-h-[120px]"
+   890→              />
+   891→              <p className="text-[10px] text-muted-foreground">
+   892→                Suggested: 100–180 words for best engagement on Google.
+   893→              </p>
+   894→            </div>
+   895→
+   896→            {/* CTA */}
+   897→            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+   898→              <div className="space-y-1.5">
+   899→                <Label className="text-xs">Call-to-action</Label>
+   900→                <Select value={state.ctaType} onValueChange={(v) => update("ctaType", v)}>
+   901→                  <SelectTrigger className="w-full">
+   902→                    <SelectValue />
+   903→                  </SelectTrigger>
+   904→                  <SelectContent>
+   905→                    {CTA_OPTIONS.map((o) => (
+   906→                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+   907→                    ))}
+   908→                  </SelectContent>
+   909→                </Select>
+   910→              </div>
+   911→              <div className="space-y-1.5">
+   912→                <Label className="text-xs">CTA URL / Phone</Label>
+   913→                <Input
+   914→                  value={state.ctaUrl}
+   915→                  onChange={(e) => update("ctaUrl", e.target.value)}
+   916→                  placeholder={state.ctaType === "call" ? "+91 98765 43210" : "https://…"}
+   917→                />
+   918→              </div>
+   919→            </div>
+   920→
+   921→            {/* Status + schedule */}
+   922→            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+   923→              <div className="space-y-1.5">
+   924→                <Label className="text-xs">Status</Label>
+   925→                <Select value={state.status} onValueChange={(v) => update("status", v as EditorStatus)}>
+   926→                  <SelectTrigger className="w-full">
+   927→                    <SelectValue />
+   928→                  </SelectTrigger>
+   929→                  <SelectContent>
+   930→                    <SelectItem value="draft">Save as Draft</SelectItem>
+   931→                    <SelectItem value="scheduled">Schedule</SelectItem>
+   932→                    <SelectItem value="published">Publish now</SelectItem>
+   933→                  </SelectContent>
+   934→                </Select>
+   935→              </div>
+   936→              {state.status === "scheduled" && (
+   937→                <div className="space-y-1.5">
+   938→                  <Label className="text-xs">Schedule date & time</Label>
+   939→                  <Popover>
+   940→                    <PopoverTrigger asChild>
+   941→                      <Button variant="outline" className="w-full justify-start text-left font-normal">
+   942→                        <CalendarClock className="size-3.5 mr-1.5 text-amber-500" />
+   943→                        {state.scheduledAt ? scheduleLabel(state.scheduledAt.toISOString()) : "Pick date"}
+   944→                      </Button>
+   945→                    </PopoverTrigger>
+   946→                    <PopoverContent className="w-auto p-0">
+   947→                      <Calendar
+   948→                        mode="single"
+   949→                        selected={state.scheduledAt ?? undefined}
+   950→                        onSelect={(d) => {
+   951→                          if (!d) return;
+   952→                          const next = new Date(d);
+   953→                          if (state.scheduledAt) {
+   954→                            next.setHours(state.scheduledAt.getHours(), state.scheduledAt.getMinutes(), 0, 0);
+   955→                          } else {
+   956→                            next.setHours(10, 0, 0, 0);
+   957→                          }
+   958→                          update("scheduledAt", next);
+   959→                        }}
+   960→                        disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+   961→                      />
+   962→                      <div className="p-2 border-t">
+   963→                        <Input
+   964→                          type="time"
+   965→                          value={state.scheduledAt ? format(state.scheduledAt, "HH:mm") : "10:00"}
+   966→                          onChange={(e) => {
+   967→                            const [h, m] = e.target.value.split(":").map(Number);
+   968→                            const d = state.scheduledAt ? new Date(state.scheduledAt) : new Date();
+   969→                            d.setHours(h, m, 0, 0);
+   970→                            update("scheduledAt", d);
+   971→                          }}
+   972→                        />
+   973→                      </div>
+   974→                    </PopoverContent>
+   975→                  </Popover>
+   976→                </div>
+   977→              )}
+   978→            </div>
+   979→          </div>
+   980→
+   981→          {/* Right: preview */}
+   982→          <div className="space-y-3">
+   983→            <div className="flex items-center justify-between">
+   984→              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Preview</span>
+   985→              {state.source === "ai" && (
+   986→                <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+   987→                  <Sparkles className="size-2.5 mr-0.5" /> MiSA AI
+   988→                </Badge>
+   989→              )}
+   990→            </div>
+   991→            <Card className="overflow-hidden">
+   992→              <CardContent className="p-0">
+   993→                {/* Faux Google search card */}
+   994→                <div className="p-4 border-b bg-muted/30">
+   995→                  <div className="flex items-center gap-2">
+   996→                    <div className="size-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-semibold">
+   997→                      {state.locationId
+   998→                        ? (locations.find((l) => l.id === state.locationId)?.name?.[0] ?? "M")
+   999→                        : "M"}
+  1000→                    </div>
+  1001→                    <div className="min-w-0">
+  1002→                      <div className="text-xs font-semibold truncate">
+  1003→                        {locations.find((l) => l.id === state.locationId)?.name ?? "Select a location"}
+  1004→                      </div>
+  1005→                      <div className="text-[10px] text-muted-foreground truncate">
+  1006→                        {locations.find((l) => l.id === state.locationId)?.city ?? "—"}
+  1007→                      </div>
+  1008→                    </div>
+  1009→                  </div>
+  1010→                </div>
+  1011→                <div className="p-4 space-y-2">
+  1012→                  <div className="flex items-center gap-1.5">
+  1013→                    <span className={cn("size-5 rounded-md flex items-center justify-center", meta.tint)}>
+  1014→                      <TypeIcon className="size-3" />
+  1015→                    </span>
+  1016→                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+  1017→                      {meta.label}
+  1018→                    </span>
+  1019→                  </div>
+  1020→                  <h4 className="text-sm font-semibold leading-snug">
+  1021→                    {state.title || <span className="text-muted-foreground italic">Post title…</span>}
+  1022→                  </h4>
+  1023→                  <p className="text-xs text-muted-foreground line-clamp-6 leading-relaxed whitespace-pre-wrap">
+  1024→                    {state.content || <span className="italic">Your post content will appear here…</span>}
+  1025→                  </p>
+  1026→                  {state.ctaType && (
+  1027→                    <div className="pt-2">
+  1028→                      <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 text-primary px-2 py-1 text-xs font-medium">
+  1029→                        {CTA_LABEL[state.ctaType] ?? state.ctaType}
+  1030→                        <ArrowRight className="size-3" />
+  1031→                      </span>
+  1032→                    </div>
+  1033→                  )}
+  1034→                </div>
+  1035→              </CardContent>
+  1036→            </Card>
+  1037→
+  1038→            <div className="text-[10px] text-muted-foreground leading-relaxed">
+  1039→              This is a simulated preview of how your post will render on Google Search & Maps.
+  1040→              Final appearance may vary based on Google&apos;s display rules.
+  1041→            </div>
+  1042→          </div>
+  1043→        </div>
+  1044→
+  1045→        <DialogFooter className="border-t pt-4">
+  1046→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+  1047→            Cancel
+  1048→          </Button>
+  1049→          <Button onClick={save} disabled={saving}>
+  1050→            {saving ? (
+  1051→              <><Loader2 className="size-3.5 mr-1.5 animate-spin" /> Saving…</>
+  1052→            ) : state.status === "published" ? (
+  1053→              <><Send className="size-3.5 mr-1.5" /> Publish now</>
+  1054→            ) : state.status === "scheduled" ? (
+  1055→              <><CalendarClock className="size-3.5 mr-1.5" /> Schedule post</>
+  1056→            ) : (
+  1057→              <><FileText className="size-3.5 mr-1.5" /> Save draft</>
+  1058→            )}
+  1059→          </Button>
+  1060→        </DialogFooter>
+  1061→      </DialogContent>
+  1062→    </Dialog>
+  1063→  );
+  1064→}
+  1065→
+  1066→
+  1067→
