@@ -23,8 +23,12 @@ export type ViewKey =
   | "analytics"
   | "seo"
   | "ai"
+  | "media"
+  | "reports"
+  | "google"
   | "notifications"
   | "audit"
+  | "system"
   | "settings";
 
 export interface SessionUser {

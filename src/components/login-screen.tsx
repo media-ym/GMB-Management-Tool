@@ -22,7 +22,7 @@ const DEMO_ACCOUNTS = [
 export function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState("admin@myfng.in");
-  const [password, setPassword] = useState("myfng123");
+  const [password, setPassword] = useState("MyFNG@2025");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -40,9 +40,9 @@ export function LoginScreen() {
 
   async function quickLogin(acc: string) {
     setEmail(acc);
-    setPassword("myfng123");
+    setPassword("MyFNG@2025");
     setLoading(true);
-    const res = await signIn("credentials", { email: acc, password: "myfng123", redirect: false });
+    const res = await signIn("credentials", { email: acc, password: "MyFNG@2025", redirect: false });
     setLoading(false);
     if (res?.error) { toast.error("Login failed"); return; }
     toast.success("Signed in");
@@ -155,7 +155,7 @@ export function LoginScreen() {
                 </button>
               ))}
             </div>
-            <p className="text-center text-xs text-muted-foreground">All demo accounts use password <code className="font-mono bg-muted px-1.5 py-0.5 rounded">myfng123</code></p>
+            <p className="text-center text-xs text-muted-foreground">All demo accounts use password <code className="font-mono bg-muted px-1.5 py-0.5 rounded">MyFNG@2025</code></p>
           </div>
         </div>
       </div>

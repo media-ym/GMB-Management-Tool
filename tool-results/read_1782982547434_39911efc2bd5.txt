@@ -1,0 +1,692 @@
+     1→"use client";
+     2→
+     3→import { Fragment, useMemo, useState } from "react";
+     4→import { useQuery } from "@tanstack/react-query";
+     5→import { api } from "@/lib/api-client";
+     6→import { PageHeader } from "@/components/shared/page-header";
+     7→import { cn } from "@/lib/utils";
+     8→import { Button } from "@/components/ui/button";
+     9→import { Input } from "@/components/ui/input";
+    10→import { Badge } from "@/components/ui/badge";
+    11→import { Card, CardContent } from "@/components/ui/card";
+    12→import { Skeleton } from "@/components/ui/skeleton";
+    13→import {
+    14→  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+    15→} from "@/components/ui/table";
+    16→import {
+    17→  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator,
+    18→  SelectTrigger, SelectValue,
+    19→} from "@/components/ui/select";
+    20→import {
+    21→  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+    22→} from "@/components/ui/tooltip";
+    23→import {
+    24→  ScrollText, Search, Download, ChevronRight, ChevronDown,
+    25→  LogIn, LogOut, MessageSquareReply, EyeOff, FilePlus2, Send, FileEdit,
+    26→  Trash2, CalendarClock, Sparkles, RefreshCw, Settings, UserPlus, UserCog,
+    27→  ShieldCheck, ShieldAlert, Users, Activity, XCircle, CheckCircle2,
+    28→} from "lucide-react";
+    29→import { formatDistanceToNow, format } from "date-fns";
+    30→import { toast } from "sonner";
+    31→import type { AuditLogItem } from "@/lib/types";
+    32→
+    33→// ---- Category metadata ----------------------------------------------------
+    34→
+    35→type Category = "auth" | "review" | "post" | "ai" | "sync" | "settings" | "user";
+    36→
+    37→const CATEGORY_META: Record<Category, {
+    38→  label: string;
+    39→  badge: string; // tailwind classes for badge
+    40→  icon: React.ComponentType<{ className?: string }>;
+    41→}> = {
+    42→  auth: { label: "Auth", badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20", icon: LogIn },
+    43→  review: { label: "Review", badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20", icon: MessageSquareReply },
+    44→  post: { label: "Post", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20", icon: FileEdit },
+    45→  ai: { label: "AI", badge: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20", icon: Sparkles },
+    46→  sync: { label: "Sync", badge: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20", icon: RefreshCw },
+    47→  settings: { label: "Settings", badge: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20", icon: Settings },
+    48→  user: { label: "User", badge: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20", icon: UserCog },
+    49→};
+    50→
+    51→const ACTION_TO_CATEGORY: Record<string, Category> = {
+    52→  login: "auth",
+    53→  logout: "auth",
+    54→  "review.reply": "review",
+    55→  "review.ignore": "review",
+    56→  "post.create": "post",
+    57→  "post.publish": "post",
+    58→  "post.update": "post",
+    59→  "post.delete": "post",
+    60→  "post.scheduled": "post",
+    61→  "ai.generate": "ai",
+    62→  "sync.run": "sync",
+    63→  "settings.update": "settings",
+    64→  "user.create": "user",
+    65→  "user.update": "user",
+    66→};
+    67→
+    68→const ACTION_LABELS: Record<string, string> = {
+    69→  login: "Login",
+    70→  logout: "Logout",
+    71→  "review.reply": "Review Reply",
+    72→  "review.ignore": "Review Ignored",
+    73→  "post.create": "Post Created",
+    74→  "post.publish": "Post Published",
+    75→  "post.update": "Post Updated",
+    76→  "post.delete": "Post Deleted",
+    77→  "post.scheduled": "Post Scheduled",
+    78→  "ai.generate": "AI Generation",
+    79→  "sync.run": "Sync Run",
+    80→  "settings.update": "Settings Updated",
+    81→  "user.create": "User Created",
+    82→  "user.update": "User Updated",
+    83→};
+    84→
+    85→const ACTION_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+    86→  login: LogIn,
+    87→  logout: LogOut,
+    88→  "review.reply": MessageSquareReply,
+    89→  "review.ignore": EyeOff,
+    90→  "post.create": FilePlus2,
+    91→  "post.publish": Send,
+    92→  "post.update": FileEdit,
+    93→  "post.delete": Trash2,
+    94→  "post.scheduled": CalendarClock,
+    95→  "ai.generate": Sparkles,
+    96→  "sync.run": RefreshCw,
+    97→  "settings.update": Settings,
+    98→  "user.create": UserPlus,
+    99→  "user.update": UserCog,
+   100→};
+   101→
+   102→function categoryOf(action: string): Category {
+   103→  return ACTION_TO_CATEGORY[action] ?? "settings";
+   104→}
+   105→
+   106→function initials(name: string | null): string {
+   107→  if (!name) return "??";
+   108→  const parts = name.trim().split(/\s+/);
+   109→  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+   110→  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+   111→}
+   112→
+   113→// ---- Component ------------------------------------------------------------
+   114→
+   115→type StatusFilter = "all" | "success" | "failed";
+   116→
+   117→export function AuditView() {
+   118→  const [actionFilter, setActionFilter] = useState<string>("all");
+   119→  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+   120→  const [search, setSearch] = useState("");
+   121→  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+   122→  const [expandedId, setExpandedId] = useState<string | null>(null);
+   123→
+   124→  // Action filter is applied server-side (API supports it); status + search client-side.
+   125→  const { data, isLoading, isError, refetch } = useQuery<AuditLogItem[]>({
+   126→    queryKey: ["audit-logs", actionFilter],
+   127→    queryFn: () => {
+   128→      const qs = actionFilter !== "all" ? `?action=${encodeURIComponent(actionFilter)}&limit=500` : "?limit=500";
+   129→      return api<AuditLogItem[]>(`/api/audit-logs${qs}`);
+   130→    },
+   131→  });
+   132→
+   133→  const rows = useMemo(() => {
+   134→    if (!data) return [];
+   135→    const q = search.trim().toLowerCase();
+   136→    const filtered = data.filter((r) => {
+   137→      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+   138→      if (!q) return true;
+   139→      const hay = `${r.userName ?? ""} ${r.entity ?? ""} ${r.action} ${r.entityId ?? ""} ${r.ip ?? ""}`.toLowerCase();
+   140→      return hay.includes(q);
+   141→    });
+   142→    const sorted = [...filtered].sort((a, b) => {
+   143→      const ta = new Date(a.createdAt).getTime();
+   144→      const tb = new Date(b.createdAt).getTime();
+   145→      return sortDir === "desc" ? tb - ta : ta - tb;
+   146→    });
+   147→    return sorted;
+   148→  }, [data, statusFilter, search, sortDir]);
+   149→
+   150→  const stats = useMemo(() => {
+   151→    if (!data || data.length === 0) {
+   152→      return { total: 0, success: 0, failed: 0, successRate: 0, uniqueUsers: 0 };
+   153→    }
+   154→    const success = data.filter((d) => d.status === "success").length;
+   155→    const failed = data.filter((d) => d.status === "failed").length;
+   156→    const users = new Set(data.filter((d) => d.userName).map((d) => d.userName));
+   157→    return {
+   158→      total: data.length,
+   159→      success,
+   160→      failed,
+   161→      successRate: Math.round((success / data.length) * 100),
+   162→      uniqueUsers: users.size,
+   163→    };
+   164→  }, [data]);
+   165→
+   166→  function exportCsv() {
+   167→    try {
+   168→      const headers = ["Time (ISO)", "Time (Local)", "User", "Action", "Entity", "Entity ID", "Status", "IP", "Details"];
+   169→      const escape = (v: string | null | undefined) => {
+   170→        if (v == null) return "";
+   171→        const s = String(v);
+   172→        if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+   173→        return s;
+   174→      };
+   175→      const lines = [headers.join(",")];
+   176→      for (const r of rows) {
+   177→        lines.push([
+   178→          escape(r.createdAt),
+   179→          escape(format(new Date(r.createdAt), "yyyy-MM-dd HH:mm:ss")),
+   180→          escape(r.userName),
+   181→          escape(ACTION_LABELS[r.action] ?? r.action),
+   182→          escape(r.entity),
+   183→          escape(r.entityId),
+   184→          escape(r.status),
+   185→          escape(r.ip),
+   186→          escape(r.newValue),
+   187→        ].join(","));
+   188→      }
+   189→      const csv = lines.join("\n");
+   190→      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+   191→      const url = URL.createObjectURL(blob);
+   192→      const a = document.createElement("a");
+   193→      a.href = url;
+   194→      a.download = `audit-logs-${format(new Date(), "yyyyMMdd-HHmm")}.csv`;
+   195→      document.body.appendChild(a);
+   196→      a.click();
+   197→      document.body.removeChild(a);
+   198→      URL.revokeObjectURL(url);
+   199→      toast.success(`Exported ${rows.length} audit entries to CSV.`);
+   200→    } catch (e: any) {
+   201→      toast.error(e?.message || "CSV export failed.");
+   202→    }
+   203→  }
+   204→
+   205→  function toggleSort() {
+   206→    setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+   207→  }
+   208→
+   209→  return (
+   210→    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
+   211→      <PageHeader
+   212→        title="Audit Logs"
+   213→        description="Immutable record of all critical actions"
+   214→        icon={ScrollText}
+   215→        actions={
+   216→          <Button variant="outline" size="sm" onClick={exportCsv} disabled={!rows.length}>
+   217→            <Download className="size-3.5 mr-1.5" /> Export CSV
+   218→          </Button>
+   219→        }
+   220→      />
+   221→
+   222→      {/* Stats row */}
+   223→      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+   224→        {isLoading ? (
+   225→          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
+   226→        ) : (
+   227→          <>
+   228→            <StatMini
+   229→              icon={Activity}
+   230→              accent="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+   231→              label="Total Events"
+   232→              value={stats.total}
+   233→            />
+   234→            <StatMini
+   235→              icon={CheckCircle2}
+   236→              accent="bg-teal-500/10 text-teal-600 dark:text-teal-400"
+   237→              label="Success Rate"
+   238→              value={`${stats.successRate}%`}
+   239→              hint={`${stats.success} succeeded`}
+   240→            />
+   241→            <StatMini
+   242→              icon={XCircle}
+   243→              accent="bg-rose-500/10 text-rose-600 dark:text-rose-400"
+   244→              label="Failed Events"
+   245→              value={stats.failed}
+   246→            />
+   247→            <StatMini
+   248→              icon={Users}
+   249→              accent="bg-amber-500/10 text-amber-600 dark:text-amber-400"
+   250→              label="Unique Users"
+   251→              value={stats.uniqueUsers}
+   252→            />
+   253→          </>
+   254→        )}
+   255→      </div>
+   256→
+   257→      {/* Filter bar */}
+   258→      <Card>
+   259→        <CardContent className="p-4">
+   260→          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+   261→            <div className="flex flex-wrap items-center gap-3 flex-1">
+   262→              <Select value={actionFilter} onValueChange={setActionFilter}>
+   263→                <SelectTrigger className="w-[200px]" size="sm">
+   264→                  <SelectValue placeholder="All actions" />
+   265→                </SelectTrigger>
+   266→                <SelectContent>
+   267→                  <SelectItem value="all">All actions</SelectItem>
+   268→                  <SelectGroup>
+   269→                    <SelectLabel>Auth</SelectLabel>
+   270→                    <SelectItem value="login">Login</SelectItem>
+   271→                    <SelectItem value="logout">Logout</SelectItem>
+   272→                  </SelectGroup>
+   273→                  <SelectSeparator />
+   274→                  <SelectGroup>
+   275→                    <SelectLabel>Reviews</SelectLabel>
+   276→                    <SelectItem value="review.reply">Reply</SelectItem>
+   277→                    <SelectItem value="review.ignore">Ignore</SelectItem>
+   278→                  </SelectGroup>
+   279→                  <SelectSeparator />
+   280→                  <SelectGroup>
+   281→                    <SelectLabel>Posts</SelectLabel>
+   282→                    <SelectItem value="post.create">Create</SelectItem>
+   283→                    <SelectItem value="post.publish">Publish</SelectItem>
+   284→                    <SelectItem value="post.update">Update</SelectItem>
+   285→                    <SelectItem value="post.delete">Delete</SelectItem>
+   286→                    <SelectItem value="post.scheduled">Scheduled</SelectItem>
+   287→                  </SelectGroup>
+   288→                  <SelectSeparator />
+   289→                  <SelectGroup>
+   290→                    <SelectLabel>AI</SelectLabel>
+   291→                    <SelectItem value="ai.generate">Generate</SelectItem>
+   292→                  </SelectGroup>
+   293→                  <SelectSeparator />
+   294→                  <SelectGroup>
+   295→                    <SelectLabel>System</SelectLabel>
+   296→                    <SelectItem value="sync.run">Sync run</SelectItem>
+   297→                    <SelectItem value="settings.update">Settings update</SelectItem>
+   298→                    <SelectItem value="user.create">User create</SelectItem>
+   299→                    <SelectItem value="user.update">User update</SelectItem>
+   300→                  </SelectGroup>
+   301→                </SelectContent>
+   302→              </Select>
+   303→
+   304→              <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+   305→                <SelectTrigger className="w-[150px]" size="sm">
+   306→                  <SelectValue placeholder="All statuses" />
+   307→                </SelectTrigger>
+   308→                <SelectContent>
+   309→                  <SelectItem value="all">All statuses</SelectItem>
+   310→                  <SelectItem value="success">Success</SelectItem>
+   311→                  <SelectItem value="failed">Failed</SelectItem>
+   312→                </SelectContent>
+   313→              </Select>
+   314→
+   315→              <div className="relative flex-1 min-w-[200px]">
+   316→                <Search className="size-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+   317→                <Input
+   318→                  value={search}
+   319→                  onChange={(e) => setSearch(e.target.value)}
+   320→                  placeholder="Search user, entity, IP…"
+   321→                  className="pl-8 h-9"
+   322→                />
+   323→              </div>
+   324→            </div>
+   325→
+   326→            <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+   327→              <span className="inline-flex items-center gap-1">
+   328→                <span className="size-1.5 rounded-full bg-emerald-500" /> Success
+   329→              </span>
+   330→              <span className="inline-flex items-center gap-1">
+   331→                <span className="size-1.5 rounded-full bg-rose-500" /> Failed
+   332→              </span>
+   333→              {rows.length > 0 && (
+   334→                <Badge variant="outline" className="ml-1 tabular-nums">{rows.length} shown</Badge>
+   335→              )}
+   336→            </div>
+   337→          </div>
+   338→        </CardContent>
+   339→      </Card>
+   340→
+   341→      {/* Table / cards */}
+   342→      <Card className="overflow-hidden">
+   343→        <CardContent className="p-0">
+   344→          {isError ? (
+   345→            <div className="p-10 text-center">
+   346→              <ShieldAlert className="size-10 mx-auto text-rose-500 mb-3" />
+   347→              <p className="text-sm font-medium">Couldn&apos;t load audit logs.</p>
+   348→              <p className="text-xs text-muted-foreground mt-1">You may not have permission, or the server is unreachable.</p>
+   349→              <Button variant="outline" size="sm" className="mt-4" onClick={() => refetch()}>
+   350→                <RefreshCw className="size-3.5 mr-1.5" /> Retry
+   351→              </Button>
+   352→            </div>
+   353→          ) : isLoading ? (
+   354→            <TableSkeleton />
+   355→          ) : rows.length === 0 ? (
+   356→            <div className="p-10 text-center">
+   357→              <ScrollText className="size-10 mx-auto text-muted-foreground/50 mb-3" />
+   358→              <p className="text-sm font-medium">No audit entries match your filters.</p>
+   359→              <p className="text-xs text-muted-foreground mt-1">Try clearing the search or selecting “All actions”.</p>
+   360→              {(actionFilter !== "all" || statusFilter !== "all" || search) && (
+   361→                <Button
+   362→                  variant="outline"
+   363→                  size="sm"
+   364→                  className="mt-4"
+   365→                  onClick={() => {
+   366→                    setActionFilter("all");
+   367→                    setStatusFilter("all");
+   368→                    setSearch("");
+   369→                  }}
+   370→                >
+   371→                  Clear filters
+   372→                </Button>
+   373→              )}
+   374→            </div>
+   375→          ) : (
+   376→            <>
+   377→              {/* Desktop table */}
+   378→              <div className="hidden md:block">
+   379→                <div className="max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area">
+   380→                  <Table>
+   381→                    <TableHeader className="sticky top-0 z-10 bg-card">
+   382→                      <TableRow className="hover:bg-transparent">
+   383→                        <TableHead className="w-[160px]">
+   384→                          <button
+   385→                            onClick={toggleSort}
+   386→                            className="inline-flex items-center gap-1 font-medium hover:text-foreground"
+   387→                          >
+   388→                            Time
+   389→                            <ChevronDown
+   390→                              className={cn("size-3 transition-transform", sortDir === "asc" && "rotate-180")}
+   391→                            />
+   392→                          </button>
+   393→                        </TableHead>
+   394→                        <TableHead className="min-w-[140px]">User</TableHead>
+   395→                        <TableHead className="min-w-[150px]">Action</TableHead>
+   396→                        <TableHead className="min-w-[180px]">Entity</TableHead>
+   397→                        <TableHead className="w-[90px]">Status</TableHead>
+   398→                        <TableHead className="w-[120px]">IP</TableHead>
+   399→                        <TableHead className="w-[60px] text-right">Details</TableHead>
+   400→                      </TableRow>
+   401→                    </TableHeader>
+   402→                    <TableBody>
+   403→                      {rows.map((r) => {
+   404→                        const cat = categoryOf(r.action);
+   405→                        const meta = CATEGORY_META[cat];
+   406→                        const ActIcon = ACTION_ICON[r.action] ?? meta.icon;
+   407→                        const expanded = expandedId === r.id;
+   408→                        const hasDetails = !!r.newValue;
+   409→                        return (
+   410→                          <Fragment key={r.id}>
+   411→                            <TableRow
+   412→                              className={cn(
+   413→                                "min-h-[48px] cursor-pointer",
+   414→                                r.status === "failed" && "bg-rose-500/[0.04] hover:bg-rose-500/[0.07]",
+   415→                              )}
+   416→                              onClick={() => hasDetails && setExpandedId(expanded ? null : r.id)}
+   417→                            >
+   418→                              <TableCell className="py-2.5">
+   419→                                <TooltipProvider delayDuration={200}>
+   420→                                  <Tooltip>
+   421→                                    <TooltipTrigger asChild>
+   422→                                      <span className="text-xs text-muted-foreground whitespace-nowrap cursor-help">
+   423→                                        {formatDistanceToNow(new Date(r.createdAt), { addSuffix: true })}
+   424→                                      </span>
+   425→                                    </TooltipTrigger>
+   426→                                    <TooltipContent>
+   427→                                      {format(new Date(r.createdAt), "PPpp")}
+   428→                                    </TooltipContent>
+   429→                                  </Tooltip>
+   430→                                </TooltipProvider>
+   431→                              </TableCell>
+   432→                              <TableCell className="py-2.5">
+   433→                                <div className="flex items-center gap-2 min-w-0">
+   434→                                  <span className="size-6 rounded-full bg-primary/10 text-primary text-[10px] font-semibold flex items-center justify-center shrink-0">
+   435→                                    {initials(r.userName)}
+   436→                                  </span>
+   437→                                  <span className="text-xs font-medium truncate max-w-[120px]">
+   438→                                    {r.userName ?? "System"}
+   439→                                  </span>
+   440→                                </div>
+   441→                              </TableCell>
+   442→                              <TableCell className="py-2.5">
+   443→                                <Badge variant="outline" className={cn("gap-1 font-medium", meta.badge)}>
+   444→                                  <ActIcon className="size-3" />
+   445→                                  {ACTION_LABELS[r.action] ?? r.action}
+   446→                                </Badge>
+   447→                              </TableCell>
+   448→                              <TableCell className="py-2.5">
+   449→                                {r.entity ? (
+   450→                                  <div className="flex flex-col gap-0.5 min-w-0">
+   451→                                    <span className="text-xs font-medium truncate">{r.entity}</span>
+   452→                                    {r.entityId && (
+   453→                                      <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[160px]">
+   454→                                        {r.entityId}
+   455→                                      </span>
+   456→                                    )}
+   457→                                  </div>
+   458→                                ) : (
+   459→                                  <span className="text-xs text-muted-foreground">—</span>
+   460→                                )}
+   461→                              </TableCell>
+   462→                              <TableCell className="py-2.5">
+   463→                                {r.status === "success" ? (
+   464→                                  <span className="inline-flex items-center gap-1.5 text-xs">
+   465→                                    <span className="size-2 rounded-full bg-emerald-500" />
+   466→                                    <span className="text-muted-foreground">OK</span>
+   467→                                  </span>
+   468→                                ) : (
+   469→                                  <span className="inline-flex items-center gap-1.5 text-xs">
+   470→                                    <span className="size-2 rounded-full bg-rose-500" />
+   471→                                    <span className="text-rose-600 dark:text-rose-400 font-medium">Failed</span>
+   472→                                  </span>
+   473→                                )}
+   474→                              </TableCell>
+   475→                              <TableCell className="py-2.5">
+   476→                                {r.ip ? (
+   477→                                  <span className="font-mono text-xs">{r.ip}</span>
+   478→                                ) : (
+   479→                                  <span className="text-xs text-muted-foreground">—</span>
+   480→                                )}
+   481→                              </TableCell>
+   482→                              <TableCell className="py-2.5 text-right">
+   483→                                {hasDetails ? (
+   484→                                  <span className="inline-flex items-center justify-center size-6 rounded-md hover:bg-accent text-muted-foreground">
+   485→                                    <ChevronDown
+   486→                                      className={cn("size-4 transition-transform", expanded && "rotate-180")}
+   487→                                    />
+   488→                                  </span>
+   489→                                ) : (
+   490→                                  <span className="text-xs text-muted-foreground">—</span>
+   491→                                )}
+   492→                              </TableCell>
+   493→                            </TableRow>
+   494→                            {expanded && hasDetails && (
+   495→                              <TableRow className="bg-muted/30 hover:bg-muted/30">
+   496→                                <TableCell colSpan={7} className="p-4">
+   497→                                  <DetailsBlock value={r.newValue!} />
+   498→                                </TableCell>
+   499→                              </TableRow>
+   500→                            )}
+   501→                          </Fragment>
+   502→                        );
+   503→                      })}
+   504→                    </TableBody>
+   505→                  </Table>
+   506→                </div>
+   507→              </div>
+   508→
+   509→              {/* Mobile stacked cards */}
+   510→              <div className="md:hidden divide-y max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area">
+   511→                {rows.map((r) => {
+   512→                  const cat = categoryOf(r.action);
+   513→                  const meta = CATEGORY_META[cat];
+   514→                  const ActIcon = ACTION_ICON[r.action] ?? meta.icon;
+   515→                  const expanded = expandedId === r.id;
+   516→                  const hasDetails = !!r.newValue;
+   517→                  return (
+   518→                    <div
+   519→                      key={r.id}
+   520→                      className={cn(
+   521→                        "p-4 min-h-[48px]",
+   522→                        r.status === "failed" && "bg-rose-500/[0.04]",
+   523→                      )}
+   524→                    >
+   525→                      <div className="flex items-start justify-between gap-2">
+   526→                        <div className="flex items-center gap-2 min-w-0">
+   527→                          <span className="size-8 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+   528→                            {initials(r.userName)}
+   529→                          </span>
+   530→                          <div className="min-w-0">
+   531→                            <div className="text-sm font-medium truncate">{r.userName ?? "System"}</div>
+   532→                            <div className="text-[11px] text-muted-foreground">
+   533→                              {formatDistanceToNow(new Date(r.createdAt), { addSuffix: true })}
+   534→                            </div>
+   535→                          </div>
+   536→                        </div>
+   537→                        <span
+   538→                          className={cn(
+   539→                            "inline-flex items-center gap-1.5 text-[11px] font-medium shrink-0",
+   540→                            r.status === "success" ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+   541→                          )}
+   542→                        >
+   543→                          <span className={cn("size-2 rounded-full", r.status === "success" ? "bg-emerald-500" : "bg-rose-500")} />
+   544→                          {r.status === "success" ? "Success" : "Failed"}
+   545→                        </span>
+   546→                      </div>
+   547→
+   548→                      <div className="mt-3 flex flex-wrap items-center gap-2">
+   549→                        <Badge variant="outline" className={cn("gap-1 font-medium", meta.badge)}>
+   550→                          <ActIcon className="size-3" />
+   551→                          {ACTION_LABELS[r.action] ?? r.action}
+   552→                        </Badge>
+   553→                        {r.entity && (
+   554→                          <Badge variant="outline" className="text-[11px] font-normal">
+   555→                            {r.entity}
+   556→                          </Badge>
+   557→                        )}
+   558→                      </div>
+   559→
+   560→                      <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+   561→                        <div>
+   562→                          <div className="text-muted-foreground">Entity ID</div>
+   563→                          <div className="font-mono truncate">{r.entityId ?? "—"}</div>
+   564→                        </div>
+   565→                        <div>
+   566→                          <div className="text-muted-foreground">IP</div>
+   567→                          <div className="font-mono">{r.ip ?? "—"}</div>
+   568→                        </div>
+   569→                      </div>
+   570→                      <div className="mt-1 text-[10px] text-muted-foreground">
+   571→                        {format(new Date(r.createdAt), "PPpp")}
+   572→                      </div>
+   573→
+   574→                      {hasDetails && (
+   575→                        <button
+   576→                          className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary"
+   577→                          onClick={() => setExpandedId(expanded ? null : r.id)}
+   578→                        >
+   579→                          <ChevronRight className={cn("size-3.5 transition-transform", expanded && "rotate-90")} />
+   580→                          {expanded ? "Hide details" : "Show details"}
+   581→                        </button>
+   582→                      )}
+   583→                      {expanded && hasDetails && (
+   584→                        <div className="mt-2">
+   585→                          <DetailsBlock value={r.newValue!} />
+   586→                        </div>
+   587→                      )}
+   588→                    </div>
+   589→                  );
+   590→                })}
+   591→              </div>
+   592→            </>
+   593→          )}
+   594→        </CardContent>
+   595→      </Card>
+   596→    </div>
+   597→  );
+   598→}
+   599→
+   600→// ---- Sub-components -------------------------------------------------------
+   601→
+   602→function StatMini({
+   603→  icon: Icon, accent, label, value, hint,
+   604→}: {
+   605→  icon: React.ComponentType<{ className?: string }>;
+   606→  accent: string;
+   607→  label: string;
+   608→  value: string | number;
+   609→  hint?: string;
+   610→}) {
+   611→  return (
+   612→    <Card>
+   613→      <CardContent className="p-4 flex items-center gap-3">
+   614→        <div className={cn("size-9 rounded-lg flex items-center justify-center shrink-0", accent)}>
+   615→          <Icon className="size-4" />
+   616→        </div>
+   617→        <div className="min-w-0">
+   618→          <div className="text-xs text-muted-foreground">{label}</div>
+   619→          <div className="text-lg font-bold tabular-nums leading-tight">{value}</div>
+   620→          {hint && <div className="text-[10px] text-muted-foreground mt-0.5 truncate">{hint}</div>}
+   621→        </div>
+   622→      </CardContent>
+   623→    </Card>
+   624→  );
+   625→}
+   626→
+   627→function DetailsBlock({ value }: { value: string }) {
+   628→  let pretty = value;
+   629→  try {
+   630→    const parsed = JSON.parse(value);
+   631→    pretty = JSON.stringify(parsed, null, 2);
+   632→  } catch {
+   633→    // not JSON, show raw
+   634→  }
+   635→  return (
+   636→    <div className="rounded-lg border bg-background/60">
+   637→      <div className="px-3 py-2 border-b flex items-center gap-2">
+   638→        <ShieldCheck className="size-3.5 text-muted-foreground" />
+   639→        <span className="text-xs font-semibold">Change details</span>
+   640→      </div>
+   641→      <pre className="p-3 text-[11px] font-mono overflow-x-auto scroll-area max-h-64 whitespace-pre-wrap break-words">
+   642→        {pretty}
+   643→      </pre>
+   644→    </div>
+   645→  );
+   646→}
+   647→
+   648→function TableSkeleton() {
+   649→  return (
+   650→    <div className="max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area">
+   651→      <Table>
+   652→        <TableHeader className="sticky top-0 z-10 bg-card">
+   653→          <TableRow className="hover:bg-transparent">
+   654→            <TableHead className="w-[160px]">Time</TableHead>
+   655→            <TableHead className="min-w-[140px]">User</TableHead>
+   656→            <TableHead className="min-w-[150px]">Action</TableHead>
+   657→            <TableHead className="min-w-[180px]">Entity</TableHead>
+   658→            <TableHead className="w-[90px]">Status</TableHead>
+   659→            <TableHead className="w-[120px]">IP</TableHead>
+   660→            <TableHead className="w-[60px] text-right">Details</TableHead>
+   661→          </TableRow>
+   662→        </TableHeader>
+   663→        <TableBody>
+   664→          {Array.from({ length: 10 }).map((_, i) => (
+   665→            <TableRow key={i} className="min-h-[48px]">
+   666→              <TableCell className="py-3"><Skeleton className="h-3 w-24" /></TableCell>
+   667→              <TableCell className="py-3">
+   668→                <div className="flex items-center gap-2">
+   669→                  <Skeleton className="size-6 rounded-full" />
+   670→                  <Skeleton className="h-3 w-20" />
+   671→                </div>
+   672→              </TableCell>
+   673→              <TableCell className="py-3"><Skeleton className="h-5 w-24 rounded-full" /></TableCell>
+   674→              <TableCell className="py-3">
+   675→                <div className="space-y-1">
+   676→                  <Skeleton className="h-3 w-20" />
+   677→                  <Skeleton className="h-2 w-28" />
+   678→                </div>
+   679→              </TableCell>
+   680→              <TableCell className="py-3"><Skeleton className="h-3 w-12" /></TableCell>
+   681→              <TableCell className="py-3"><Skeleton className="h-3 w-20 font-mono" /></TableCell>
+   682→              <TableCell className="py-3 text-right"><Skeleton className="size-5 rounded-md ml-auto" /></TableCell>
+   683→            </TableRow>
+   684→          ))}
+   685→        </TableBody>
+   686→      </Table>
+   687→    </div>
+   688→  );
+   689→}
+   690→
+   691→export default AuditView;
+   692→

@@ -45,11 +45,14 @@ interface UserRow {
   email: string;
   name: string;
   role: Role;
-  active: boolean;
+  status: string; // active | invited | locked | suspended | inactive
   phone?: string | null;
   avatar?: string | null;
   assignedLocationIds: string[];
+  failedLoginAttempts?: number;
+  lockedUntil?: string | null;
   lastLoginAt: string | null;
+  lastLoginIp?: string | null;
   createdAt: string;
 }
 
@@ -213,17 +216,34 @@ function UsersTab() {
     setDialogOpen(true);
   }
 
-  async function toggleActive(u: UserRow) {
+  async function toggleStatus(u: UserRow) {
+    setTogglingId(u.id);
+    try {
+      const newStatus = u.status === "active" ? "inactive" : "active";
+      await api("/api/users", {
+        method: "PATCH",
+        body: JSON.stringify({ id: u.id, status: newStatus }),
+      });
+      qc.invalidateQueries({ queryKey: ["users"] });
+      toast.success(`${u.name} ${newStatus === "active" ? "activated" : "deactivated"}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update user");
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  async function unlockUser(u: UserRow) {
     setTogglingId(u.id);
     try {
       await api("/api/users", {
         method: "PATCH",
-        body: JSON.stringify({ id: u.id, active: !u.active }),
+        body: JSON.stringify({ id: u.id, status: "active" }),
       });
       qc.invalidateQueries({ queryKey: ["users"] });
-      toast.success(`${u.name} ${u.active ? "deactivated" : "activated"}`);
+      toast.success(`${u.name} unlocked`);
     } catch (e: any) {
-      toast.error(e?.message || "Failed to update user");
+      toast.error(e?.message || "Failed to unlock user");
     } finally {
       setTogglingId(null);
     }
@@ -274,7 +294,7 @@ function UsersTab() {
                   u={u}
                   locationMap={locationMap}
                   toggling={togglingId === u.id}
-                  onToggle={() => toggleActive(u)}
+                  onToggle={() => toggleStatus(u)}
                   onEdit={() => openEdit(u)}
                 />
               ))}
@@ -300,7 +320,7 @@ function UsersTab() {
               u={u}
               locationMap={locationMap}
               toggling={togglingId === u.id}
-              onToggle={() => toggleActive(u)}
+              onToggle={() => toggleStatus(u)}
               onEdit={() => openEdit(u)}
             />
           ))
@@ -374,8 +394,8 @@ function UserTableRow({
       </TableCell>
       <TableCell>
         <div className="flex items-center gap-2">
-          <Switch checked={u.active} onCheckedChange={onToggle} disabled={toggling} aria-label="Toggle active" />
-          {u.active ? (
+          <Switch checked={u.status === "active"} onCheckedChange={onToggle} disabled={toggling} aria-label="Toggle active" />
+          {u.status === "active" ? (
             <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Active</span>
           ) : (
             <span className="text-xs text-muted-foreground">Inactive</span>
@@ -433,8 +453,8 @@ function UserCard({
           <div>
             <div className="text-muted-foreground">Status</div>
             <div className="flex items-center gap-2 mt-1">
-              <Switch checked={u.active} onCheckedChange={onToggle} disabled={toggling} aria-label="Toggle active" />
-              {u.active ? (
+              <Switch checked={u.status === "active"} onCheckedChange={onToggle} disabled={toggling} aria-label="Toggle active" />
+              {u.status === "active" ? (
                 <span className="text-emerald-600 dark:text-emerald-400 font-medium">Active</span>
               ) : (
                 <span className="text-muted-foreground">Inactive</span>
@@ -587,7 +607,7 @@ function UserDialog({
       setRole(editing.role);
       setPassword("");
       setAssignedIds(editing.assignedLocationIds ?? []);
-      setActive(editing.active);
+      setActive(editing.status === "active");
     } else {
       setName("");
       setEmail("");

@@ -14,13 +14,13 @@ export default async function Home() {
     return <LoginScreen />;
   }
 
-  // Fetch full user record for assignedLocationIds + role
+  // Fetch full user record for assignedLocationIds + role + status
   const dbUser = await db.user.findUnique({
     where: { id: (session.user as any).id },
-    select: { id: true, email: true, name: true, role: true, avatar: true, assignedLocationIds: true, active: true },
+    select: { id: true, email: true, name: true, role: true, avatar: true, assignedLocationIds: true, status: true },
   });
 
-  if (!dbUser || !dbUser.active) {
+  if (!dbUser || dbUser.status !== "active") {
     const { LoginScreen } = await import("@/components/login-screen");
     return <LoginScreen />;
   }

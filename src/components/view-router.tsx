@@ -9,8 +9,12 @@ import { PostsView } from "@/components/views/posts-view";
 import { AnalyticsView } from "@/components/views/analytics-view";
 import { SeoView } from "@/components/views/seo-view";
 import { AiView } from "@/components/views/ai-view";
+import { MediaView } from "@/components/views/media-view";
+import { ReportsView } from "@/components/views/reports-view";
+import { GoogleIntegrationView } from "@/components/views/google-integration-view";
 import { NotificationsView } from "@/components/views/notifications-view";
 import { AuditView } from "@/components/views/audit-view";
+import { SystemView } from "@/components/views/system-view";
 import { SettingsView } from "@/components/views/settings-view";
 import { useAppStore as useStore } from "@/lib/store";
 import { ShieldAlert } from "lucide-react";
@@ -44,8 +48,12 @@ export function ViewRouter() {
     case "analytics": return <AnalyticsView />;
     case "seo": return <SeoView />;
     case "ai": return <AiView />;
+    case "media": return <MediaView />;
+    case "reports": return <ReportsView />;
+    case "google": return <GoogleIntegrationView />;
     case "notifications": return <NotificationsView />;
     case "audit": return <AuditView />;
+    case "system": return <SystemView />;
     case "settings": return <SettingsView />;
     default: return <DashboardView />;
   }

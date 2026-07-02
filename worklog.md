@@ -342,3 +342,243 @@ Stage Summary:
 - All 13 core modules from the spec are implemented: Auth+RBAC, Dashboard, Location Management, Google Business Profile integration (mocked sync), Review Management, AI Review Replies (MiSA AI), Google Posts (with AI generation), Local SEO & geo-grid ranking, Analytics & Reporting, AI Assistant (MiSA AI chat), Notifications, Audit Logs, System Administration.
 - AI features powered by z-ai-web-dev-sdk (glm-4.6) server-side, all logged to AIHistory + AuditLog.
 - Ready for the user's next batch of MD files (e.g. 03_Supabase_Database.md, UI specs, etc.).
+
+---
+Task ID: 4-schema-expansion
+Agent: main (orchestrator)
+Task: Expand Prisma schema from 11 → 49 models per 03_Supabase_Database spec (parts 1-3) + 04_Supabase_Setup, re-seed, add new API routes, update nav for 3 new modules.
+
+Work Log:
+- Read all 4 new MD files (03_Supabase_Database parts 1/2/3 + 04_Supabase_Setup). Spec defines ~52 PostgreSQL tables with RLS, RPC, views, materialized views, storage buckets, edge functions, cron jobs.
+- Expanded prisma/schema.prisma from 11 → 49 models (adapted to Prisma+SQLite):
+  * Auth: Role, Permission, RolePermission (normalized RBAC)
+  * Google: GoogleAccount, GoogleBusinessProfile, BusinessInformation, BusinessCategory, BusinessPhoto
+  * Business: Product, Service, BusinessAttribute, BusinessHour, SpecialHour
+  * Reviews: ReviewReply (separate draft→approved→published), ReviewLabel, ReviewReplyTemplate
+  * Media: MediaLibrary, StorageFile
+  * Analytics: AnalyticsMonthly, DashboardCache
+  * SEO: GeoGridResult, Competitor, CompetitorRanking, SeoAudit
+  * AI: AiJob, AiSuggestion, AiUsage
+  * Reports: Report
+  * Logs: ActivityLog, SyncLog, ApiLog, ErrorLog
+  * Ops: BackgroundJob, ScheduledJob, Webhook
+  * Security: ApiToken
+  * Config: DashboardWidget, UserPreference
+- Fixed multiple Prisma relation validation issues (named relations for ReviewReply↔User, back-relations for ReviewLabel/Role/Report, changed business-detail tables to use locationId).
+- Pushed schema (--accept-data-loss for dropped googleLocationId/placeId columns moved to GoogleBusinessProfile).
+- Rewrote prisma/seed.ts with full data for all 49 tables: 5 roles + 19 permissions + role mappings, 5 users, 1 google account, 15 locations + 15 GBPs + 15 business info + categories/services/products/attributes/hours/special-hours/photos per location, ~150 reviews + replies + labels, 5 reply templates, ~45 posts, 30 media files, 20 reports, 25 AI jobs, 5 AI suggestions, 7-day AI usage, 25 sync logs, 20 background jobs, 7 scheduled cron jobs, 3 error logs, 4 API tokens, 15 storage files, 7 dashboard widgets, 5 user preferences, 6 notifications, 30 audit + activity logs, 3 settings.
+- Added new API routes: /api/system (schema inventory with row counts for all 49 tables, sync logs, scheduled jobs, background jobs, error logs, api logs, dashboard widgets, storage buckets, AI usage), /api/media, /api/reports (GET + POST generate), /api/competitors, /api/seo-audits.
+- Updated types.ts (added media/reports/system ViewKeys), permissions.ts (added media.view/manage, reports.view/generate, system.view permissions + role matrix), app-shell.tsx nav (13 modules now: dashboard, locations, reviews, posts, analytics, seo, ai, media, reports, notifications, audit, system, settings), view-router.tsx (3 new view imports + cases).
+- Next: dispatch parallel subagents for the 3 new view components (Media, Reports, System).
+
+Stage Summary:
+- Schema fully expanded to match the 03_Supabase_Database spec. 49 models covering all 16 categories from the spec.
+- All new API routes working. Nav updated to 13 modules.
+- Seed data comprehensive across all new tables.
+- Ready for UI subagents to build Media Library, Reports, and System views.
+
+---
+Task ID: 5-a
+Agent: full-stack-developer (Media Library View)
+Task: Build the Media Library view for business photos & assets.
+
+Work Log:
+- Read /home/z/my-project/worklog.md (foundation §0 + all view-agent stages 2-a..2-i + verification §3 + schema expansion §4) to understand established conventions: emerald/amber brand (NO indigo/blue), single-route SPA via Zustand useAppStore, React Context user via useUser() (not the store's user field), TanStack Query + api() envelope wrapper, PageHeader + StatCard shared components, scroll-area CSS class, RBAC via can(role, perm), seed buckets for MediaLibrary.
+- Inspected /api/media route (src/app/api/media/route.ts): GET, scoped via getSessionUser + scopeLocationIds, returns MediaItem-shaped objects ({ id, locationId, locationName, locationCity, fileName, bucket, fileUrl, mimeType, fileSize, aiGenerated, createdAt }) ordered newest-first, take 200. Auth gate is locations.view (viewer role passes).
+- Inspected prisma schema (MediaLibrary model) + seed (30 rows: buckets business-photos/post-images/reports/ai-generated, fileUrl = placehold.co/600x400, aiGenerated flag random, mimeType image/jpeg). Note: bucket enum in spec adds "exports" + "documents" — defined full BUCKET_META for all 6 even though seed only uses 4 so the UI handles future data.
+- Inspected shared infra: PageHeader({title,description,icon,actions}), StatCard({label,value,icon,hint,accent}), useAppStore (activeLocationId + setActiveLocationId for cross-view filter persistence), useLocations() → LocationOption[], useUser() → SessionUser, can(role, 'media.manage').
+- Confirmed ViewRouter already wires `MediaView` named import (src/components/view-router.tsx line 12 + case 50).
+- Created /home/z/my-project/src/components/views/media-view.tsx (~570 LOC, single client component module):
+  * PageHeader — title "Media Library", description "Business photos, post images & AI-generated assets", ImageIcon icon, actions: location Select (synced with useAppStore.activeLocationId, options from useLocations(), "All locations" + each location w/ city) + "+ Upload" button (only when can(role,'media.manage')).
+  * Stat row — 4 StatCards (Total Files / Business Photos / AI-Generated / Total Size) computed client-side via useMemo from the unfiltered fetched set so totals stay correct while filters narrow. Total Size uses formatBytes (KB/MB/GB per spec). Accents: emerald/teal/amber/rose. Loading → StatCardSkeleton.
+  * Filter bar Card — Bucket tabs (All / Business Photos / Post Images / AI-Generated / Reports / Exports / Documents) implemented as shadcn Tabs with flex-wrap so the full list is reachable on mobile; Search Input with leading Search icon + clear X button (filters fileName/locationName/locationCity case-insensitive); Sort Select (Newest first / Largest first / By location).
+  * Result count line above the grid ("Showing X of Y total" when filtered, contextual copy for loading/error/empty).
+  * Media grid — responsive 2/3/4 cols (grid-cols-2 md:grid-cols-3 xl:grid-cols-4) gap-3, container `max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area pr-1 -mr-1` (independent vertical scroll).
+  * MediaCard (Card p-3 rounded-lg overflow-hidden hover:shadow-md transition):
+    - aspect-square image thumbnail (object-cover, group-hover:scale-105 zoom) — uses raw <img> for placehold.co placeholder URLs (Next/Image domain not configured; lint rule not enforced in this project).
+    - Non-image MIME types render a FileText fallback with the extension label.
+    - AI badge (amber, top-left, Sparkles + "AI") when aiGenerated.
+    - Hover overlay (gradient from-black/70 → transparent) with View / Copy URL / Delete buttons — Delete only shown when canManage.
+    - Below thumbnail: file name (truncate, font-medium), location + city (muted, with MapPin), bucket Badge (color-coded per spec: business-photos=emerald, post-images=amber, ai-generated=teal, reports=rose, exports=slate, documents=slate) with dot, file size (tabular-nums), relative time (formatDistanceToNow).
+  * Detail dialog (sm:max-w-2xl) — large image preview on the left (aspect-square), full metadata grid on the right (fileName, bucket, location, MIME, file size, "Uploaded by" placeholder = "Marketing Team", uploaded relative time w/ full datetime tooltip, fileUrl in a copyable code box). Footer actions: Copy URL + Delete (gated by canManage).
+  * Upload dialog (sm:max-w-md, mock) — bucket Select (6 buckets), location Select ("All locations" + each from useLocations), file name Input, "Mark as AI-generated asset" checkbox in an amber-tinted box. Submit disabled while submitting; shows Loader2 spinner + "Queuing…". On submit: 700ms setTimeout → toast.success("Upload queued for background processing") with file name + bucket description → invalidate ["media"] query → close dialog. No real backend mutation per spec.
+  * Loading state — 8 MediaCardSkeleton cards (aspect-square skeleton + 4 text skeletons) in the grid container, plus 4 StatCardSkeleton in the stat row.
+  * Empty state — Card with primary-tinted ImageIcon, "No media files found", context-aware copy (filter-active vs none). When filters active: Clear filters button. When canManage + no filters: extra "Upload asset" button.
+  * Error state — Card with rose-tinted ImageOff, "Couldn't load media", Retry button (calls refetch).
+  * Bucket color system: BUCKET_META map for all 6 buckets providing { label, badge (Badge className), dot (1.5px dot color) }. BUCKET_ORDER array drives the upload dialog dropdown. BUCKET_TABS array drives the filter tabs (matches the spec's tab order: All / Business Photos / Post Images / AI-Generated / Reports / Exports / Documents).
+  * formatBytes helper: < 1MB → KB (1 decimal under 10KB else int), < 1GB → MB (1 decimal under 10MB else int), else GB (2 decimals under 10GB else 1 decimal). Total Size card uses the same helper.
+- Palette: emerald (primary), amber (AI accent / pending), teal (ai-generated bucket / business-photos stat), rose (reports bucket / total-size stat / error state), slate (exports/documents buckets). Zero indigo/blue.
+- RBAC: super_admin / marketing_manager / branch_manager → canManage=true → see Upload button, hover Delete button, Detail dialog Delete button, empty-state Upload button. customer_support / viewer → read-only (no upload/delete anywhere; still see View + Copy URL).
+- Used only shadcn components (Card, CardContent, Button, Input, Label, Tabs/TabsList/TabsTrigger, Select/*, Dialog/*, Badge, Skeleton) + shared PageHeader/StatCard. Lucide icons. Sonner toasts. date-fns for relative + absolute times. TanStack Query (key ["media", mediaUrl]) with invalidateQueries on upload. No raw fetch — everything via api() envelope unwrapper.
+- Lint: `bunx eslint src/components/views/media-view.tsx --fix` removed two unused @next/next/no-img-element disable directives (project doesn't enforce that rule). Final `bunx eslint src/components/views/media-view.tsx` → 0 errors / 0 warnings. `bun run lint` → 0 errors / 0 warnings project-wide (clean).
+- TypeScript: `bunx tsc --noEmit` → no errors mentioning media-view.
+- Did NOT touch any other file. Did NOT start the dev server.
+
+Stage Summary:
+- File: /home/z/my-project/src/components/views/media-view.tsx (single self-contained client component, ~570 LOC, exports named `MediaView` + default export).
+- Wired into ViewRouter (already imported in src/components/view-router.tsx line 12, case "media": return <MediaView /> on line 50).
+- API integration: GET /api/media (TanStack Query, key ["media", mediaUrl]); location filter synced with useAppStore.activeLocationId for cross-view persistence. Upload + Delete are mock-only per spec (toast feedback, no real mutation, refetch via query invalidation).
+- All spec requirements met: PageHeader w/ location filter + Upload (gated); 4-card stat row (Total / Business Photos / AI-Generated / Total Size with KB/MB/GB); filter bar with bucket tabs + search + sort; responsive 2/3/4-col media grid; card anatomy (thumbnail, file name, location+city, color-coded bucket badge, file size, relative time, AI badge); hover overlay with View / Copy URL / Delete; detail dialog w/ large image + full metadata; loading skeletons; empty state; max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area container.
+- Lint: PASS (0 errors, 0 warnings). Type-check: PASS. Ready for orchestrator end-to-end verification.
+
+---
+Task ID: 5-b
+Agent: full-stack-developer (Reports View)
+Task: Build the Reports module with generate + download flow.
+
+Work Log:
+- Read /home/z/my-project/worklog.md (foundation §0 + view-agent stages 2-a..2-i + verification §3 + schema §4 + media §5-a) to confirm established conventions: emerald/amber brand (NO indigo/blue), single-route SPA via Zustand useAppStore, React Context user via useUser(), TanStack Query + api() envelope wrapper, shared PageHeader/CardSection/StatCard, RBAC via can(role, perm), seeded Report rows.
+- Inspected /api/reports route (src/app/api/reports/route.ts): GET supports optional `?locationId=&type=` filters, scoped via scopeLocationIds, returns { id, reportType, locationId, locationName, locationCity, reportName, fileUrl, generatedBy, generatedAt } ordered by generatedAt desc, take 100. POST requires reportType + optional locationId/reportName → creates Report + AuditLog, returns { id, reportName }. GET gate = analytics.view; POST gate = reports.generate OR analytics.view.
+- Inspected /api/ai route (src/app/api/ai/route.ts) action "summary": requires ai.use (top-level gate) + analytics.view; takes locationId; computes 30d vs prior-30d aggregates from AnalyticDaily + Review; calls aiMonthlySummary → returns { summary, deltas: { searchViews } }. ~15s.
+- Inspected shared infra: PageHeader({title,description,icon,actions}) + CardSection({title,description,action,children}), StatCard({label,value,icon,hint,accent}), useAppStore (activeLocationId/setActiveLocationId for cross-view filter persistence), useLocations() → LocationOption[], useUser() → SessionUser, can(role, 'reports.generate' | 'ai.use' | 'analytics.view').
+- Confirmed ViewRouter already imports ReportsView (src/components/view-router.tsx line 13, case "reports" line 51).
+- Created /home/z/my-project/src/components/views/reports-view.tsx (~835 LOC, single self-contained client component):
+  * PageHeader — title "Reports", description "Generate & download performance reports", icon FileBarChart; actions: location Select (synced with useAppStore.activeLocationId, options "All locations" + each location w/ city) + "+ Generate Report" Button gated on can(role,'reports.generate').
+  * Stat row — 5 StatCards (Total Reports / Daily / Weekly / Monthly / Quarterly/Annual) computed client-side via useMemo from fetched set. Accents: emerald (total) / slate (daily) / emerald (weekly) / amber (monthly) / teal (qa). Loading → 5× Skeleton h-28 rounded-xl.
+  * Filter row — shadcn Tabs (All / Daily / Weekly / Monthly / Quarterly / Annual) with type-icon prefix (Calendar / CalendarDays / CalendarRange / CalendarClock / CalendarCheck); on mobile labels hide but icons remain. Plus sort toggle Button (Newest ⇄ Oldest) flipping sortDir between desc/asc on generatedAt.
+  * Reports table (CardSection "Generated Reports") — shadcn Table inside `max-h-[calc(100vh-20rem)] overflow-y-auto` container with ScrollArea; sticky TableHeader. Columns: Report (icon tile + name w/ tooltip), Type (color-coded Badge: daily=slate, weekly=emerald, monthly=amber, quarterly=teal, annual=rose), Location (Building2 + name · city OR MapPin + "All Locations"), Generated by (User icon + name), Generated (relative via formatDistanceToNow with Tooltip showing full `d MMM yyyy, h:mm a`), Actions (Download Button + Regenerate ghost icon button, gated).
+  * Generate dialog (sm:max-w-lg) — Report type Select (5 types each with icon + label, plus description line below); Location Select ("All Locations" + each); Report name Input with auto-suggestion (suggestReportName = `MyFNG {city|All} {Type} report — {d MMM yyyy}`) — auto-updates unless user manually edits (genNameTouched flag). Footer Cancel + Generate (Loader2 spinner while pending). On success: toast, invalidate ["reports"], close dialog, reset form.
+  * Regenerate — re-POSTs /api/reports with the same reportType/locationId/reportName from the row; same mutation; toast on success; disabled while pending.
+  * Download — `window.open(r.fileUrl, '_blank', 'noopener,noreferrer')` (mock PDF URL from API).
+  * AI Monthly Summary CardSection (only when can(role,'ai.use')) — amber MiSA AI badge in header (Sparkles icon). Two-column layout (lg:grid-cols-3): left = location Select (required, no "all" option) + "Generate with MiSA AI" Button (Loader2 + "Generating…" while pending, switches to "Regenerate with MiSA AI" after first result) + helper text "~15 seconds"; right (lg:col-span-2) = result card with amber accent border (border-amber-500/30 bg-amber-500/5), Sparkles icon, location label, search-views delta Badge (emerald↑ / rose↓), summary text in whitespace-pre-wrap. Loading state shows amber-tinted skeleton block; empty state shows dashed amber border + "No summary yet" guidance. Mutation uses TanStack useMutation → POST /api/ai { action:'summary', locationId }; invalidates nothing (display-only state).
+  * Loading skeletons — stat row 5× Skeleton, table 5× Skeleton h-12.
+  * Empty state — CardSection body shows local EmptyState component (Inbox icon, "No reports yet", "Generate your first report.", plus optional Generate button when canGenerate).
+  * Local EmptyState helper component — muted circular icon + title + description + optional action; reused for the empty table.
+- Palette: emerald (primary, weekly badge), amber (monthly badge, MiSA AI accent), teal (quarterly badge, qa stat), rose (annual badge, negative delta), slate (daily badge, neutral). Zero indigo/blue.
+- RBAC: super_admin / marketing_manager → canGenerate=true (Generate button in header, Regenerate icon in table, Generate in empty state). branch_manager / customer_support / viewer → read-only (no Generate/Regenerate anywhere; can still Download). ai.use gate hides the entire MiSA AI CardSection for viewer/customer_support (customer_support has ai.use but lacks analytics.view → API returns 403; UI still shows section per spec since canUseAi is the only gate mentioned, and the API enforces the secondary check).
+- Used only shadcn components (Card/CardContent, Button, Input, Label, Tabs/TabsList/TabsTrigger, Select/*, Dialog/*, Table/*, Badge, Skeleton, ScrollArea, Tooltip/*) + shared PageHeader/CardSection/StatCard. Lucide icons (FileBarChart, Calendar/Days/Range/Clock/Check, Filter, Plus, Download, RefreshCw, Sparkles, Loader2, Inbox, Building2, MapPin, User, ArrowUpDown, TrendingUp, TrendingDown). Sonner toasts. date-fns (formatDistanceToNow + format). TanStack Query (key ["reports", reportsUrl]) + useMutation for generate & AI summary. No raw fetch — everything via api() envelope unwrapper.
+- Lint: initial `bun run lint` flagged one JSX parsing error (SelectContent closed as </Select> on line 612 — a typo). Fixed by replacing with </SelectContent>. Re-ran `bun run lint` → 0 errors / 0 warnings project-wide (clean, exit 0). Also removed an unused `locationLabel` helper to keep the module tidy.
+- Did NOT touch any other file. Did NOT start the dev server. (Pre-existing dev.log error about missing system-view belongs to another agent and is unrelated.)
+
+Stage Summary:
+- File: /home/z/my-project/src/components/views/reports-view.tsx (single self-contained client component, ~835 LOC, exports named `ReportsView`).
+- Wired into ViewRouter (already imported in src/components/view-router.tsx line 13, case "reports": return <ReportsView /> on line 51).
+- API integration: GET /api/reports (TanStack Query, key ["reports", reportsUrl]); POST /api/reports via useMutation (generate + regenerate); POST /api/ai action='summary' via useMutation (MiSA AI monthly summary). Location filter synced with useAppStore.activeLocationId for cross-view persistence.
+- All spec §42 requirements met: PageHeader w/ location filter + Generate (gated); 5-card stat row (Total/Daily/Weekly/Monthly/Quarterly+Annual); filter tabs (All/Daily/Weekly/Monthly/Quarterly/Annual); reports table with type-icon + color-coded type badge + location (name+city or "All Locations") + generated-by + relative date w/ full-date tooltip + Download + Regenerate actions; sortable by date (default desc); max-h-[calc(100vh-20rem)] overflow-y-auto; generate dialog w/ type+location+auto-suggested name; AI monthly summary section (amber MiSA AI badge, location-required, ~15s spinner, summary card with deltas, Regenerate button); loading skeletons; empty state "No reports yet. Generate your first report.".
+- Lint: PASS (0 errors, 0 warnings, exit 0). Ready for orchestrator end-to-end verification.
+
+---
+Task ID: 5-c
+Agent: full-stack-developer (System View)
+Task: Build the System/Database admin view with schema inventory, jobs, logs & integrations.
+
+Work Log:
+- Read worklog.md (foundation + 4 sibling view records in /agent-ctx) and inspected the foundation: src/app/api/system/route.ts (full response shape: schema inventory with 49 tables + categories, syncLogs, scheduledJobs, backgroundJobs, errorLogs, apiLogs (recent audit), dashboardWidgets, storageBuckets, storageFiles, aiUsage with 7-day totals + daily).
+- Reviewed shared components: PageHeader/CardSection (page-header.tsx), StatCard (4 accent colors), badges (SyncStatusBadge/StatusBadge/ScoreBadge), all shadcn ui (Card, Button, Badge, Input, Switch, Tabs, Table, Tooltip, Skeleton, Progress).
+- Reviewed conventions from sibling views (audit-view, dashboard-view, notifications-view, seo-view): scroll-area class for custom scrollbar, max-h-[calc(100vh-Xrem)] overflow-y-auto pattern, emerald/amber/teal/rose/slate/cyan palette only, RBAC via can(user.role, ...), useUser() from React Context, api() envelope wrapper, formatDistanceToNow for relative time, toast from sonner.
+- Built src/components/views/system-view.tsx (~1590 LOC, single self-contained client component file). Exports named `SystemView` (matches the import already wired in view-router.tsx).
+- PageHeader: Database icon, title "System", description "Database, jobs, logs & integrations", "Refresh" button (invalidates ['system'] query + toast).
+- Overview stat row (4 StatCards): Total Tables (Table2, emerald), Total Rows (ListTree, teal), Active Jobs (Activity, amber — counts backgroundJobs with status=queued|processing), Unresolved Errors (AlertTriangle, rose if >0 else emerald). Skeletons during load.
+- Tabs (TabsList with overflow-x-auto + flex-wrap on mobile): Schema | Sync Logs | Jobs | Error Logs | Storage | AI Usage | Integrations.
+  • Schema tab: CardSection with summary "X tables · Y total rows", category-breakdown badge row (16 categories color-coded, tooltip with count + row total), search Input, sortable Table (Table Name / Category / Row Count) — clicking headers cycles asc/desc, SortIcon component extracted to module scope to satisfy react-hooks/static-components lint rule. Sortable columns: name (alphabetical), category (alphabetical then name), count (numeric). Table wrapped in max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area with sticky header. Category colors cycle through emerald/amber/teal/rose/slate/cyan across 16 categories.
+  • Sync Logs tab: Table (Module badge | Location name+city | Status badge (success=emerald, failed=rose, running/partial=amber) | Started (relative + absolute mono) | Duration (Xm Ys / Xs / Xms computed from startedAt-completedAt) | Records (mono row: P:+I:↻U:✕F color-coded) | Error (line-clamp-2 + tooltip)). max-h-[calc(100vh-24rem)] scroll-area, sticky header.
+  • Jobs tab: two CardSections. Scheduled Jobs as card grid (md:grid-cols-2) — each card has jobName, monospace cronExpression badge, Switch toggle (mock — toasts "X enabled/disabled" with note about deployment-managed cron), lastRun + nextRun relative times. Background Jobs as Table with sticky header inside max-h-96 overflow-y-auto — queueName color-coded per spec (google-sync=emerald, review-sync=amber, analytics-sync=teal, ai-processing=rose, notifications=slate, reports=cyan), status badge with colored dot, attempts (mono), timing (Queued X ago / Running Xm Ys / Started + Done in), error (line-clamp + tooltip).
+  • Error Logs tab: Table (Module badge | Error Code (mono rose) | Message (line-clamp-2) | Status badge (Resolved=emerald with CheckCheck, Unresolved=rose with AlertCircle) | Created (relative) | Action). Unresolved rows get border-l-2 border-l-rose-500 + bg-rose-500/[0.02] accent. "Resolve" button per unresolved row — mock toast "Marked as resolved" with code + short id. Empty state shows green CheckCircle2 "All clear!". max-h-[calc(100vh-24rem)] scroll-area.
+  • Storage tab: Storage Buckets grid (1/2/3 cols) of cards — each shows bucket name (mono), file count, Public/Private label (Public=emerald, Private=slate, based on PUBLIC_BUCKETS set: business-photos/post-images/profile-images), total size formatted (formatBytes: B/KB/MB/GB/TB), and a colored progress bar showing relative size vs largest bucket (Public=emerald, Private=cyan). Recent Files Table (bucket badge | file name with mime icon | mimeType mono | size | uploaded relative) inside max-h-[28rem] scroll-area.
+  • AI Usage tab: 4 summary StatCards (Requests 7d / Tokens 7d / Est. Cost 7d in ₹ via Intl.NumberFormat en-IN / Avg tokens per request). Daily Usage BarChart (recharts, dual Y-axis — left=requests in chart-1 emerald, right=tokens in chart-2 amber, CartesianGrid, XAxis date dd MMM, RTooltip with card colors, Legend). Model Breakdown card with deterministic mock distribution (glm-4.6=78%, glm-4-air=16%, glm-4-flash=6%) as horizontal bars + totals footer. Daily Breakdown table.
+  • Integrations tab: 5 integration cards (Google Business Profile API=Connected, Google OAuth 2.0=Active, MiSA AI glm-4.6=Active, Supabase=Active, SMTP=Active) — each card has provider icon (Building2/KeyRound/Sparkles/Database/Mail) in primary/10 tint, name, description, status badge with colored dot, detail line in mono, "Test Connection" button (toast "Connection successful") + "Re-authorize" button on Google integrations (toast "Redirecting to Google…"). API Tokens table (5 rows, static mock): provider + KeyRound icon, tokenName (mono), status badge (Active=emerald), last used relative, expires relative or "Never". 4 HealthMini cards (Google API / AI Service / Database / Webhooks) showing green healthy status.
+- Permission gating: can(user.role, 'system.view'). If user lacks permission, shows amber Lock access-restricted card. (View-router already gates this — defensive only.)
+- Style rules respected: emerald/amber/teal/rose/slate/cyan palette only — NO indigo/blue. Monospace for cron expressions, table names, mime types, error codes, IP-ish detail strings, token names. Status colors consistent (success=emerald, running/processing=amber, failed/error=rose, pending/queued=slate). Card padding p-4/p-5, gap-4. Charts use var(--chart-1) through var(--chart-5).
+- Loading skeletons per tab. Empty states with helpful copy. Error state on main query shows AlertCircle + retry button. All buttons min-h-7 to h-8 (touch friendly on mobile, scales up to size-sm).
+- All API calls via @/lib/api-client.api() (envelope-aware). Single TanStack Query ['system'] key, invalidated on Refresh button click.
+- Lint fixes: extracted SortIcon to module scope (react-hooks/static-components rule — components can't be created inside render); replaced `API_TOKENS[number]["status"]` index access (TS2749) with explicit `ApiTokenStatus` type + `ApiToken` interface; removed unused imports (Fragment, Loader2, BarChart3, Area, AreaChart, fmtDuration, ShieldCheck, XCircle); replaced nonexistent `size-4.5` Tailwind class with `size-5`; cleaned up duplicate `mt-3 mt-auto` on integration card action row.
+- TypeScript type-check: `bunx tsc --noEmit` reports 0 errors in system-view.tsx.
+- Lint: `bun run lint` → 0 errors, 0 warnings (clean across the whole project, not just this file).
+
+Stage Summary:
+- File: /home/z/my-project/src/components/views/system-view.tsx (~1593 LOC, single self-contained client component file).
+- Exports named `SystemView` (matches the import already wired in src/components/view-router.tsx).
+- Lint: `cd /home/z/my-project && bun run lint 2>&1 | tail -30` → clean (`$ eslint .`, no output, exit 0).
+- Type-check: `bunx tsc --noEmit` → 0 errors in this file.
+- API integration: GET /api/system via TanStack Query key ['system']. Refresh button invalidates the query. No mutations against the system endpoint — all "Resolve" / "Test Connection" / "Re-authorize" / Switch-toggle actions are mock toasts (the underlying API is read-only by design — backend cron & tokens are deployment-managed per §70 spec).
+- All 7 tabs implemented per spec: Schema (sortable + searchable + category color-coded), Sync Logs (with duration + record flow), Jobs (Scheduled card list + Background table), Error Logs (rose left-border for unresolved + Resolve action), Storage (bucket grid + recent files), AI Usage (stat cards + dual-axis bar chart + model breakdown + daily table), Integrations (5 integration cards + API tokens table + health mini-cards).
+- RBAC enforced via can(user.role, 'system.view') — super_admin + marketing_manager have full access; others see an access-restricted card (defensive — view-router already gates this).
+- Palette strictly emerald/amber/teal/rose/slate/cyan. Zero indigo/blue.
+
+---
+Task ID: 6-auth-google
+Agent: main (orchestrator)
+Task: Implement docs 05 (Google Business Profile Integration) + 06 (Authentication & RBAC) — auth enhancements + Google Integration module.
+
+Work Log:
+- Read docs 05 + 06. Doc 05: full Google Business Profile integration (OAuth, sync, business info editor, API health). Doc 06: auth & RBAC (password policy, account lockout, user status, activity tracking, session config).
+- Expanded User schema with auth fields (per doc 06 §11, §20): status (active|invited|locked|suspended|inactive), failedLoginAttempts, lockedUntil, invitationToken, invitationExpiresAt, resetToken, resetExpiresAt, lastLoginIp. Removed `active` boolean (replaced by status).
+- Updated password.ts: added validatePassword() enforcing 12-char min + upper/lower/number/special (doc 06 §9), added MAX_FAILED_ATTEMPTS=5 + LOCK_DURATION_MS=15min + isLocked() + generateToken() (doc 06 §11).
+- Rewrote auth.ts authorize(): checks user status (only active can login), checks lockout, increments failed attempts on bad password, locks after 5 fails, resets on success, logs all auth events to both audit_logs + activity_logs (doc 06 §17, §18). Session: 8h JWT (doc 06 §8).
+- Updated users API: POST now supports invite flow (creates invited user with token, no password) or direct create with password policy validation. PATCH now uses status (active/invited/locked/suspended/inactive) instead of active boolean. GET returns status + failedLoginAttempts + lockedUntil + lastLoginIp.
+- Updated page.tsx to check status === "active" instead of active boolean.
+- Created /api/google-integration: GET returns OAuth status, connected accounts, all GBP profiles, sync health, recent sync errors, API errors. POST handles connect (mock OAuth), disconnect, sync (creates sync_logs + updates location sync status).
+- Created /api/activity-logs: GET returns user activity history (doc 06 §17).
+- Updated demo password from "myfng123" to "MyFNG@2025" (meets 12-char policy with upper/lower/number/special). Updated seed + login screen.
+- Re-seeded database with all new auth fields.
+- Added "Google Integration" as 14th nav module (icon: Plug). Updated types.ts, permissions.ts, app-shell.tsx nav, view-router.tsx.
+- Next: dispatch subagent for Google Integration view, fix Settings view user status handling.
+
+Stage Summary:
+- Auth fully enhanced per doc 06: password policy, account lockout, user status lifecycle, invitation flow, activity logging.
+- Google Integration API ready (OAuth connect/disconnect/sync, profile listing, sync health).
+- 14 nav modules now. Demo password: MyFNG@2025.
+- Ready for Google Integration view + Settings view update.
+
+---
+Task ID: 7-a
+Agent: full-stack-developer (Google Integration View)
+Task: Build the Google Business Profile Integration view with OAuth, sync & API health.
+
+Work Log:
+- Read worklog.md (foundation §0 + view-agent stages 2-a..2-i + verification §3 + schema §4 + media §5-a + reports §5-b + system §5-c + auth-google §6) to confirm established conventions: emerald/amber brand (NO indigo/blue), single-route SPA via Zustand useAppStore, React Context user via useUser(), TanStack Query + api() envelope wrapper, shared PageHeader/CardSection/StatCard, RBAC via can(role, perm), formatDistanceToNow + format for relative/absolute times, sonner toasts with stable IDs, scroll-area class for sticky scrollable tables.
+- Inspected shared components (page-header, stat-card, badges — SyncStatusBadge + RatingStars used here), shadcn ui (Card, Button, Badge, Table, Dialog, AlertDialog, Tabs, Progress, Skeleton, Tooltip, Input), the api-client envelope wrapper, permissions.ts (system.sync → super_admin + marketing_manager only), user-context.ts (useUser() always populated synchronously), view-router.tsx (GoogleIntegrationView already wired at line 14 + case "google": line 53), and the API contract at src/app/api/google-integration/route.ts (GET → { oauth, accounts, profiles, summary, recentSyncErrors, apiErrors }; POST → { action: connect|disconnect|sync, email?, locationId? } gated server-side on system.sync).
+- Created /home/z/my-project/src/components/views/google-integration-view.tsx (~1280 LOC, single self-contained client component):
+  * PageHeader — title "Google Integration", description "OAuth, sync & API status for Google Business Profile", icon Plug, "Refresh" outline button (invalidates ["google-integration"] query + toast).
+  * OAuth Connection Card (hero, 3 states):
+    - connected → emerald-tinted Card. Emerald ShieldCheck tile + "Connected" heading + Active badge + signed-in email. Sub-grid: "Token expires" (relative time + emerald Progress bar showing time remaining with Tooltip showing ~min remaining + full datetime) and "Last connected" (relative + absolute). Scopes rendered as monospace emerald-tinted badges (label mapped via scopeLabel()). Right column (only when canSync): rose-outline "Disconnect" button that opens an AlertDialog confirmation.
+    - token_expired → amber-tinted Card. Amber AlertTriangle tile + "Token expired" heading + "Re-authorization required" badge. Amber "Re-authorize Google" button opens ConsentDialog.
+    - disconnected → slate-tinted Card. Slate Plug tile + "Not connected" + "No Google account linked" badge. Emerald "Connect Google Business Profile" button opens ConsentDialog. When user lacks system.sync, replaced with a Tooltip-disabled Lock button.
+  * ConsentDialog (mock Google OAuth screen): centered header with emerald Globe chip + "Sign in with Google", DialogTitle "MyFNG Local AI Manager wants to access your Google Account", email Input (prefilled gmb@myfng.in), bordered box listing all 6 requested scopes (Business Profile, Business Information, Business Manage, OpenID, Email, Profile) each with green check + human label + monospace scope URL, disclaimer note. Footer Cancel + emerald "Allow". While allowing=true the dialog can't be dismissed. On "Allow" → onConnect(email) → POST { action: "connect", email }.
+  * AlertDialog (disconnect confirmation): rose-tinted action button, explains token revocation + paused syncs + data preservation.
+  * Sync Health stat row: 4 StatCards — Connected Profiles (emerald), Verified Profiles (teal), Active Profiles (emerald), Sync Errors (rose when >0 else emerald). Above the row: "Sync Health" label + API Health badge (emerald "API Healthy" / amber "API Degraded" with CircleCheck icon).
+  * Tabs: Profiles | Sync Logs | API Errors | Configuration (TabsList overflow-x-auto justify-start h-auto flex-wrap for mobile).
+    - Profiles tab: CardSection "Google Business Profiles" with profile-count subtitle + "Sync all" outline button (gated on canSync, hidden when 0 profiles). Table: Profile (name + mono googleLocationId) | Location (name + city w/ MapPin) | Category | Rating (RatingStars size 12 or "No ratings") | Reviews (tabular-nums right) | Verification (verified=emerald/unverified=amber/pending=slate) | Status (active=emerald/suspended=rose/disabled=slate) | Sync (SyncStatusBadge) | Last Synced (relative w/ Tooltip absolute) | Actions (per-row "Sync" ghost button w/ spinner when syncing that ID + "View on Maps" external-link button when mapUrl present). Container max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area w/ sticky TableHeader. Loading → 5 skeleton rows; isError → rose EmptyState + Retry; empty → slate EmptyState.
+    - Sync Logs tab: CardSection "Recent Sync Errors". Table: Module (mono badge) | Location | Status (Failed=rose/Partial/Running=amber/Success=emerald) | Error Message (line-clamp-2 + Tooltip) | Started (relative w/ Tooltip). Failed rows get border-l-2 border-l-rose-500 + bg-rose-500/[0.03]. Empty → emerald CircleCheck "All syncs healthy".
+    - API Errors tab: CardSection "Google API Errors". Table: Error Code (mono rose badge) | Message (line-clamp-2 + Tooltip) | Created (relative w/ Tooltip). All rows rose left-border + bg tint. Empty → emerald CircleCheck "No API errors".
+    - Configuration tab: Sync Schedule CardSection (6 cards: Reviews every 5min, Business Info every 30min, Analytics daily, Photos daily, Categories daily, Services daily — each with emerald icon chip + Clock-prefixed schedule, 1/2/3-col grid). Required Google APIs CardSection (5 cards: Business Profile Business Information API, Business Profile Performance API, Business Profile APIs, Google OAuth, Google People API — each with emerald Server icon + emerald "Enabled" badge w/ CircleCheck). Two-column grid: OAuth Redirect URI card showing /auth/google/callback in code box + CopyButton; Authorized JavaScript Origins card listing 3 origins (localhost:3000 dev, staging.myfng.in, app.myfng.in) each with env label + per-row CopyButton. Footer Card: amber CalendarClock + token refresh policy note.
+  * Helpers: relativeTime/fullTime (date-fns with try/catch), scopeLabel (maps raw scope URLs to human labels), tokenProgress (computes 0-100% based on 1h access-token lifetime → { pct, totalMs, remainingMs }), verificationBadge + profileStatusBadge (color-coded outline Badges), EmptyState (reusable w/ icon + title + description + tone emerald/rose/slate + optional action), StatCardSkeleton, CopyButton (clipboard + copied check + toast).
+  * Mutations: all three actions (connect/disconnect/sync) use api() wrapper + POST JSON.stringify({ action, ... }). Each: toast.loading → toast.success/error (stable ID) → qc.invalidateQueries({ queryKey: ["google-integration"] }). Per-profile Sync tracks syncingLocationId state; "Sync all" tracks syncingAll state to disable every per-row button.
+- Permission gating: Connect/Disconnect/Sync-all/per-profile Sync buttons gated on can(user.role, 'system.sync') (super_admin + marketing_manager). When user lacks permission, disconnected-state Connect replaced with Tooltip-disabled Lock button. GET endpoint gated server-side on locations.view (defensive — view-router also gates the "google" view on locations.view).
+- Style rules respected: emerald/amber/teal/rose/slate palette only — NO indigo/blue. Removed an initial inline Google "G" SVG (had Google's actual blue) — replaced with a neutral emerald Globe chip to keep brand rules strict. Card padding p-4/p-5, gaps gap-3/gap-4. Monospace for googleLocationId, scope URLs, redirect URIs, module names, error codes. Sticky table headers, custom scrollbars via .scroll-area class. Mobile responsive: PageHeader stacks, OAuth card stacks, stat grid 2/4 cols, tabs wrap, action buttons hide text on mobile.
+- Lint: `bunx eslint src/components/views/google-integration-view.tsx --max-warnings 0` → 0 errors / 0 warnings (exit 0). `bunx tsc --noEmit` → no errors mentioning google-integration-view. Full `bun run lint` shows 1 pre-existing error in src/app/api/activity-logs/route.ts (@next/next/no-assign-module-variable on a `const module = ...` declaration) — that file belongs to the orchestrator (Task 6-auth-google) and is explicitly out of scope per task instructions ("Do NOT touch other files").
+- Did NOT touch any other file. Did NOT start the dev server.
+
+Stage Summary:
+- File: /home/z/my-project/src/components/views/google-integration-view.tsx (~1280 LOC, single self-contained client component).
+- Exports named `GoogleIntegrationView` (matches the import already wired in src/components/view-router.tsx line 14, case "google": return <GoogleIntegrationView /> line 53).
+- API integration: GET /api/google-integration via TanStack Query (key ["google-integration"]); POST via the same api() wrapper for connect/disconnect/sync. Refresh button + post-mutation invalidation all target the same query key.
+- All spec requirements met: PageHeader w/ Refresh; OAuth Connection hero card with 3 states (connected/token_expired/disconnected) + scopes as badges + token-expiry Progress bar + AlertDialog disconnect confirmation; mock Google consent dialog with all 6 requested scopes + Cancel/Allow; 4-card Sync Health stat row + API Health badge; 4 tabs (Profiles/Sync Logs/API Errors/Configuration) with full tables + empty states + sticky scrollable headers; Configuration tab with sync schedule (6 modules per doc 05 §21), required Google APIs (5 per doc 05 §3), copyable redirect URI + 3 authorized origins.
+- RBAC enforced: Connect/Disconnect/Sync visible only to system.sync roles (super_admin + marketing_manager); others see read-only UI with a tooltip-disabled Connect button.
+- Palette strictly emerald/amber/teal/rose/slate. Zero indigo/blue.
+- Lint: PASS for this file. Type-check: PASS for this file. Ready for orchestrator end-to-end verification.
+
+---
+Task ID: 7-verification
+Agent: main (orchestrator)
+Task: End-to-end verification of docs 05 + 06 implementation (Google Integration + enhanced Auth/RBAC).
+
+Work Log:
+- Fixed activity-logs route lint error (renamed `module` variable to `moduleFilter` to avoid @next/next/no-assign-module-variable).
+- Updated Settings view: migrated from `active: boolean` to `status: string` (active|invited|locked|suspended|inactive). Added `toggleStatus()` (active↔inactive) and `unlockUser()` functions. Updated UserRow interface with status, failedLoginAttempts, lockedUntil, lastLoginIp. Updated all Switch components and toggle calls.
+- Fixed port conflict (killed stale next-server process).
+- Agent Browser verification:
+  * Login page renders with new password MyFNG@2025 ✓
+  * Signed in as admin@myfng.in → dashboard renders ✓
+  * All 14 nav modules present: Dashboard, Locations, Reviews, Google Posts, Analytics, Local SEO, MiSA AI, Media Library, Reports, Google Integration, Notifications, Audit Logs, System, Settings ✓
+  * Google Integration view: renders "Connected" OAuth status, Disconnect button, Sync Health stats, Profiles tab with sync buttons, Configuration tab with sync schedule + required APIs ✓
+  * Settings view: renders with new "Status" column showing Active/Invited/Locked/Suspended, toggle switch working ✓
+  * Lint: 0 errors, 0 warnings ✓
+  * Dev log: no runtime errors ✓
+
+Stage Summary:
+- DOCS 05 + 06 FULLY IMPLEMENTED & VERIFIED.
+- Auth enhancements (doc 06): password policy (12-char min + upper/lower/number/special), account lockout (5 fails → 15min lock), user status lifecycle (active/invited/locked/suspended/inactive), invitation flow, activity logging to audit_logs + activity_logs, 8h JWT session.
+- Google Integration (doc 05): OAuth connect/disconnect flow with mock consent dialog, connected accounts, all GBP profiles with sync status, sync health dashboard, API error tracking, sync schedule configuration, required APIs display, redirect URI configuration.
+- 14 nav modules. Demo password: MyFNG@2025 (policy-compliant).
+- Ready for next batch of MD files.

@@ -17,6 +17,7 @@ import {
   Building2, LayoutDashboard, MapPin, Star, FileText, BarChart3,
   Search, Sparkles, Bell, ScrollText, Settings, Menu, LogOut,
   RefreshCw, Search as SearchIcon, Sun, Moon, ChevronDown, Command,
+  Image as ImageIcon, FileBarChart, Database, Plug,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
@@ -45,8 +46,12 @@ const NAV: NavItem[] = [
   { key: "analytics", label: "Analytics", icon: BarChart3, description: "Search, maps, calls, directions" },
   { key: "seo", label: "Local SEO", icon: Search, description: "Keywords & geo-grid ranking" },
   { key: "ai", label: "MiSA AI", icon: Sparkles, description: "AI assistant & suggestions" },
+  { key: "media", label: "Media Library", icon: ImageIcon, description: "Business photos & assets" },
+  { key: "reports", label: "Reports", icon: FileBarChart, description: "Daily, weekly, monthly reports" },
+  { key: "google", label: "Google Integration", icon: Plug, description: "OAuth, sync & API status" },
   { key: "notifications", label: "Notifications", icon: Bell, description: "Alerts & activity" },
   { key: "audit", label: "Audit Logs", icon: ScrollText, description: "Immutable action history" },
+  { key: "system", label: "System", icon: Database, description: "Database, jobs & integrations" },
   { key: "settings", label: "Settings", icon: Settings, description: "Users, roles & system config" },
 ];
 

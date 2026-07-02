@@ -14,11 +14,16 @@ export type Permission =
   | "seo.view"
   | "seo.manage"
   | "ai.use"
+  | "media.view"
+  | "media.manage"
+  | "reports.view"
+  | "reports.generate"
   | "notifications.view"
   | "audit.view"
   | "settings.view"
   | "users.manage"
-  | "system.sync";
+  | "system.sync"
+  | "system.view";
 
 const FULL: Permission[] = [
   "dashboard.view", "locations.view", "locations.manage",
@@ -27,8 +32,10 @@ const FULL: Permission[] = [
   "analytics.view",
   "seo.view", "seo.manage",
   "ai.use",
+  "media.view", "media.manage",
+  "reports.view", "reports.generate",
   "notifications.view", "audit.view",
-  "settings.view", "users.manage", "system.sync",
+  "settings.view", "users.manage", "system.sync", "system.view",
 ];
 
 const MATRIX: Record<Role, Permission[]> = {
@@ -40,8 +47,10 @@ const MATRIX: Record<Role, Permission[]> = {
     "analytics.view",
     "seo.view", "seo.manage",
     "ai.use",
+    "media.view", "media.manage",
+    "reports.view", "reports.generate",
     "notifications.view", "audit.view",
-    "settings.view", "system.sync",
+    "settings.view", "system.sync", "system.view",
   ],
   branch_manager: [
     "dashboard.view", "locations.view",
@@ -50,6 +59,8 @@ const MATRIX: Record<Role, Permission[]> = {
     "analytics.view",
     "seo.view",
     "ai.use",
+    "media.view", "media.manage",
+    "reports.view",
     "notifications.view",
   ],
   customer_support: [
@@ -61,6 +72,7 @@ const MATRIX: Record<Role, Permission[]> = {
   viewer: [
     "dashboard.view", "locations.view",
     "reviews.view", "posts.view", "analytics.view", "seo.view",
+    "media.view", "reports.view",
     "notifications.view", "audit.view",
   ],
 };
@@ -85,8 +97,12 @@ export function canAccessView(role: Role | undefined, view: string): boolean {
     analytics: "analytics.view",
     seo: "seo.view",
     ai: "ai.use",
+    media: "media.view",
+    reports: "reports.view",
+    google: "locations.view",
     notifications: "notifications.view",
     audit: "audit.view",
+    system: "system.view",
     settings: "settings.view",
   };
   const perm = map[view];
