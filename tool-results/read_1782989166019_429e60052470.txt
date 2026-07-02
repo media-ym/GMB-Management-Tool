@@ -1,0 +1,984 @@
+     1→"use client";
+     2→
+     3→import { useEffect, useMemo, useState } from "react";
+     4→import { useQuery } from "@tanstack/react-query";
+     5→import { api } from "@/lib/api-client";
+     6→import { useAppStore } from "@/lib/store";
+     7→import { useUser } from "@/lib/user-context";
+     8→import { can } from "@/lib/permissions";
+     9→import { useLocations } from "@/hooks/use-locations";
+    10→import { cn } from "@/lib/utils";
+    11→import { PageHeader, CardSection } from "@/components/shared/page-header";
+    12→import { StatCard } from "@/components/shared/stat-card";
+    13→import { Button } from "@/components/ui/button";
+    14→import { Card, CardContent } from "@/components/ui/card";
+    15→import { Skeleton } from "@/components/ui/skeleton";
+    16→import { Badge } from "@/components/ui/badge";
+    17→import {
+    18→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    19→} from "@/components/ui/select";
+    20→import {
+    21→  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+    22→} from "@/components/ui/table";
+    23→import {
+    24→  RadialBarChart, RadialBar, ResponsiveContainer, PolarAngleAxis,
+    25→} from "recharts";
+    26→import { toast } from "sonner";
+    27→import {
+    28→  Search, Sparkles, Lightbulb, RefreshCw, Hash, Trophy, Target,
+    29→  TrendingUp, TrendingDown, Minus, MapPin, Compass, Building2,
+    30→  ArrowUpDown, ArrowUp, ArrowDown, Loader2, Crown, Info,
+    31→} from "lucide-react";
+    32→import type { GeoGridPoint, LocationWithStats } from "@/lib/types";
+    33→
+    34→// ── Types ────────────────────────────────────────────────────────────
+    35→interface SeoKeyword {
+    36→  id: string;
+    37→  keyword: string;
+    38→  city: string;
+    39→  locationId: string;
+    40→  locationName: string;
+    41→  avgRank: number;
+    42→  topRank: number | null;
+    43→  grid: GeoGridPoint[];
+    44→  gridPoints: number;
+    45→}
+    46→
+    47→interface SeoOverview {
+    48→  totalKeywords: number;
+    49→  avgRank: number;
+    50→  top3Count: number;
+    51→  top10Count: number;
+    52→  totalGridPoints: number;
+    53→}
+    54→
+    55→interface SeoResponse {
+    56→  keywords: SeoKeyword[];
+    57→  overview: SeoOverview;
+    58→}
+    59→
+    60→type SortKey = "keyword" | "city" | "avgRank" | "topRank";
+    61→type SortDir = "asc" | "desc";
+    62→
+    63→// ── Rank → color helpers ─────────────────────────────────────────────
+    64→function rankColor(rank: number): { bg: string; text: string; label: string } {
+    65→  if (!rank || rank <= 0) return { bg: "bg-slate-300 dark:bg-slate-700", text: "text-slate-600 dark:text-slate-300", label: "Not ranked" };
+    66→  if (rank <= 3) return { bg: "bg-emerald-500", text: "text-white", label: "Top 3" };
+    67→  if (rank <= 10) return { bg: "bg-amber-500", text: "text-white", label: "Top 10" };
+    68→  if (rank <= 20) return { bg: "bg-orange-500", text: "text-white", label: "Top 20" };
+    69→  return { bg: "bg-rose-500", text: "text-white", label: "21+" };
+    70→}
+    71→
+    72→function rankColorSoft(rank: number): string {
+    73→  if (!rank || rank <= 0) return "bg-slate-200 dark:bg-slate-700";
+    74→  if (rank <= 3) return "bg-emerald-500";
+    75→  if (rank <= 10) return "bg-amber-500";
+    76→  if (rank <= 20) return "bg-orange-500";
+    77→  return "bg-rose-500";
+    78→}
+    79→
+    80→function rankTextClass(rank: number): string {
+    81→  if (!rank || rank <= 0) return "text-slate-500";
+    82→  if (rank <= 3) return "text-emerald-600 dark:text-emerald-400";
+    83→  if (rank <= 10) return "text-amber-600 dark:text-amber-400";
+    84→  if (rank <= 20) return "text-orange-600 dark:text-orange-400";
+    85→  return "text-rose-600 dark:text-rose-400";
+    86→}
+    87→
+    88→// Deterministic mock trend from a keyword string (seed data has no trend series)
+    89→function mockTrend(keyword: string): { delta: number; dir: "up" | "down" | "flat" } {
+    90→  let h = 0;
+    91→  for (let i = 0; i < keyword.length; i++) h = (h * 31 + keyword.charCodeAt(i)) >>> 0;
+    92→  const v = (h % 7) - 3; // -3..+3
+    93→  return { delta: Math.abs(v), dir: v > 0 ? "up" : v < 0 ? "down" : "flat" };
+    94→}
+    95→
+    96→// ── Build a normalized 5x5 display grid from a flat list of GeoGridPoints ─
+    97→interface GridCell {
+    98→  lat: number;
+    99→  lng: number;
+   100→  rank: number;
+   101→  row: number; // 0 = north (top)
+   102→  col: number; // 0 = west (left)
+   103→}
+   104→
+   105→function buildGrid(points: GeoGridPoint[]): GridCell[] {
+   106→  if (!points || points.length === 0) return [];
+   107→  const lats = Array.from(new Set(points.map((p) => p.lat))).sort((a, b) => b - a); // desc (N→S)
+   108→  const lngs = Array.from(new Set(points.map((p) => p.lng))).sort((a, b) => a - b); // asc (W→E)
+   109→  return points.map((p) => ({
+   110→    lat: p.lat,
+   111→    lng: p.lng,
+   112→    rank: p.rank,
+   113→    row: lats.indexOf(p.lat),
+   114→    col: lngs.indexOf(p.lng),
+   115→  }));
+   116→}
+   117→
+   118→// ── Main view ────────────────────────────────────────────────────────
+   119→export function SeoView() {
+   120→  const user = useUser();
+   121→  const activeLocationId = useAppStore((s) => s.activeLocationId);
+   122→  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+   123→  const canManage = can(user.role, "seo.manage");
+   124→
+   125→  const { data: locations } = useLocations();
+   126→
+   127→  // SEO data
+   128→  const seoQuery = useQuery<SeoResponse>({
+   129→    queryKey: ["seo", activeLocationId],
+   130→    queryFn: () => {
+   131→      const url = activeLocationId && activeLocationId !== "all"
+   132→        ? `/api/seo?locationId=${encodeURIComponent(activeLocationId)}`
+   133→        : "/api/seo";
+   134→      return api<SeoResponse>(url);
+   135→    },
+   136→  });
+   137→
+   138→  // Locations for health/visibility lookup
+   139→  const locQuery = useQuery<LocationWithStats[]>({
+   140→    queryKey: ["locations", "stats"],
+   141→    queryFn: () => api<LocationWithStats[]>("/api/locations"),
+   142→  });
+   143→
+   144→  const keywords = seoQuery.data?.keywords ?? [];
+   145→  const overview = seoQuery.data?.overview;
+   146→  const isLoading = seoQuery.isLoading;
+   147→
+   148→  // Selected keyword for the geo-grid
+   149→  const [selectedKeywordId, setSelectedKeywordId] = useState<string | null>(null);
+   150→
+   151→  // Auto-pick first keyword when data loads / location changes
+   152→  useEffect(() => {
+   153→    if (keywords.length > 0) {
+   154→      if (!selectedKeywordId || !keywords.find((k) => k.id === selectedKeywordId)) {
+   155→        // Pick the keyword with the best avgRank by default
+   156→        const best = [...keywords].sort((a, b) => (a.avgRank || 99) - (b.avgRank || 99))[0];
+   157→        setSelectedKeywordId(best.id);
+   158→      }
+   159→    } else {
+   160→      setSelectedKeywordId(null);
+   161→    }
+   162→  }, [seoQuery.data, keywords, selectedKeywordId]);
+   163→
+   164→  const selectedKeyword = useMemo(
+   165→    () => keywords.find((k) => k.id === selectedKeywordId) ?? null,
+   166→    [keywords, selectedKeywordId],
+   167→  );
+   168→
+   169→  // Health & visibility for the selected location (or avg of all visible)
+   170→  const healthScore = useMemo(() => {
+   171→    if (!locQuery.data || locQuery.data.length === 0) return null;
+   172→    if (activeLocationId && activeLocationId !== "all") {
+   173→      const loc = locQuery.data.find((l) => l.id === activeLocationId);
+   174→      return loc ? loc.healthScore : null;
+   175→    }
+   176→    const avg = locQuery.data.reduce((s, l) => s + l.healthScore, 0) / locQuery.data.length;
+   177→    return Math.round(avg);
+   178→  }, [locQuery.data, activeLocationId]);
+   179→
+   180→  const visibilityScore = useMemo(() => {
+   181→    if (!locQuery.data || locQuery.data.length === 0) return null;
+   182→    if (activeLocationId && activeLocationId !== "all") {
+   183→      const loc = locQuery.data.find((l) => l.id === activeLocationId);
+   184→      return loc ? loc.visibilityScore : null;
+   185→    }
+   186→    const avg = locQuery.data.reduce((s, l) => s + l.visibilityScore, 0) / locQuery.data.length;
+   187→    return Math.round(avg);
+   188→  }, [locQuery.data, activeLocationId]);
+   189→
+   190→  const selectedLocationName = useMemo(() => {
+   191→    if (!activeLocationId || activeLocationId === "all") return "All locations";
+   192→    return locations?.find((l) => l.id === activeLocationId)?.name ?? "Selected location";
+   193→  }, [activeLocationId, locations]);
+   194→
+   195→  // AI recommendations state (lifted so the header button + panel share it)
+   196→  const [recs, setRecs] = useState<string[]>([]);
+   197→  const [recsLoading, setRecsLoading] = useState(false);
+   198→  const [recsError, setRecsError] = useState<string | null>(null);
+   199→  const [hasFetched, setHasFetched] = useState(false);
+   200→  const recsDisabled = !activeLocationId || activeLocationId === "all";
+   201→
+   202→  async function fetchRecs() {
+   203→    if (recsDisabled) return;
+   204→    setRecsLoading(true);
+   205→    setRecsError(null);
+   206→    setHasFetched(true);
+   207→    try {
+   208→      const res = await api<{ recommendations: string[] }>("/api/ai", {
+   209→        method: "POST",
+   210→        body: JSON.stringify({ action: "seo", locationId: activeLocationId }),
+   211→      });
+   212→      setRecs(res.recommendations ?? []);
+   213→      toast.success("MiSA AI recommendations ready");
+   214→      // Scroll the panel into view
+   215→      requestAnimationFrame(() => {
+   216→        document.getElementById("seo-ai-recs")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+   217→      });
+   218→    } catch (e: any) {
+   219→      setRecsError(e.message || "Failed to fetch recommendations");
+   220→      toast.error(e.message || "Failed to fetch recommendations");
+   221→    } finally {
+   222→      setRecsLoading(false);
+   223→    }
+   224→  }
+   225→
+   226→  return (
+   227→    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+   228→      <PageHeader
+   229→        title="Local SEO"
+   230→        description="Track keyword rankings & geo-grid visibility"
+   231→        icon={Search}
+   232→        actions={
+   233→          <>
+   234→            <Select
+   235→              value={activeLocationId}
+   236→              onValueChange={(v) => setActiveLocationId(v as any)}
+   237→            >
+   238→              <SelectTrigger size="sm" className="w-[200px]">
+   239→                <MapPin className="size-3.5 mr-1 text-muted-foreground" />
+   240→                <SelectValue placeholder="All locations" />
+   241→              </SelectTrigger>
+   242→              <SelectContent>
+   243→                <SelectItem value="all">All locations</SelectItem>
+   244→                {locations?.map((l) => (
+   245→                  <SelectItem key={l.id} value={l.id}>
+   246→                    {l.name}
+   247→                  </SelectItem>
+   248→                ))}
+   249→              </SelectContent>
+   250→            </Select>
+   251→            {canManage && (
+   252→              <Button
+   253→                size="sm"
+   254→                onClick={fetchRecs}
+   255→                disabled={recsLoading || recsDisabled}
+   256→                title={recsDisabled ? "Select a specific location to generate recommendations" : undefined}
+   257→              >
+   258→                {recsLoading ? (
+   259→                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+   260→                ) : (
+   261→                  <Sparkles className="size-3.5 mr-1.5" />
+   262→                )}
+   263→                Get AI Recommendations
+   264→              </Button>
+   265→            )}
+   266→          </>
+   267→        }
+   268→      />
+   269→
+   270→      {/* Empty state */}
+   271→      {!isLoading && keywords.length === 0 ? (
+   272→        <EmptyState />
+   273→      ) : (
+   274→        <>
+   275→          {/* Overview stat row */}
+   276→          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+   277→            {isLoading || !overview ? (
+   278→              Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)
+   279→            ) : (
+   280→              <>
+   281→                <StatCard
+   282→                  label="Total Keywords"
+   283→                  value={overview.totalKeywords}
+   284→                  icon={Hash}
+   285→                  hint="Tracked across locations"
+   286→                  accent="emerald"
+   287→                />
+   288→                <StatCard
+   289→                  label="Avg Rank"
+   290→                  value={overview.avgRank ? `#${overview.avgRank}` : "—"}
+   291→                  icon={TrendingUp}
+   292→                  hint="Across all grid points"
+   293→                  accent="amber"
+   294→                />
+   295→                <StatCard
+   296→                  label="Top 3 Positions"
+   297→                  value={overview.top3Count}
+   298→                  icon={Trophy}
+   299→                  hint="Grid points ranked 1–3"
+   300→                  accent="emerald"
+   301→                />
+   302→                <StatCard
+   303→                  label="Top 10 Positions"
+   304→                  value={overview.top10Count}
+   305→                  icon={Target}
+   306→                  hint="Grid points ranked 1–10"
+   307→                  accent="teal"
+   308→                />
+   309→              </>
+   310→            )}
+   311→          </div>
+   312→
+   313→          {/* Geo-grid + Health/Visibility */}
+   314→          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+   315→            <CardSection
+   316→              title="Geo-Grid Ranking"
+   317→              description={selectedKeyword ? `Keyword: ${selectedKeyword.keyword}` : "Select a keyword"}
+   318→              className="lg:col-span-2"
+   319→              action={
+   320→                keywords.length > 0 && (
+   321→                  <Select
+   322→                    value={selectedKeywordId ?? undefined}
+   323→                    onValueChange={setSelectedKeywordId}
+   324→                  >
+   325→                    <SelectTrigger size="sm" className="w-[220px]">
+   326→                      <SelectValue placeholder="Select keyword" />
+   327→                    </SelectTrigger>
+   328→                    <SelectContent>
+   329→                      {keywords.map((k) => (
+   330→                        <SelectItem key={k.id} value={k.id}>
+   331→                          {k.keyword}
+   332→                        </SelectItem>
+   333→                      ))}
+   334→                    </SelectContent>
+   335→                  </Select>
+   336→                )
+   337→              }
+   338→            >
+   339→              {isLoading ? (
+   340→                <div className="flex flex-col items-center gap-4 py-8">
+   341→                  <Skeleton className="h-[340px] w-full max-w-md" />
+   342→                </div>
+   343→              ) : selectedKeyword ? (
+   344→                <GeoGrid keyword={selectedKeyword} locationName={selectedLocationName} />
+   345→              ) : (
+   346→                <div className="py-12 text-center text-sm text-muted-foreground">
+   347→                  No keyword selected.
+   348→                </div>
+   349→              )}
+   350→            </CardSection>
+   351→
+   352→            {/* Health & Visibility + quick legend */}
+   353→            <div className="space-y-4">
+   354→              <CardSection
+   355→                title="Health & Visibility"
+   356→                description={selectedLocationName}
+   357→              >
+   358→                {isLoading || healthScore === null || visibilityScore === null ? (
+   359→                  <Skeleton className="h-40 w-full" />
+   360→                ) : (
+   361→                  <div className="grid grid-cols-2 gap-3">
+   362→                    <ScoreRing label="Health" value={healthScore} />
+   363→                    <ScoreRing label="Visibility" value={visibilityScore} />
+   364→                  </div>
+   365→                )}
+   366→                <div className="mt-4 pt-4 border-t">
+   367→                  <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-2">
+   368→                    Rank color legend
+   369→                  </div>
+   370→                  <div className="grid grid-cols-2 gap-y-1.5 gap-x-2 text-[11px]">
+   371→                    <LegendItem color="bg-emerald-500" label="1 – 3" />
+   372→                    <LegendItem color="bg-amber-500" label="4 – 10" />
+   373→                    <LegendItem color="bg-orange-500" label="11 – 20" />
+   374→                    <LegendItem color="bg-rose-500" label="21+" />
+   375→                    <LegendItem color="bg-slate-300 dark:bg-slate-700" label="Not ranked" />
+   376→                  </div>
+   377→                </div>
+   378→              </CardSection>
+   379→            </div>
+   380→          </div>
+   381→
+   382→          {/* Keyword rankings table */}
+   383→          <CardSection
+   384→            title="Keyword Rankings"
+   385→            description="Click a row to view its geo-grid. Click column headers to sort."
+   386→            action={<Badge variant="outline" className="text-xs">{keywords.length} keywords</Badge>}
+   387→          >
+   388→            <KeywordTable
+   389→              keywords={keywords}
+   390→              isLoading={isLoading}
+   391→              selectedKeywordId={selectedKeywordId}
+   392→              onSelect={setSelectedKeywordId}
+   393→            />
+   394→          </CardSection>
+   395→
+   396→          {/* AI Recommendations + Competitors */}
+   397→          <div id="seo-ai-recs" className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+   398→            <AiRecommendationsPanel
+   399→              locationName={selectedLocationName}
+   400→              canManage={canManage}
+   401→              recs={recs}
+   402→              loading={recsLoading}
+   403→              error={recsError}
+   404→              hasFetched={hasFetched}
+   405→              disabled={recsDisabled}
+   406→              onGenerate={fetchRecs}
+   407→            />
+   408→            <CompetitorMonitoring selectedKeyword={selectedKeyword} />
+   409→          </div>
+   410→        </>
+   411→      )}
+   412→    </div>
+   413→  );
+   414→}
+   415→
+   416→// ── Geo-grid heatmap (centerpiece) ───────────────────────────────────
+   417→function GeoGrid({ keyword, locationName }: { keyword: SeoKeyword; locationName: string }) {
+   418→  const cells = useMemo(() => buildGrid(keyword.grid), [keyword.grid]);
+   419→
+   420→  if (cells.length === 0) {
+   421→    return (
+   422→      <div className="py-12 text-center text-sm text-muted-foreground">
+   423→        No geo-grid data available for this keyword.
+   424→      </div>
+   425→    );
+   426→  }
+   427→
+   428→  // Determine grid size (assume square)
+   429→  const size = Math.max(
+   430→    ...cells.map((c) => c.row + 1),
+   431→    ...cells.map((c) => c.col + 1),
+   432→  );
+   433→
+   434→  // Build 2D array [row][col]
+   435→  const grid: (GridCell | null)[][] = Array.from({ length: size }, () =>
+   436→    Array.from({ length: size }, () => null),
+   437→  );
+   438→  cells.forEach((c) => {
+   439→    grid[c.row][c.col] = c;
+   440→  });
+   441→
+   442→  // Compute summary stats
+   443→  const ranked = cells.filter((c) => c.rank > 0);
+   444→  const top3 = ranked.filter((c) => c.rank <= 3).length;
+   445→  const top10 = ranked.filter((c) => c.rank <= 10).length;
+   446→  const avg = ranked.length
+   447→    ? Math.round((ranked.reduce((s, c) => s + c.rank, 0) / ranked.length) * 10) / 10
+   448→    : 0;
+   449→
+   450→  return (
+   451→    <div className="space-y-4">
+   452→      {/* Title row */}
+   453→      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+   454→        <div>
+   455→          <div className="text-xs text-muted-foreground">
+   456→            {locationName} · {keyword.city}
+   457→          </div>
+   458→          <div className="text-base font-semibold">
+   459→            Geo-Grid Ranking — <span className="text-primary">{keyword.keyword}</span>
+   460→          </div>
+   461→        </div>
+   462→        <div className="flex items-center gap-2 flex-wrap">
+   463→          <MiniStat label="Avg" value={avg ? `#${avg}` : "—"} />
+   464→          <MiniStat label="Top 3" value={`${top3}/${ranked.length || cells.length}`} />
+   465→          <MiniStat label="Top 10" value={`${top10}/${ranked.length || cells.length}`} />
+   466→        </div>
+   467→      </div>
+   468→
+   469→      {/* The grid */}
+   470→      <div className="flex justify-center">
+   471→        <div className="flex items-stretch gap-2">
+   472→          {/* Y-axis label (N/S) */}
+   473→          <div className="flex flex-col items-center justify-between py-1">
+   474→            <span className="text-[10px] font-medium text-muted-foreground">N</span>
+   475→            <Compass className="size-3 text-muted-foreground/60" />
+   476→            <span className="text-[10px] font-medium text-muted-foreground">S</span>
+   477→          </div>
+   478→
+   479→          <div>
+   480→            {/* Top labels (W/E) */}
+   481→            <div className="flex items-center justify-between px-1 mb-1">
+   482→              <span className="text-[10px] font-medium text-muted-foreground">W</span>
+   483→              <span className="text-[10px] text-muted-foreground/70">lat ↓ / lng →</span>
+   484→              <span className="text-[10px] font-medium text-muted-foreground">E</span>
+   485→            </div>
+   486→
+   487→            {/* The 5x5 grid */}
+   488→            <div
+   489→              className="grid gap-1.5"
+   490→              style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+   491→            >
+   492→              {grid.flat().map((cell, idx) => {
+   493→                if (!cell) {
+   494→                  return (
+   495→                    <div
+   496→                      key={idx}
+   497→                      className="size-12 sm:size-14 rounded-md bg-muted/40 border border-dashed"
+   498→                    />
+   499→                  );
+   500→                }
+   501→                const c = rankColor(cell.rank);
+   502→                return (
+   503→                  <div
+   504→                    key={idx}
+   505→                    title={`Rank #${cell.rank || "—"} · lat ${cell.lat.toFixed(4)}, lng ${cell.lng.toFixed(4)}`}
+   506→                    className={cn(
+   507→                      "size-12 sm:size-14 rounded-md flex items-center justify-center text-sm font-bold tabular-nums shadow-sm transition-transform hover:scale-105 cursor-default",
+   508→                      c.bg, c.text,
+   509→                    )}
+   510→                  >
+   511→                    {cell.rank > 0 ? cell.rank : "—"}
+   512→                  </div>
+   513→                );
+   514→              })}
+   515→            </div>
+   516→          </div>
+   517→        </div>
+   518→      </div>
+   519→
+   520→      {/* Mobile legend */}
+   521→      <div className="flex items-center justify-center gap-3 flex-wrap text-[11px] sm:hidden">
+   522→        <LegendItem color="bg-emerald-500" label="1–3" />
+   523→        <LegendItem color="bg-amber-500" label="4–10" />
+   524→        <LegendItem color="bg-orange-500" label="11–20" />
+   525→        <LegendItem color="bg-rose-500" label="21+" />
+   526→        <LegendItem color="bg-slate-300 dark:bg-slate-700" label="N/A" />
+   527→      </div>
+   528→
+   529→      {/* Helper note */}
+   530→      <div className="flex items-start gap-2 text-[11px] text-muted-foreground bg-muted/30 rounded-md p-2.5">
+   531→        <Info className="size-3.5 shrink-0 mt-0.5" />
+   532→        <span>
+   533→          Each cell represents a search performed at that lat/lng point around {locationName}.
+   534→          Brighter colors = better ranking. The center cell is the location&apos;s exact coordinates.
+   535→        </span>
+   536→      </div>
+   537→    </div>
+   538→  );
+   539→}
+   540→
+   541→function MiniStat({ label, value }: { label: string; value: string }) {
+   542→  return (
+   543→    <div className="rounded-md border bg-muted/30 px-2.5 py-1 text-center">
+   544→      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+   545→      <div className="text-sm font-bold tabular-nums">{value}</div>
+   546→    </div>
+   547→  );
+   548→}
+   549→
+   550→// ── Score ring (radial gauge) ────────────────────────────────────────
+   551→function ScoreRing({ label, value }: { label: string; value: number }) {
+   552→  const color = value >= 75 ? "#10b981" : value >= 50 ? "#f59e0b" : "#f43f5e";
+   553→  const data = [{ name: label, value, fill: color }];
+   554→  return (
+   555→    <div className="flex flex-col items-center">
+   556→      <div className="relative w-full h-28">
+   557→        <ResponsiveContainer width="100%" height="100%">
+   558→          <RadialBarChart
+   559→            innerRadius="72%"
+   560→            outerRadius="100%"
+   561→            data={data}
+   562→            startAngle={90}
+   563→            endAngle={-270}
+   564→          >
+   565→            <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+   566→            <RadialBar
+   567→              background={{ fill: "var(--muted)" }}
+   568→              dataKey="value"
+   569→              cornerRadius={10}
+   570→              angleAxisId={0}
+   571→            />
+   572→          </RadialBarChart>
+   573→        </ResponsiveContainer>
+   574→        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+   575→          <span className="text-xl font-bold tabular-nums" style={{ color }}>{value}</span>
+   576→          <span className="text-[10px] text-muted-foreground">/ 100</span>
+   577→        </div>
+   578→      </div>
+   579→      <div className="text-xs font-medium text-muted-foreground -mt-1">{label}</div>
+   580→    </div>
+   581→  );
+   582→}
+   583→
+   584→function LegendItem({ color, label }: { color: string; label: string }) {
+   585→  return (
+   586→    <div className="flex items-center gap-1.5">
+   587→      <span className={cn("size-3 rounded-sm", color)} />
+   588→      <span className="text-muted-foreground">{label}</span>
+   589→    </div>
+   590→  );
+   591→}
+   592→
+   593→// ── Keyword table ────────────────────────────────────────────────────
+   594→function KeywordTable({
+   595→  keywords, isLoading, selectedKeywordId, onSelect,
+   596→}: {
+   597→  keywords: SeoKeyword[];
+   598→  isLoading: boolean;
+   599→  selectedKeywordId: string | null;
+   600→  onSelect: (id: string) => void;
+   601→}) {
+   602→  const [sortKey, setSortKey] = useState<SortKey>("avgRank");
+   603→  const [sortDir, setSortDir] = useState<SortDir>("asc");
+   604→
+   605→  const sorted = useMemo(() => {
+   606→    const arr = [...keywords];
+   607→    arr.sort((a, b) => {
+   608→      let av: number | string = 0;
+   609→      let bv: number | string = 0;
+   610→      switch (sortKey) {
+   611→        case "keyword": av = a.keyword.toLowerCase(); bv = b.keyword.toLowerCase(); break;
+   612→        case "city": av = a.city.toLowerCase(); bv = b.city.toLowerCase(); break;
+   613→        case "avgRank": av = a.avgRank || 99; bv = b.avgRank || 99; break;
+   614→        case "topRank": av = a.topRank ?? 99; bv = b.topRank ?? 99; break;
+   615→      }
+   616→      if (av < bv) return sortDir === "asc" ? -1 : 1;
+   617→      if (av > bv) return sortDir === "asc" ? 1 : -1;
+   618→      return 0;
+   619→    });
+   620→    return arr;
+   621→  }, [keywords, sortKey, sortDir]);
+   622→
+   623→  function toggleSort(key: SortKey) {
+   624→    if (sortKey === key) {
+   625→      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+   626→    } else {
+   627→      setSortKey(key);
+   628→      setSortDir(key === "keyword" || key === "city" ? "asc" : "asc");
+   629→    }
+   630→  }
+   631→
+   632→  if (isLoading) {
+   633→    return <Skeleton className="h-64 w-full" />;
+   634→  }
+   635→
+   636→  if (keywords.length === 0) {
+   637→    return (
+   638→      <div className="py-10 text-center text-sm text-muted-foreground">
+   639→        No keywords tracked yet.
+   640→      </div>
+   641→    );
+   642→  }
+   643→
+   644→  return (
+   645→    <div className="max-h-[28rem] overflow-y-auto scroll-area -mx-1">
+   646→      <Table>
+   647→        <TableHeader>
+   648→          <TableRow className="bg-muted/30">
+   649→            <SortableHead label="Keyword" k="keyword" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="min-w-[180px]" />
+   650→            <SortableHead label="City" k="city" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+   651→            <SortableHead label="Avg Rank" k="avgRank" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+   652→            <SortableHead label="Top Rank" k="topRank" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+   653→            <TableHead className="text-center">Grid Preview</TableHead>
+   654→            <TableHead className="text-right">Trend</TableHead>
+   655→          </TableRow>
+   656→        </TableHeader>
+   657→        <TableBody>
+   658→          {sorted.map((k) => {
+   659→            const isSelected = k.id === selectedKeywordId;
+   660→            const trend = mockTrend(k.keyword);
+   661→            return (
+   662→              <TableRow
+   663→                key={k.id}
+   664→                onClick={() => onSelect(k.id)}
+   665→                className={cn(
+   666→                  "cursor-pointer",
+   667→                  isSelected && "bg-primary/5",
+   668→                )}
+   669→              >
+   670→                <TableCell className="font-medium">
+   671→                  <div className="flex items-center gap-2">
+   672→                    {isSelected && <span className="size-1.5 rounded-full bg-primary" />}
+   673→                    <span className="truncate max-w-[220px]">{k.keyword}</span>
+   674→                  </div>
+   675→                </TableCell>
+   676→                <TableCell>
+   677→                  <Badge variant="outline" className="text-[10px]">{k.city}</Badge>
+   678→                </TableCell>
+   679→                <TableCell className="text-right">
+   680→                  <span className={cn("font-bold tabular-nums", rankTextClass(k.avgRank))}>
+   681→                    {k.avgRank ? `#${k.avgRank}` : "—"}
+   682→                  </span>
+   683→                </TableCell>
+   684→                <TableCell className="text-right">
+   685→                  {k.topRank ? (
+   686→                    <span className={cn("font-semibold tabular-nums", rankTextClass(k.topRank))}>
+   687→                      #{k.topRank}
+   688→                    </span>
+   689→                  ) : (
+   690→                    <span className="text-muted-foreground">—</span>
+   691→                  )}
+   692→                </TableCell>
+   693→                <TableCell className="text-center">
+   694→                  <MiniGrid points={k.grid} />
+   695→                </TableCell>
+   696→                <TableCell className="text-right">
+   697→                  <TrendBadge delta={trend.delta} dir={trend.dir} />
+   698→                </TableCell>
+   699→              </TableRow>
+   700→            );
+   701→          })}
+   702→        </TableBody>
+   703→      </Table>
+   704→    </div>
+   705→  );
+   706→}
+   707→
+   708→function SortableHead({
+   709→  label, k, sortKey, sortDir, onSort, align = "left", className,
+   710→}: {
+   711→  label: string;
+   712→  k: SortKey;
+   713→  sortKey: SortKey;
+   714→  sortDir: SortDir;
+   715→  onSort: (k: SortKey) => void;
+   716→  align?: "left" | "right";
+   717→  className?: string;
+   718→}) {
+   719→  const active = sortKey === k;
+   720→  return (
+   721→    <TableHead className={cn(align === "right" && "text-right", className)}>
+   722→      <button
+   723→        onClick={() => onSort(k)}
+   724→        className={cn(
+   725→          "inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wide hover:text-foreground transition",
+   726→          align === "right" && "flex-row-reverse",
+   727→          active ? "text-foreground" : "text-muted-foreground",
+   728→        )}
+   729→      >
+   730→        {label}
+   731→        {active ? (
+   732→          sortDir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />
+   733→        ) : (
+   734→          <ArrowUpDown className="size-3 opacity-40" />
+   735→        )}
+   736→      </button>
+   737→    </TableHead>
+   738→  );
+   739→}
+   740→
+   741→function MiniGrid({ points }: { points: GeoGridPoint[] }) {
+   742→  const cells = useMemo(() => buildGrid(points).slice(0, 25), [points]);
+   743→  if (cells.length === 0) {
+   744→    return <span className="text-xs text-muted-foreground">—</span>;
+   745→  }
+   746→  const size = Math.max(
+   747→    ...cells.map((c) => c.row + 1),
+   748→    ...cells.map((c) => c.col + 1),
+   749→  );
+   750→  const grid: (GridCell | null)[][] = Array.from({ length: size }, () =>
+   751→    Array.from({ length: size }, () => null),
+   752→  );
+   753→  cells.forEach((c) => { grid[c.row][c.col] = c; });
+   754→
+   755→  return (
+   756→    <div
+   757→      className="inline-grid gap-[2px]"
+   758→      style={{ gridTemplateColumns: `repeat(${size}, 1fr)` }}
+   759→    >
+   760→      {grid.flat().map((cell, idx) => (
+   761→        <div
+   762→          key={idx}
+   763→          title={cell ? `Rank #${cell.rank || "—"}` : "No data"}
+   764→          className={cn(
+   765→            "size-2 rounded-[2px]",
+   766→            cell ? rankColorSoft(cell.rank) : "bg-muted",
+   767→          )}
+   768→        />
+   769→      ))}
+   770→    </div>
+   771→  );
+   772→}
+   773→
+   774→function TrendBadge({ delta, dir }: { delta: number; dir: "up" | "down" | "flat" }) {
+   775→  if (dir === "flat") {
+   776→    return (
+   777→      <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+   778→        <Minus className="size-3" /> 0
+   779→      </span>
+   780→    );
+   781→  }
+   782→  // For rank: "up" trend (improvement) = green arrow up; "down" = red arrow down
+   783→  const isGood = dir === "up";
+   784→  return (
+   785→    <span
+   786→      className={cn(
+   787→        "inline-flex items-center gap-0.5 text-xs font-medium tabular-nums",
+   788→        isGood ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+   789→      )}
+   790→    >
+   791→      {isGood ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
+   792→      {delta}
+   793→    </span>
+   794→  );
+   795→}
+   796→
+   797→// ── AI Recommendations ───────────────────────────────────────────────
+   798→function AiRecommendationsPanel({
+   799→  locationName, canManage, recs, loading, error, hasFetched, disabled, onGenerate,
+   800→}: {
+   801→  locationName: string;
+   802→  canManage: boolean;
+   803→  recs: string[];
+   804→  loading: boolean;
+   805→  error: string | null;
+   806→  hasFetched: boolean;
+   807→  disabled: boolean;
+   808→  onGenerate: () => void;
+   809→}) {
+   810→  return (
+   811→    <CardSection
+   812→      title="AI SEO Recommendations"
+   813→      description={canManage ? "MiSA AI analyzes keyword data to suggest improvements" : "View-only — ask a manager to generate"}
+   814→      className="lg:col-span-2"
+   815→      action={
+   816→        canManage && (
+   817→          <Button size="sm" variant="outline" onClick={onGenerate} disabled={loading || disabled}>
+   818→            {loading ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="size-3.5 mr-1.5" />}
+   819→            {hasFetched ? "Regenerate" : "Generate"}
+   820→          </Button>
+   821→        )
+   822→      }
+   823→    >
+   824→      {disabled ? (
+   825→        <div className="py-8 text-center text-sm text-muted-foreground">
+   826→          <Info className="size-6 mx-auto mb-2 text-muted-foreground/60" />
+   827→          Select a specific location above to generate AI recommendations.
+   828→        </div>
+   829→      ) : loading ? (
+   830→        <div className="space-y-3">
+   831→          {Array.from({ length: 5 }).map((_, i) => (
+   832→            <div key={i} className="rounded-lg border p-4">
+   833→              <div className="flex items-start gap-3">
+   834→                <Skeleton className="size-7 rounded-md shrink-0" />
+   835→                <div className="flex-1 space-y-2">
+   836→                  <Skeleton className="h-3 w-1/3" />
+   837→                  <Skeleton className="h-3 w-full" />
+   838→                  <Skeleton className="h-3 w-5/6" />
+   839→                </div>
+   840→              </div>
+   841→            </div>
+   842→          ))}
+   843→        </div>
+   844→      ) : error ? (
+   845→        <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-4 text-sm text-rose-700 dark:text-rose-400">
+   846→          {error}
+   847→        </div>
+   848→      ) : recs.length > 0 ? (
+   849→        <div className="space-y-3">
+   850→          {recs.map((rec, i) => (
+   851→            <div key={i} className="rounded-lg border p-4 bg-card hover:border-primary/30 transition">
+   852→              <div className="flex items-start gap-3">
+   853→                <div className="size-7 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+   854→                  <Lightbulb className="size-3.5" />
+   855→                </div>
+   856→                <div className="flex-1 min-w-0">
+   857→                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+   858→                    Recommendation #{i + 1}
+   859→                  </div>
+   860→                  <p className="text-sm leading-relaxed">{rec}</p>
+   861→                </div>
+   862→              </div>
+   863→            </div>
+   864→          ))}
+   865→          <div className="text-[11px] text-muted-foreground pt-1">
+   866→            Generated by MiSA AI for {locationName}.
+   867→          </div>
+   868→        </div>
+   869→      ) : (
+   870→        <div className="py-8 text-center text-sm text-muted-foreground">
+   871→          <Sparkles className="size-7 mx-auto mb-2 text-amber-500/60" />
+   872→          {canManage
+   873→            ? "Click \"Get AI Recommendations\" above (or \"Generate\") to get 5 AI-powered SEO recommendations based on this location's keyword data."
+   874→            : "No recommendations yet. Ask a Marketing Manager or Super Admin to generate."}
+   875→        </div>
+   876→      )}
+   877→    </CardSection>
+   878→  );
+   879→}
+   880→
+   881→// ── Competitor monitoring (mock) ─────────────────────────────────────
+   882→const MOCK_COMPETITORS = [
+   883→  { name: "Livspace", avgRank: 2.5, change: -0.4 },
+   884→  { name: "HomeLane", avgRank: 3.2, change: 0.2 },
+   885→  { name: "Pepperfry", avgRank: 6.8, change: -0.1 },
+   886→  { name: "Urban Ladder", avgRank: 9.4, change: 0.6 },
+   887→];
+   888→
+   889→function CompetitorMonitoring({ selectedKeyword }: { selectedKeyword: SeoKeyword | null }) {
+   890→  const myRank = selectedKeyword?.avgRank ?? 0;
+   891→  const competitors = useMemo(() => {
+   892→    const base = [...MOCK_COMPETITORS];
+   893→    if (myRank > 0) {
+   894→      base.unshift({ name: "MyFNG (you)", avgRank: myRank, change: 0 });
+   895→    }
+   896→    return base.sort((a, b) => a.avgRank - b.avgRank);
+   897→  }, [myRank]);
+   898→
+   899→  const maxRank = Math.max(...competitors.map((c) => c.avgRank), 15);
+   900→
+   901→  return (
+   902→    <CardSection
+   903→      title="Competitor Monitoring"
+   904→      description={selectedKeyword ? `For: ${selectedKeyword.keyword}` : "Select a keyword"}
+   905→      action={<Badge variant="outline" className="text-[10px]">Mock data</Badge>}
+   906→    >
+   907→      <div className="space-y-3">
+   908→        {competitors.map((c) => {
+   909→          const isMe = c.name.startsWith("MyFNG");
+   910→          const pct = Math.min(100, (c.avgRank / maxRank) * 100);
+   911→          // Lower rank = better. Bar fills from right (better) to left.
+   912→          const fillPct = 100 - pct;
+   913→          const rankCls = c.avgRank <= 3 ? "bg-emerald-500" : c.avgRank <= 10 ? "bg-amber-500" : c.avgRank <= 20 ? "bg-orange-500" : "bg-rose-500";
+   914→          return (
+   915→            <div key={c.name} className="space-y-1">
+   916→              <div className="flex items-center justify-between text-xs">
+   917→                <div className="flex items-center gap-1.5 min-w-0">
+   918→                  {isMe ? (
+   919→                    <Crown className="size-3.5 text-amber-500 shrink-0" />
+   920→                  ) : (
+   921→                    <Building2 className="size-3.5 text-muted-foreground shrink-0" />
+   922→                  )}
+   923→                  <span className={cn("font-medium truncate", isMe && "text-primary")}>{c.name}</span>
+   924→                </div>
+   925→                <div className="flex items-center gap-1.5 shrink-0">
+   926→                  <span className={cn("font-bold tabular-nums", rankTextClass(c.avgRank))}>#{c.avgRank}</span>
+   927→                  {!isMe && c.change !== 0 && (
+   928→                    <span
+   929→                      className={cn(
+   930→                        "inline-flex items-center text-[10px] tabular-nums",
+   931→                        c.change < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+   932→                      )}
+   933→                    >
+   934→                      {c.change < 0 ? <TrendingUp className="size-2.5" /> : <TrendingDown className="size-2.5" />}
+   935→                      {Math.abs(c.change)}
+   936→                    </span>
+   937→                  )}
+   938→                </div>
+   939→              </div>
+   940→              <div className="h-2 rounded-full bg-muted overflow-hidden">
+   941→                <div
+   942→                  className={cn("h-full rounded-full transition-all", isMe ? "bg-primary" : rankCls)}
+   943→                  style={{ width: `${fillPct}%` }}
+   944→                />
+   945→              </div>
+   946→            </div>
+   947→          );
+   948→        })}
+   949→      </div>
+   950→      <div className="mt-4 pt-3 border-t flex items-start gap-2 text-[11px] text-muted-foreground">
+   951→        <Info className="size-3.5 shrink-0 mt-0.5" />
+   952→        <span>
+   953→          Mock competitor data for illustration. Connect a real rank-tracking integration
+   954→          (e.g. Local Falcon, BrightLocal) to populate live competitor rankings.
+   955→        </span>
+   956→      </div>
+   957→    </CardSection>
+   958→  );
+   959→}
+   960→
+   961→// ── Empty state ──────────────────────────────────────────────────────
+   962→function EmptyState() {
+   963→  const setView = useAppStore((s) => s.setView);
+   964→  return (
+   965→    <Card>
+   966→      <CardContent className="p-10 text-center">
+   967→        <div className="size-14 mx-auto rounded-full bg-muted flex items-center justify-center mb-4">
+   968→          <Search className="size-7 text-muted-foreground" />
+   969→        </div>
+   970→        <h3 className="text-lg font-semibold">No keywords tracked yet</h3>
+   971→        <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
+   972→          Once keywords are added for your locations, you&apos;ll see ranking data,
+   973→          a 5×5 geo-grid heatmap, and AI recommendations here.
+   974→        </p>
+   975→        <div className="mt-5 flex items-center justify-center gap-2">
+   976→          <Button variant="outline" size="sm" onClick={() => setView("dashboard")}>
+   977→            Back to dashboard
+   978→          </Button>
+   979→        </div>
+   980→      </CardContent>
+   981→    </Card>
+   982→  );
+   983→}
+   984→

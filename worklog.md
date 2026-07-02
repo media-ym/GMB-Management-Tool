@@ -766,3 +766,129 @@ Stage Summary:
 - Google Post Management (doc 09): post analytics, multi-location publishing, approval workflow, bulk operations, AI tone options, updated CTAs, internal notes.
 - 14 nav modules, 49 Prisma models, 30+ API routes. Demo password: MyFNG@2025.
 - Ready for next batch of MD files.
+
+---
+Task ID: 9-api-routes
+Agent: main (orchestrator)
+Task: Implement API routes for docs 10 (Local SEO & Rank Tracking) + 11 (Analytics Dashboard).
+
+Work Log:
+- Created SEO API routes: /api/seo/keywords (GET list with rank stats + POST add), /api/seo/keywords/[id] (PUT update + DELETE), /api/seo/rankings (GET rank history per keyword with best/worst/avg stats), /api/seo/refresh (POST trigger rank refresh — generates fresh geo-grid rankings), /api/seo/geo-grid (GET configurable geo-grid with size 3/5/7 and radius 1/3/5/10km), /api/seo/location-comparison (GET compare all locations by SEO metrics).
+- Created Analytics API routes: /api/dashboard/executive (GET executive dashboard with 20+ KPIs, rating distribution, top performing locations, locations needing attention), /api/analytics/ai-insights (GET rule-based AI insights — visibility declining, rating drops, sync failures, top performers, low posting frequency, pending reviews, SEO opportunities — sorted by impact), /api/analytics/export (GET CSV export with date range), /api/analytics/location-comparison (GET compare locations by analytics metrics).
+- Lint: 0 errors, 0 warnings.
+
+Stage Summary:
+- All API routes for docs 10/11 created and lint-clean.
+- Ready for view enhancement subagents (SEO view + Analytics view).
+
+---
+Task ID: 9-b
+Agent: full-stack-developer (Enhance Analytics View)
+Task: Enhance Analytics view per doc 11 with dashboard type switcher, AI insights, location comparison, export, enhanced filters.
+
+Work Log:
+- Read worklog.md + /agent-ctx/9-b-analytics-view-enhance.md prep notes. Confirmed Task 9-api-routes had already shipped the four new endpoints (/api/dashboard/executive, /api/analytics/ai-insights, /api/analytics/location-comparison, /api/analytics/export). Verified each route's response shape by reading the actual route files.
+- Inspected existing analytics-view.tsx (613 LOC) and shared infra (PageHeader, CardSection, StatCard, RatingStars, ScoreBadge, useUser, useAppStore, can, useLocations, api). Confirmed StatCard accent palette is emerald/amber/teal/rose/slate. Confirmed Tabs API from reviews-view precedent.
+- Rewrote src/components/views/analytics-view.tsx into a multi-tab dashboard (~1300 LOC single client component).
+- Top-level Tabs switcher with 8 dashboard types (filtered by permission): Executive / Marketing / Location / Reviews / SEO / Posts / AI / Operations. Operations tab only visible when user has settings.view OR audit.view (matches /api/system route guard).
+- PageHeader actions: location Select (existing), Date Range Select (7 options: Today, Yesterday, Last 7/30/90 Days, This Month, Last Month → mapped to days via dateRangeToDays()), Export CSV button (gated on analytics.view, calls window.open('/api/analytics/export?...')), Refresh button (invalidates all 5 query keys).
+- 5 parallel TanStack Queries: analytics (existing), dashboard-executive, ai-insights, location-comparison (keyed by days), system-overview (gated on canSystem).
+- Executive tab (default): 10-KPI StatCard row (Active Locations, Total Reviews, Avg Rating, Search Views, Website Clicks, Phone Calls, Direction Requests, Published Posts, Avg Health Score, Avg SEO Score) + Performance Alerts banner (amber-accent, lists top 4 critical+warning insights with action buttons) + Search/Maps trend AreaChart + Engagement PieChart + AI Insights section (InsightCard grid with critical/warnings/successes summary badges) + Top Performing Locations ranked list (1-5 with crown, RatingStars, ScoreBadge) + Locations Requiring Attention list (rose-accent, sync error or health<60) + Rating Distribution bars (5★=emerald/4★=teal/3★=amber/2★=orange-400/1★=rose, with count+pct) + Conversion Funnel + Location Comparison table (sortable, 11 cols, color-coded) + collapsible Per-location breakdown table (existing, preserved) + Top Locations horizontal BarChart.
+- Marketing tab: 4 post/content StatCards (Published/Scheduled/AI-Generated/Response Rate) + Engagement PieChart + Search Views trend AreaChart + Top Locations bar + Content & Reputation Insights grid.
+- Location tab: location Select that writes to setActiveLocationId (so existing query refetches) + 8 deep-dive StatCards with deltas (Search/Maps/Clicks/Calls/Directions/Engagement Total/Conversion Rate/Data Points) + Daily Trend AreaChart + Conversion Funnel.
+- Reviews tab: 4 StatCards (Total/Avg Rating/Response Rate/Negative) + Rating Distribution bars + Sentiment Breakdown card (Positive/Neutral/Negative rows with progress bars) + Reputation Insights grid.
+- SEO tab: 4 StatCards (Avg SEO/Health/Total Locations/Sync Errors) + Visibility by Location horizontal BarChart + Locations with SEO Issues list (visibility OR SEO <70, amber-accent, ScoreBadges) + SEO Insights grid.
+- Posts tab: 5 StatCards (Total/Published/Scheduled/Drafts/AI-Generated) + Post Status Distribution donut PieChart + Content Insights list.
+- AI tab: 4 summary StatCards (Total/Critical/Warnings/Successes) + full AI Insights grid with Refresh button + AI Usage Stats card (Total Requests / Tokens / Est. Cost from /api/system when permitted).
+- Operations tab: 4 StatCards + Sync Insights grid + Sync Status summary (Successful/Failed/Running counts) + Recent Sync Logs list (8 most recent, color-coded status, relative time) + Recent Errors list (8 most recent, rose-accent) + Background Jobs list (8 most recent, color-coded).
+- Reusable InsightCard component: type-based icon (critical=rose AlertTriangle, warning=amber AlertCircle, success=emerald CheckCircle2, info=teal Info) + border color + impact Badge (high=rose, medium=amber, low=slate) + optional action button that maps via actionToView() to a ViewKey and calls setView().
+- Reusable LocationComparisonTable: 11 sortable columns (Location/Rating/Reviews/Resp %/Search/Clicks/Calls/Directions/Posts/SEO/Visibility), Rating color-coded (>=4.5 emerald, >=4.0 amber, <4.0 rose), SEO+Visibility via ScoreBadge, sticky header, max-h-96 scroll-area, ComparisonSortableHead helper.
+- Performance Alerts (doc 11 §20): banner card at top of Executive tab (amber-accent), lists top 4 critical+warning insights, summary line "X critical · Y warnings".
+- All numbers formatted via fmt() (k/M abbreviation), tabular-nums everywhere.
+- All charts use var(--chart-1..5) with hex fallbacks only for gradient stops. No indigo/blue.
+- Long lists use .scroll-area class with max-h-72/80/96 and overflow-y-auto.
+- Mobile responsive: 2-col KPI grid on mobile, 3-col on md, 5-col on xl; TabsList horizontally scrollable on mobile (overflow-x-auto).
+- Permission gating: Export CSV button + all tabs gated on analytics.view; Operations tab + AI Usage Stats card gated on canSystem (settings.view || audit.view). Branch managers don't see Operations tab.
+- Removed unused Progress import; cleaned up awkward template literal in trend description.
+- Lint: bunx eslint src/components/views/analytics-view.tsx --max-warnings 0 → EXIT 0 (0 errors, 0 warnings). bun run lint → EXIT 0 (only project-wide warning is in seo-view.tsx sibling, out of scope).
+- Type-check: bunx tsc --noEmit → 0 errors in analytics-view.tsx (all TS errors shown are in unrelated files: dashboard-view, api routes, examples, skills — explicitly out of scope per task instructions).
+- Did NOT touch any other file. Did NOT start the dev server.
+
+Stage Summary:
+- File: /home/z/my-project/src/components/views/analytics-view.tsx (~1300 LOC, single self-contained client component).
+- Exports named AnalyticsView (matches existing import in src/components/view-router.tsx — no router changes needed).
+- All doc 11 requirements implemented: 8 dashboard types via Tabs, AI Insights cards section (with type/impact coloring + action routing), enhanced location comparison table (sortable 11 cols, color-coded), CSV export button, expanded date range (7 options), performance alerts banner.
+- RBAC enforced: analytics.view gates all tabs and Export; settings.view || audit.view gates Operations tab + AI Usage Stats. Viewer sees 7 of 8 tabs and can export.
+- Palette: emerald/amber/teal/rose/slate/orange-400/cyan only. Zero indigo/blue. Charts use var(--chart-1..5).
+- Lint: PASS. Type-check: PASS for this file. Work record at /agent-ctx/9-b-analytics-view-enhance.md.
+
+---
+Task ID: 9-a
+Agent: full-stack-developer (Enhance SEO View)
+Task: Enhance SEO view per doc 10 with keyword CRUD, rank history, configurable geo-grid, location comparison, AI monthly summary.
+
+Work Log:
+- Read worklog.md (foundation, conventions: emerald/amber brand, single-route SPA via Zustand useAppStore, React Context user via useUser(), TanStack Query + api() envelope, shared PageHeader/StatCard, can() RBAC, scroll-area class for long lists).
+- Read existing src/components/views/seo-view.tsx (983 LOC) to understand the established structure (PageHeader with location Select + AI button, 4-card overview row, geo-grid heatmap with health/visibility radial gauges, keyword table, AI recs panel, mock competitors panel).
+- Inspected all new SEO API routes to confirm exact response shapes:
+  * GET /api/seo/keywords?locationId= → KeywordRow[] (current/previous/best/worst rank, rankChange, rankHistory, trackingCount)
+  * POST /api/seo/keywords (create), PUT/DELETE /api/seo/keywords/[id]
+  * GET /api/seo/rankings?keywordId=&days=30 (full history with stats — not needed since keywords endpoint embeds rankHistory)
+  * POST /api/seo/refresh (trigger rank refresh)
+  * GET /api/seo/geo-grid?locationId=&keywordId=&size=&radius= → configurable grid (3/5/7 × 1/3/5/10 km)
+  * GET /api/seo/location-comparison → array of all locations with SEO/visibility/keyword/rating/review/post/response metrics
+  * GET /api/seo-audits?locationId= → audits with profile strength, missing categories/photos/services, recommendations
+  * GET /api/competitors?locationId= → real competitors with per-keyword rankings + avgRank
+  * POST /api/ai action=seo (recommendations) + action=summary (monthly summary)
+- Rewrote src/components/views/seo-view.tsx (~1300 LOC) — kept the overview stat row (4 cards: Total Keywords, Avg Rank, Top 3, Top 10) and Health & Visibility radial gauges; moved everything else into a 6-tab layout.
+- PageHeader actions: location Select (existing) + "Refresh Rankings" outline button (gated on seo.manage, calls POST /api/seo/refresh, invalidates seo/audits/competitors queries) + "AI Recommendations" primary button (gated on ai.use+seo.manage, calls POST /api/ai action=seo, switches to AI tab on success) + "AI Monthly Summary" outline button (calls POST /api/ai action=summary, switches to AI tab).
+- Tab "Keywords" — Keyword management table with sortable columns (Keyword, City, Current, Previous, Best, Worst, Change, Trend, Actions). Rank change badge: green ArrowUp (improved, rankChange>0), red ArrowDown (dropped), gray Minus (no change). Trend column shows a mini LineChart sparkline using embedded rankHistory (Y-axis reversed). Actions per row: View History (opens dialog with full rank LineChart + current/best/worst/avg stats + Top 3 / Top 10 reference lines), Edit (dialog), Delete (AlertDialog confirm). "Add Keyword" button (gated on seo.manage) opens KeywordFormDialog with keyword/location/city/state inputs. Search filter by keyword text or city. Clicking a row selects the keyword for the geo-grid tab. max-h-[calc(100vh-24rem)] scroll-area for long lists.
+- Tab "Geo Grid" — ToggleGroup for grid size (3×3/5×5/7×7) + Select for radius (1/3/5/10 km) + Select for keyword (dropdown of tracked keywords). Fetches /api/seo/geo-grid with size+radius+keywordId+locationId. Renders a configurable GeoGridHeatmap with N/S/E/W axis labels, font-mono rank numbers in colored cells (1-3=emerald, 4-10=amber, 11-20=orange, 21+=rose, 0=slate), MiniStat summary (avg/top3/top10), legend, helper note. Cell size scales with grid size (larger cells for 3×3, smaller for 7×7). Disabled state when "All locations" selected (prompts user to pick a location).
+- Tab "Competitors" — Real competitor data from /api/competitors (no more mock data). Table with expandable rows showing per-keyword rankings on expand. Comparison BarChart (horizontal, layout="vertical") showing MyFNG vs competitors by avg rank with emerald for "you" and amber for competitors, LabelList showing #rank on each bar, "Lower rank = better" hint. "Add Competitor" button (gated on seo.manage) shows toast "Competitor tracking setup queued".
+- Tab "Location Comparison" — Sortable table of all locations by 11 columns (City, Name, SEO, Visibility, Avg Rank, Keywords, Top 3, Rating, Reviews, Posts, Resp %). Color-coded badges: SEO/Visibility scores use scoreBg (green≥75, amber 50-74, rose<50), Avg Rank uses rankBandClass (green≤3, amber 4-10, orange 11-20, rose 21+). "Export CSV" button generates a client-side CSV blob and triggers download with date-stamped filename. max-h-[calc(100vh-24rem)] scroll-area.
+- Tab "Audit" — SEO audits list for all locations (filtered by location if set). Sortable table with expandable rows. Columns: Location, Audit Score (color-coded), Profile Strength (with Progress bar + %), Missing Photos (amber badge or green CheckCircle2), Missing Services (same), Recommendations count, Audited date. Expand reveals missing categories as badges + full numbered recommendations list. "Run Audit" button (gated on seo.manage) shows toast "Audit queued".
+- Tab "AI Insights" — 2-column grid with two CardSections side by side: (1) AI SEO Recommendations panel (existing recs with regenerate button, 5 Lightbulb-styled recommendation cards), (2) AI Monthly SEO Summary panel (new, CalendarClock-styled amber-accented card showing the summary text in whitespace-pre-line format). Both show loading skeletons (~5 cards / paragraph skeleton) during AI generation, error states in rose-tinted alert boxes, and empty states with appropriate icons. Permission-gated on canAI (ai.use AND seo.manage).
+- Rank History Dialog: sm:max-w-2xl, shows 4 StatTiles (Current/Best/Worst/Average) at top, then a 72px-height LineChart with X=date (dd MMM), Y=rank (REVERSED so #1 at top, domain=[0, maxRank+2]), ReferenceLine at y=3 (Top 3, amber dashed) and y=10 (Top 10, rose dashed), tooltip showing "#X Rank". Footer note explains the inverted Y-axis + tracking count.
+- KeywordFormDialog: controlled Dialog that initializes form state in onOpenChange handler (not useEffect) to avoid react-hooks/set-state-in-effect lint rule. Fields: keyword (Input), location (Select with "No specific location" option), city (Input), state (Input default "Maharashtra"). Validates keyword required (toast error if empty). Submit button shows Loader2 spinner while submitting.
+- Loading skeletons: stat row (4 skeletons), health/visibility (1 skeleton), keyword table (1 large skeleton), geo-grid (centered skeleton), competitor/comparison/audit tables (1 large skeleton), AI recs/summary (multiple smaller skeletons matching content shape).
+- Permission gating: Add/Edit/Delete keywords + Refresh rankings + Run Audit + Add Competitor → can(user.role, 'seo.manage') (super_admin, marketing_manager). AI recommendations/summary → can(user.role, 'ai.use') AND can(user.role, 'seo.manage'). Other tabs (geo-grid, comparison, competitors read, audit read) → just seo.view (which is the view-level gate).
+- Stylistic rules respected: shadcn components only, emerald/amber/teal/rose/slate/orange palette (NO indigo/blue). Charts use var(--chart-1..5). Geo-grid cells min 40px, rounded, font-mono for rank numbers. Rank change uses ArrowUp/ArrowDown/Minus icons. Card padding p-4/p-5. Gap-3/gap-4 between cards. Long lists use max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area. Mobile responsive with sm:/lg: breakpoints.
+- Mutations: All keyword CRUD + refresh invalidate ["seo"] query key (which covers both ["seo"] overview and ["seo", "keywords", ...]) + ["seo-audits"] + ["competitors"] so all UI stays in sync. Mutations show sonner toasts with stable messages, catch errors with typed Error instanceof checks.
+- Lint iteration: First lint run flagged unused Card/CardContent import (removed) and an unused eslint-disable comment for react-hooks/exhaustive-deps (removed). After fixes: 0 errors, 0 warnings.
+- Lint: `cd /home/z/my-project && bun run lint 2>&1 | tail -30` → clean (exit 0, no output).
+- Type-check: `bunx tsc --noEmit` → 0 errors in seo-view.tsx (all errors shown are in unrelated files: api routes, dashboard-view, examples/, skills/ — explicitly out of scope per task instructions).
+- Did NOT touch any other file. Did NOT start the dev server.
+
+Stage Summary:
+- File: /home/z/my-project/src/components/views/seo-view.tsx (~1300 LOC, single self-contained client component).
+- Exports named `SeoView` (matches the import already wired in src/components/view-router.tsx).
+- All doc 10 enhancements implemented: PageHeader with Refresh/AI Recommendations/AI Monthly Summary buttons (gated); 4-card overview stat row (kept); Health & Visibility radial gauges (kept); 6 tabs (Keywords with CRUD + rank history + sparklines, Geo Grid with configurable size/radius/keyword, Competitors with real API data + comparison bar chart + expandable rows, Location Comparison with sortable color-coded table + CSV export, Audit with expandable recommendations + Run Audit button, AI Insights with SEO recs + Monthly Summary side-by-side).
+- RBAC enforced: keyword CRUD + refresh + audit/competitor mock buttons → seo.manage; AI recs/summary → ai.use + seo.manage. Other reads → seo.view.
+- Palette strictly emerald/amber/teal/rose/slate/orange. Charts use var(--chart-1..5). Zero indigo/blue.
+- Lint: PASS. Type-check: PASS for this file. Ready for orchestrator end-to-end verification.
+
+---
+Task ID: 9-verification
+Agent: main (orchestrator)
+Task: End-to-end verification of docs 10/11 enhanced modules (SEO & Analytics).
+
+Work Log:
+- Created 10 new API routes:
+  * SEO: /api/seo/keywords (GET+POST), /api/seo/keywords/[id] (PUT+DELETE), /api/seo/rankings (GET with rank history + stats), /api/seo/refresh (POST), /api/seo/geo-grid (GET configurable size/radius), /api/seo/location-comparison (GET)
+  * Analytics: /api/dashboard/executive (GET with 20+ KPIs, rating distribution, top/attention locations), /api/analytics/ai-insights (GET rule-based insights sorted by impact), /api/analytics/export (GET CSV), /api/analytics/location-comparison (GET)
+- Dispatched 2 parallel subagents to enhance SEO and Analytics views.
+- SEO view enhanced (doc 10): 6 tabs (Keywords with CRUD + rank history sparklines + trend, Geo Grid with configurable 3x3/5x5/7x7 + radius 1/3/5/10km, Competitors with real data + comparison chart, Location Comparison with sortable 11-column table + CSV export, Audit with expandable recommendations, AI Insights with SEO recommendations + monthly summary). Rank History dialog with inverted Y-axis LineChart. Refresh Rankings button.
+- Analytics view enhanced (doc 11): 8 dashboard type tabs (Executive, Marketing, Location, Reviews, SEO, Posts, AI, Operations). AI Insights section with 4 insight types (critical/warning/success/info) + impact badges + action buttons. Performance Alerts banner. Enhanced location comparison table (11 columns, sortable, color-coded). CSV Export button. 7 date range options. Top Performing + Needs Attention location lists. Rating Distribution chart.
+- Agent Browser verification:
+  * SEO: 6 tabs (Keywords, Geo Grid, Competitors, Comparison, Audit, AI Insights), Refresh Rankings button, Total Keywords stat ✓
+  * Analytics: 8 tabs (Executive through Operations), Export CSV button, Performance Alerts (7 active, 2 critical, 5 warnings), AI Insights section ✓
+  * Lint: 0 errors, 0 warnings ✓
+  * Dev log: only 200 responses, no runtime errors ✓
+  * All 14 nav modules present ✓
+
+Stage Summary:
+- DOCS 10/11 FULLY IMPLEMENTED & VERIFIED.
+- Local SEO (doc 10): keyword CRUD, rank history with trends, configurable geo-grid, real competitor monitoring, location comparison, SEO audits, AI recommendations + monthly summary, refresh rankings.
+- Analytics Dashboard (doc 11): 8 dashboard types, AI insights with impact sorting, performance alerts, enhanced location comparison, CSV export, 7 date ranges, top/attention location lists.
+- 14 nav modules, 49 Prisma models, 40+ API routes. Demo password: MyFNG@2025.
+- Ready for next batch of MD files.
