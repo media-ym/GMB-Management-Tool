@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useSyncExternalStore, useEffect } from "react";
 import { signOut, useSession } from "next-auth/react";
-import Link from "next/link";
 import { api } from "@/lib/api-client";
 import { useAppStore, roleLabel } from "@/lib/store";
 import { canAccessView } from "@/lib/permissions";
@@ -11,13 +9,13 @@ import type { NotificationItem, SessionUser, ViewKey } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Building2, LayoutDashboard, MapPin, Star, FileText, BarChart3,
   Search, Sparkles, Bell, ScrollText, Settings, Menu, LogOut,
   RefreshCw, Search as SearchIcon, Sun, Moon, ChevronDown, Command,
   Image as ImageIcon, FileBarChart, Database, Plug, Code2, ArrowLeftRight, Map, Palette, Monitor,
+  MoreHorizontal,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
@@ -35,46 +33,44 @@ interface NavItem {
   key: ViewKey;
   label: string;
   icon: typeof LayoutDashboard;
-  description: string;
 }
 
 const NAV: NavItem[] = [
-  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, description: "Business overview, KPIs & alerts" },
-  { key: "locations", label: "Locations", icon: MapPin, description: "All MyFNG Google Business Profiles" },
-  { key: "reviews", label: "Reviews", icon: Star, description: "Sync, reply & sentiment" },
-  { key: "posts", label: "Google Posts", icon: FileText, description: "Create, schedule, publish" },
-  { key: "analytics", label: "Analytics", icon: BarChart3, description: "Search, maps, calls, directions" },
-  { key: "seo", label: "Local SEO", icon: Search, description: "Keywords & geo-grid ranking" },
-  { key: "ai", label: "MiSA AI", icon: Sparkles, description: "AI assistant & suggestions" },
-  { key: "media", label: "Media Library", icon: ImageIcon, description: "Business photos & assets" },
-  { key: "reports", label: "Reports", icon: FileBarChart, description: "Daily, weekly, monthly reports" },
-  { key: "google", label: "Google Integration", icon: Plug, description: "OAuth, sync & API status" },
-  { key: "notifications", label: "Notifications", icon: Bell, description: "Alerts & activity" },
-  { key: "audit", label: "Audit Logs", icon: ScrollText, description: "Immutable action history" },
-  { key: "system", label: "System", icon: Database, description: "Database, jobs & integrations" },
-  { key: "api-docs", label: "API Docs", icon: Code2, description: "REST API specification" },
-  { key: "google-api-mapping", label: "Google API Map", icon: ArrowLeftRight, description: "Google API → DB field mapping" },
-  { key: "roadmap", label: "Roadmap", icon: Map, description: "Project phases & progress" },
-  { key: "design-system", label: "Design System", icon: Palette, description: "Colors, typography & components" },
-  { key: "wireframes", label: "Wireframes", icon: Monitor, description: "Screen specifications & layouts" },
-  { key: "settings", label: "Settings", icon: Settings, description: "Users, roles & system config" },
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { key: "locations", label: "Locations", icon: MapPin },
+  { key: "reviews", label: "Reviews", icon: Star },
+  { key: "posts", label: "Google Posts", icon: FileText },
+  { key: "analytics", label: "Analytics", icon: BarChart3 },
+  { key: "seo", label: "Local SEO", icon: Search },
+  { key: "ai", label: "MiSA AI", icon: Sparkles },
+  { key: "media", label: "Media Library", icon: ImageIcon },
+  { key: "reports", label: "Reports", icon: FileBarChart },
+  { key: "google", label: "Google Integration", icon: Plug },
+  { key: "notifications", label: "Notifications", icon: Bell },
+  { key: "audit", label: "Audit Logs", icon: ScrollText },
+  { key: "system", label: "System", icon: Database },
+  { key: "api-docs", label: "API Docs", icon: Code2 },
+  { key: "google-api-mapping", label: "Google API Map", icon: ArrowLeftRight },
+  { key: "roadmap", label: "Roadmap", icon: Map },
+  { key: "design-system", label: "Design System", icon: Palette },
+  { key: "wireframes", label: "Wireframes", icon: Monitor },
+  { key: "settings", label: "Settings", icon: Settings },
 ];
 
+// Primary nav items shown directly in top bar; rest go in "More" dropdown
+const PRIMARY_NAV_KEYS: ViewKey[] = ["dashboard", "locations", "reviews", "posts", "analytics", "seo", "ai"];
+
 export function AppShell({ children, user }: { children: React.ReactNode; user: SessionUser }) {
-  const { view, setView, sidebarOpen, setSidebarOpen, commandOpen, setCommandOpen } = useAppStore();
+  const { view, setView, commandOpen, setCommandOpen } = useAppStore();
   const { data: session } = useSession();
   const qc = useQueryClient();
-  const router = useRouter();
   const { theme, setTheme } = useTheme();
-  // Mount detection without setState-in-effect (React 19 rule).
-  // Returns false on server / first render, true on client after hydration.
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
     () => false,
   );
 
-  // Notifications badge count
   const { data: notifs } = useQuery<NotificationItem[]>({
     queryKey: ["notifications", "unread"],
     queryFn: () => api<NotificationItem[]>("/api/notifications?unread=1"),
@@ -83,8 +79,9 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
   const unreadCount = notifs?.length ?? 0;
 
   const visibleNav = NAV.filter((n) => canAccessView(user.role, n.key));
+  const primaryNav = visibleNav.filter((n) => PRIMARY_NAV_KEYS.includes(n.key));
+  const moreNav = visibleNav.filter((n) => !PRIMARY_NAV_KEYS.includes(n.key));
 
-  // Keyboard shortcut for command palette
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -113,73 +110,128 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Top bar — blue gradient matching sidebar */}
-      <header className="sticky top-0 z-40 h-16 text-sidebar-foreground" style={{ background: "var(--gradient-header)" }}>
-        <div className="h-full flex items-center gap-2 px-4 sm:px-6">
-          {/* Mobile menu */}
-          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+      {/* ═══ Top Navigation Bar — blue-to-purple gradient, no sidebar ═══ */}
+      <header className="sticky top-0 z-40 text-white shadow-lg" style={{ background: "var(--gradient-topnav)" }}>
+        <div className="max-w-[1600px] mx-auto h-14 flex items-center gap-3 px-4 sm:px-6">
+          {/* Logo */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="size-8 rounded-lg bg-white/15 backdrop-blur flex items-center justify-center">
+              <Building2 className="size-4.5" />
+            </div>
+            <span className="font-bold text-base hidden sm:block">MyFNG</span>
+          </div>
+
+          {/* Desktop horizontal nav */}
+          <nav className="hidden lg:flex items-center gap-1 flex-1 min-w-0 overflow-x-auto scroll-area">
+            {primaryNav.map((n) => {
+              const active = view === n.key;
+              return (
+                <button
+                  key={n.key}
+                  onClick={() => setView(n.key)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 text-sm transition kt-nav-item shrink-0",
+                    active ? "kt-nav-active" : "text-white/80 font-medium",
+                  )}
+                >
+                  <n.icon className="size-4" />
+                  <span>{n.label}</span>
+                </button>
+              );
+            })}
+            {/* More dropdown */}
+            {moreNav.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className={cn(
+                    "flex items-center gap-1 px-3 py-1.5 text-sm transition kt-nav-item shrink-0",
+                    moreNav.some((n) => n.key === view) ? "kt-nav-active" : "text-white/80 font-medium",
+                  )}>
+                    <MoreHorizontal className="size-4" />
+                    <span>More</span>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56">
+                  {moreNav.map((n) => (
+                    <DropdownMenuItem key={n.key} onClick={() => setView(n.key)} className={cn(view === n.key && "bg-accent")}>
+                      <n.icon className="size-4 mr-2" />
+                      {n.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </nav>
+
+          {/* Mobile menu trigger */}
+          <Sheet>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open menu">
+              <Button variant="ghost" size="icon" className="lg:hidden text-white hover:bg-white/15 shrink-0">
                 <Menu className="size-5" />
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-72 p-0 bg-sidebar text-sidebar-foreground">
-              <SidebarContent
-                user={user}
-                view={view}
-                nav={visibleNav}
-                onSelect={(v) => { setView(v); setSidebarOpen(false); }}
-                onSync={handleSync}
-                onSignOut={() => signOut({ callbackUrl: "/" })}
-              />
+            <SheetContent side="top" className="h-auto p-0" style={{ background: "var(--gradient-topnav)" }}>
+              <div className="p-4 max-h-[70vh] overflow-y-auto scroll-area">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  {visibleNav.map((n) => {
+                    const active = view === n.key;
+                    return (
+                      <button
+                        key={n.key}
+                        onClick={() => setView(n.key)}
+                        className={cn(
+                          "flex items-center gap-2 px-3 py-2.5 text-sm transition kt-nav-item",
+                          active ? "kt-nav-active" : "text-white/80 font-medium",
+                        )}
+                      >
+                        <n.icon className="size-4 shrink-0" />
+                        <span className="truncate">{n.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </SheetContent>
           </Sheet>
-
-          {/* Brand (mobile) */}
-          <div className="flex items-center gap-2 lg:hidden">
-            <div className="size-8 rounded-lg bg-white/15 flex items-center justify-center text-white">
-              <Building2 className="size-4" />
-            </div>
-            <span className="font-semibold text-white">MyFNG</span>
-          </div>
 
           {/* Search trigger */}
           <button
             onClick={() => setCommandOpen(true)}
-            className="hidden md:flex items-center gap-2 ml-2 h-9 px-3.5 rounded-lg bg-white/15 text-sm text-white/90 hover:bg-white/25 transition w-80 backdrop-blur"
+            className="hidden md:flex items-center gap-2 h-9 px-3.5 rounded-lg bg-white/15 text-sm text-white/90 hover:bg-white/25 transition w-56 backdrop-blur shrink-0"
           >
             <SearchIcon className="size-4" />
-            <span>Search or jump to…</span>
+            <span>Search…</span>
             <kbd className="ml-auto inline-flex items-center gap-0.5 rounded bg-white/20 px-1.5 text-[10px] font-mono text-white/80">
               <Command className="size-2.5" />K
             </kbd>
           </button>
 
-          <div className="ml-auto flex items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={handleSync} className="hidden sm:flex text-white/90 hover:bg-white/15 hover:text-white">
-              <RefreshCw className="size-4 mr-1.5" /> Sync
+          {/* Right utilities */}
+          <div className="flex items-center gap-0.5 shrink-0">
+            <Button variant="ghost" size="icon" onClick={handleSync} className="text-white/90 hover:bg-white/15 hover:text-white hidden sm:flex" aria-label="Sync">
+              <RefreshCw className="size-[18px]" />
             </Button>
 
             <Button variant="ghost" size="icon" onClick={() => setView("notifications")} aria-label="Notifications" className="relative text-white/90 hover:bg-white/15 hover:text-white">
-              <Bell className="size-5" />
+              <Bell className="size-[18px]" />
               {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 size-4 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                <span className="absolute top-0.5 right-0.5 size-4 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
             </Button>
 
             <Button variant="ghost" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme" className="text-white/90 hover:bg-white/15 hover:text-white">
-              {mounted && theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
+              {mounted && theme === "dark" ? <Sun className="size-[18px]" /> : <Moon className="size-[18px]" />}
             </Button>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="h-9 px-1.5 sm:px-2 gap-1.5 text-white/90 hover:bg-white/15 hover:text-white">
+                <Button variant="ghost" className="h-9 px-1.5 gap-1.5 text-white hover:bg-white/15 hover:text-white">
                   <Avatar className="size-7">
                     <AvatarFallback className="bg-white/20 text-white text-xs">{initials(user.name)}</AvatarFallback>
                   </Avatar>
-                  <div className="hidden sm:block text-left leading-tight">
+                  <div className="hidden md:block text-left leading-tight">
                     <div className="text-xs font-medium text-white">{user.name}</div>
                     <div className="text-[10px] text-white/60">{roleLabel(user.role)}</div>
                   </div>
@@ -208,28 +260,16 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
         </div>
       </header>
 
-      <div className="flex-1 flex">
-        {/* Desktop sidebar — blue gradient */}
-        <aside className="hidden lg:flex w-[260px] shrink-0 flex-col text-sidebar-foreground" style={{ background: "var(--gradient-sidebar)" }}>
-          <SidebarContent
-            user={user}
-            view={view}
-            nav={visibleNav}
-            onSelect={setView}
-            onSync={handleSync}
-            onSignOut={() => signOut({ callbackUrl: "/" })}
-          />
-        </aside>
-
-        {/* Main content */}
-        <main className="flex-1 min-w-0 kt-fade-in">
+      {/* ═══ Main content — full width, no sidebar ═══ */}
+      <main className="flex-1 min-w-0 kt-fade-in">
+        <div className="max-w-[1600px] mx-auto">
           {children}
-        </main>
-      </div>
+        </div>
+      </main>
 
-      {/* Footer — subtle, clean */}
+      {/* ═══ Footer ═══ */}
       <footer className="mt-auto border-t border-border/60 bg-card">
-        <div className="px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
+        <div className="max-w-[1600px] mx-auto px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
             <span className="font-medium text-foreground">MyFNG Local AI Manager</span>
             <span className="text-muted-foreground/60">v1.0</span>
@@ -256,7 +296,6 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
               <CommandItem key={n.key} onSelect={() => { setView(n.key); setCommandOpen(false); }}>
                 <n.icon className="size-4 mr-2" />
                 <span>{n.label}</span>
-                <span className="ml-auto text-xs text-muted-foreground">{n.description}</span>
               </CommandItem>
             ))}
           </CommandGroup>
@@ -274,93 +313,6 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
           </CommandGroup>
         </CommandList>
       </CommandDialog>
-    </div>
-  );
-}
-
-function SidebarContent({
-  user, view, nav, onSelect, onSync, onSignOut,
-}: {
-  user: SessionUser;
-  view: ViewKey;
-  nav: NavItem[];
-  onSelect: (v: ViewKey) => void;
-  onSync: () => void;
-  onSignOut: () => void;
-}) {
-  return (
-    <div className="flex flex-col h-full">
-      {/* Brand */}
-      <div className="h-16 flex items-center gap-2.5 px-5 border-b border-white/10">
-        <div className="size-9 rounded-xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-sm">
-          <Building2 className="size-5" />
-        </div>
-        <div className="min-w-0">
-          <div className="font-semibold leading-tight text-white">MyFNG</div>
-          <div className="text-[11px] text-white/60 leading-tight">Local AI Manager</div>
-        </div>
-      </div>
-
-      {/* Nav */}
-      <nav className="flex-1 overflow-y-auto scroll-area px-3 py-4 space-y-0.5">
-        {nav.map((n) => {
-          const active = view === n.key;
-          return (
-            <button
-              key={n.key}
-              onClick={() => onSelect(n.key)}
-              className={cn(
-                "w-full flex items-center gap-2.5 px-3 py-2 text-sm transition group kt-nav-item",
-                active
-                  ? "kt-nav-active font-semibold"
-                  : "text-white/70 font-medium",
-              )}
-            >
-              <n.icon className={cn("size-[18px] shrink-0", active ? "text-white" : "text-white/50 group-hover:text-white")} />
-              <span>{n.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* AI promo card */}
-      <div className="p-3">
-        <div className="rounded-xl bg-white/10 backdrop-blur border border-white/15 p-4">
-          <div className="flex items-center gap-2">
-            <div className="size-7 rounded-lg bg-amber-400/20 flex items-center justify-center">
-              <Sparkles className="size-3.5 text-amber-300" />
-            </div>
-            <span className="text-sm font-semibold text-white">MiSA AI</span>
-          </div>
-          <p className="mt-2 text-[11px] text-white/60 leading-relaxed">
-            Draft replies, generate posts, surface locations needing attention.
-          </p>
-          <button
-            onClick={() => onSelect("ai")}
-            className="mt-2.5 w-full rounded-lg bg-white text-sidebar text-xs font-medium py-2 hover:bg-white/90 transition shadow-sm"
-          >
-            Open MiSA AI
-          </button>
-        </div>
-      </div>
-
-      {/* User mini */}
-      <div className="p-3 border-t border-white/10">
-        <div className="flex items-center gap-2.5">
-          <Avatar className="size-9">
-            <AvatarFallback className="bg-white/20 text-white text-xs font-semibold">
-              {user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0 flex-1">
-            <div className="text-xs font-medium text-white truncate">{user.name}</div>
-            <div className="text-[10px] text-white/50 truncate">{roleLabel(user.role)}</div>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onSignOut} className="size-7 text-white/50 hover:text-white hover:bg-white/10">
-            <LogOut className="size-3.5" />
-          </Button>
-        </div>
-      </div>
     </div>
   );
 }

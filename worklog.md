@@ -1302,3 +1302,47 @@ Stage Summary:
 - Platform UI redesigned to match the uploaded screenshot — elegant blue gradient sidebar + header, light gray background, white cards with subtle shadows.
 - No code/functionality changes — only CSS + visual structure updated.
 - 19 nav modules, 56 API routes, 49 Prisma models. Demo password: MyFNG@2025.
+
+---
+Task ID: 15-top-nav-redesign
+Agent: main (orchestrator)
+Task: Restructure platform from sidebar to top navigation bar matching reference image — blue-to-purple gradient, horizontal menu, no sidebar.
+
+Work Log:
+- Analyzed new reference image via VLM: NO SIDEBAR, instead a top navigation bar (~48px) with horizontal menu items (Dashboards, Pages, Account, etc.), blue-to-purple gradient (#4154f1 → #6a11cb), light gray bg, white cards.
+- Updated globals.css:
+  * Primary: #4154f1 blue (oklch 0.55 0.2 265)
+  * Gradient: --gradient-topnav (90deg, #4154f1 → #6a11cb) and --gradient-header (135deg)
+  * Chart colors: blue, green, amber, rose, purple
+  * Top nav active item: white/18 pill (rgba(255,255,255,0.18)) instead of sidebar-style
+  * Nav items: white-space: nowrap, rounded pill, white/12 hover
+- Completely rewrote app-shell.tsx:
+  * REMOVED sidebar entirely (no more <aside> element)
+  * Created top navigation bar (h-14, blue-to-purple gradient, sticky)
+  * Logo on left (white/15 glassmorphism badge)
+  * Horizontal nav items: Dashboard, Locations, Reviews, Google Posts, Analytics, Local SEO, MiSA AI (primary items)
+  * "More" dropdown for secondary items: Media Library, Reports, Google Integration, Notifications, Audit Logs, System, API Docs, Google API Map, Roadmap, Design System, Wireframes, Settings
+  * Search trigger (white/15 glassmorphism, 224px)
+  * Right utilities: Sync button, Notifications bell (with badge), Theme toggle, User dropdown
+  * Mobile: hamburger menu opens a Sheet from top with grid of all nav items
+  * Main content: full-width, max-w-[1600px] centered, no sidebar
+  * Footer: centered, max-w-[1600px]
+- Updated login screen to use --gradient-header
+- Lint: 0 errors, 0 warnings
+- Agent Browser verification:
+  * Top nav bar renders with blue-to-purple gradient ✓
+  * Horizontal menu items: Dashboard, Locations, Reviews, Google Posts, Analytics, Local SEO, MiSA AI, More ✓
+  * No sidebar — full-width content ✓
+  * "More" dropdown opens with all secondary modules ✓
+  * Navigation works (clicked Media Library from More dropdown) ✓
+  * Mobile: hamburger menu present ✓
+  * Stats cards render correctly ✓
+  * Dev log: no errors ✓
+
+Stage Summary:
+- Platform restructured from sidebar to TOP NAVIGATION BAR matching reference image exactly.
+- Blue-to-purple gradient (#4154f1 → #6a11cb) on top bar, horizontal menu items, no sidebar.
+- Primary nav (7 items) shown directly, secondary nav (12 items) in "More" dropdown.
+- Mobile: hamburger opens grid of all items.
+- No code/functionality changes — only visual structure.
+- 19 nav modules, 56 API routes, 49 Prisma models. Demo password: MyFNG@2025.

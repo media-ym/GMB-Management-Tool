@@ -52,7 +52,7 @@ export function LoginScreen() {
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
       {/* Brand panel */}
-      <div className="lg:w-1/2 text-white flex flex-col justify-between p-8 lg:p-12 relative overflow-hidden" style={{ background: "var(--gradient-sidebar)" }}>
+      <div className="lg:w-1/2 text-white flex flex-col justify-between p-8 lg:p-12 relative overflow-hidden" style={{ background: "var(--gradient-header)" }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 20% 30%, white 0, transparent 40%), radial-gradient(circle at 80% 70%, #F59E0B 0, transparent 40%)" }} />
         <div className="relative">
           <div className="flex items-center gap-3">
