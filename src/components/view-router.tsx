@@ -15,6 +15,7 @@ import { GoogleIntegrationView } from "@/components/views/google-integration-vie
 import { NotificationsView } from "@/components/views/notifications-view";
 import { AuditView } from "@/components/views/audit-view";
 import { SystemView } from "@/components/views/system-view";
+import { ApiDocsView } from "@/components/views/api-docs-view";
 import { SettingsView } from "@/components/views/settings-view";
 import { useAppStore as useStore } from "@/lib/store";
 import { ShieldAlert } from "lucide-react";
@@ -54,6 +55,7 @@ export function ViewRouter() {
     case "notifications": return <NotificationsView />;
     case "audit": return <AuditView />;
     case "system": return <SystemView />;
+    case "api-docs": return <ApiDocsView />;
     case "settings": return <SettingsView />;
     default: return <DashboardView />;
   }

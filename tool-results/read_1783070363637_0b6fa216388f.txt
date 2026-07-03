@@ -1,0 +1,1533 @@
+     1→"use client";
+     2→
+     3→import { useEffect, useMemo, useState } from "react";
+     4→import { cn } from "@/lib/utils";
+     5→import { useQuery, useQueryClient } from "@tanstack/react-query";
+     6→import { api } from "@/lib/api-client";
+     7→import { useAppStore } from "@/lib/store";
+     8→import { useUser } from "@/lib/user-context";
+     9→import { can } from "@/lib/permissions";
+    10→import { ROLES, type Role } from "@/lib/types";
+    11→import { PageHeader, CardSection } from "@/components/shared/page-header";
+    12→import { useLocations } from "@/hooks/use-locations";
+    13→import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+    14→import { Button } from "@/components/ui/button";
+    15→import { Card, CardContent } from "@/components/ui/card";
+    16→import { Skeleton } from "@/components/ui/skeleton";
+    17→import { Badge } from "@/components/ui/badge";
+    18→import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+    19→import { Switch } from "@/components/ui/switch";
+    20→import { Input } from "@/components/ui/input";
+    21→import { Label } from "@/components/ui/label";
+    22→import { Checkbox } from "@/components/ui/checkbox";
+    23→import {
+    24→  Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
+    25→} from "@/components/ui/table";
+    26→import {
+    27→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+    28→} from "@/components/ui/dialog";
+    29→import {
+    30→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    31→} from "@/components/ui/select";
+    32→import {
+    33→  Settings, UserPlus, Pencil, Search, Sparkles, RefreshCw, Building2, Phone, Mail,
+    34→  ShieldCheck, Server, Cpu, Clock, Star, MessageSquare, BarChart3,
+    35→  CheckCircle2, AlertTriangle, KeyRound, Plug, ExternalLink, Users, Lock, Save, Zap,
+    36→} from "lucide-react";
+    37→import { toast } from "sonner";
+    38→import { formatDistanceToNow, format } from "date-fns";
+    39→
+    40→// ---------------------------------------------------------------------------
+    41→// Types
+    42→// ---------------------------------------------------------------------------
+    43→interface UserRow {
+    44→  id: string;
+    45→  email: string;
+    46→  name: string;
+    47→  role: Role;
+    48→  status: string; // active | invited | locked | suspended | inactive
+    49→  phone?: string | null;
+    50→  avatar?: string | null;
+    51→  assignedLocationIds: string[];
+    52→  failedLoginAttempts?: number;
+    53→  lockedUntil?: string | null;
+    54→  lastLoginAt: string | null;
+    55→  lastLoginIp?: string | null;
+    56→  createdAt: string;
+    57→}
+    58→
+    59→interface BrandSettings {
+    60→  name?: string;
+    61→  tagline?: string;
+    62→  supportEmail?: string;
+    63→  supportPhone?: string;
+    64→}
+    65→
+    66→interface AiSettings {
+    67→  assistantName?: string;
+    68→  defaultModel?: string;
+    69→  autoApprove?: boolean;
+    70→  maxTokensPerDay?: number;
+    71→}
+    72→
+    73→interface SyncSettings {
+    74→  reviewsInterval?: string;
+    75→  businessInfoInterval?: string;
+    76→  postsInterval?: string;
+    77→  analyticsInterval?: string;
+    78→}
+    79→
+    80→type SettingsMap = Record<string, any>;
+    81→
+    82→// ---------------------------------------------------------------------------
+    83→// Role helpers
+    84→// ---------------------------------------------------------------------------
+    85→const ROLE_BADGE: Record<Role, string> = {
+    86→  super_admin: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+    87→  marketing_manager: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+    88→  branch_manager: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
+    89→  customer_support: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+    90→  viewer: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
+    91→};
+    92→
+    93→const ROLE_DOT: Record<Role, string> = {
+    94→  super_admin: "bg-emerald-500",
+    95→  marketing_manager: "bg-amber-500",
+    96→  branch_manager: "bg-teal-500",
+    97→  customer_support: "bg-rose-500",
+    98→  viewer: "bg-slate-400",
+    99→};
+   100→
+   101→const ROLE_ICON: Record<Role, React.ComponentType<{ className?: string }>> = {
+   102→  super_admin: ShieldCheck,
+   103→  marketing_manager: BarChart3,
+   104→  branch_manager: Building2,
+   105→  customer_support: MessageSquare,
+   106→  viewer: Users,
+   107→};
+   108→
+   109→function roleLabel(role: Role) {
+   110→  return ROLES.find((r) => r.value === role)?.label ?? role;
+   111→}
+   112→
+   113→function initials(name: string) {
+   114→  return name.split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+   115→}
+   116→
+   117→// ---------------------------------------------------------------------------
+   118→// Main view
+   119→// ---------------------------------------------------------------------------
+   120→export function SettingsView() {
+   121→  const user = useUser();
+   122→  const [tab, setTab] = useState("users");
+   123→
+   124→  const canManageUsers = can(user.role, "users.manage");
+   125→  const canEditSettings = can(user.role, "settings.view");
+   126→
+   127→  return (
+   128→    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
+   129→      <PageHeader
+   130→        title="Settings"
+   131→        description="Manage users, roles & system configuration"
+   132→        icon={Settings}
+   133→      />
+   134→
+   135→      <Tabs value={tab} onValueChange={setTab}>
+   136→        <div className="overflow-x-auto -mx-1 px-1">
+   137→          <TabsList className="w-full sm:w-auto justify-start">
+   138→            <TabsTrigger value="users" className="gap-1.5">
+   139→              <Users className="size-3.5" /> Users & Roles
+   140→            </TabsTrigger>
+   141→            <TabsTrigger value="brand" className="gap-1.5">
+   142→              <Building2 className="size-3.5" /> Brand
+   143→            </TabsTrigger>
+   144→            <TabsTrigger value="ai" className="gap-1.5">
+   145→              <Sparkles className="size-3.5" /> AI Assistant
+   146→            </TabsTrigger>
+   147→            <TabsTrigger value="sync" className="gap-1.5">
+   148→              <RefreshCw className="size-3.5" /> Sync Schedule
+   149→            </TabsTrigger>
+   150→            <TabsTrigger value="api" className="gap-1.5">
+   151→              <Plug className="size-3.5" /> API & Integrations
+   152→            </TabsTrigger>
+   153→          </TabsList>
+   154→        </div>
+   155→
+   156→        <TabsContent value="users">
+   157→          {canManageUsers ? <UsersTab /> : <UsersAccessRestricted />}
+   158→        </TabsContent>
+   159→        <TabsContent value="brand">
+   160→          <BrandTab readonly={!canEditSettings} />
+   161→        </TabsContent>
+   162→        <TabsContent value="ai">
+   163→          <AiTab readonly={!canEditSettings} />
+   164→        </TabsContent>
+   165→        <TabsContent value="sync">
+   166→          <SyncTab readonly={!canEditSettings} />
+   167→        </TabsContent>
+   168→        <TabsContent value="api">
+   169→          <ApiTab />
+   170→        </TabsContent>
+   171→      </Tabs>
+   172→    </div>
+   173→  );
+   174→}
+   175→
+   176→// ===========================================================================
+   177→// USERS & ROLES TAB
+   178→// ===========================================================================
+   179→function UsersTab() {
+   180→  const qc = useQueryClient();
+   181→  const { data: locations } = useLocations();
+   182→  const [search, setSearch] = useState("");
+   183→  const [dialogOpen, setDialogOpen] = useState(false);
+   184→  const [editing, setEditing] = useState<UserRow | null>(null);
+   185→  const [togglingId, setTogglingId] = useState<string | null>(null);
+   186→
+   187→  const { data: users, isLoading } = useQuery<UserRow[]>({
+   188→    queryKey: ["users"],
+   189→    queryFn: () => api<UserRow[]>("/api/users"),
+   190→  });
+   191→
+   192→  const locationMap = useMemo(() => {
+   193→    const m = new Map<string, string>();
+   194→    (locations ?? []).forEach((l) => m.set(l.id, l.city || l.name));
+   195→    return m;
+   196→  }, [locations]);
+   197→
+   198→  const filtered = useMemo(() => {
+   199→    if (!users) return [];
+   200→    const q = search.trim().toLowerCase();
+   201→    if (!q) return users;
+   202→    return users.filter((u) =>
+   203→      u.name.toLowerCase().includes(q) ||
+   204→      u.email.toLowerCase().includes(q) ||
+   205→      roleLabel(u.role).toLowerCase().includes(q),
+   206→    );
+   207→  }, [users, search]);
+   208→
+   209→  function openCreate() {
+   210→    setEditing(null);
+   211→    setDialogOpen(true);
+   212→  }
+   213→
+   214→  function openEdit(u: UserRow) {
+   215→    setEditing(u);
+   216→    setDialogOpen(true);
+   217→  }
+   218→
+   219→  async function toggleStatus(u: UserRow) {
+   220→    setTogglingId(u.id);
+   221→    try {
+   222→      const newStatus = u.status === "active" ? "inactive" : "active";
+   223→      await api("/api/users", {
+   224→        method: "PATCH",
+   225→        body: JSON.stringify({ id: u.id, status: newStatus }),
+   226→      });
+   227→      qc.invalidateQueries({ queryKey: ["users"] });
+   228→      toast.success(`${u.name} ${newStatus === "active" ? "activated" : "deactivated"}`);
+   229→    } catch (e: any) {
+   230→      toast.error(e?.message || "Failed to update user");
+   231→    } finally {
+   232→      setTogglingId(null);
+   233→    }
+   234→  }
+   235→
+   236→  async function unlockUser(u: UserRow) {
+   237→    setTogglingId(u.id);
+   238→    try {
+   239→      await api("/api/users", {
+   240→        method: "PATCH",
+   241→        body: JSON.stringify({ id: u.id, status: "active" }),
+   242→      });
+   243→      qc.invalidateQueries({ queryKey: ["users"] });
+   244→      toast.success(`${u.name} unlocked`);
+   245→    } catch (e: any) {
+   246→      toast.error(e?.message || "Failed to unlock user");
+   247→    } finally {
+   248→      setTogglingId(null);
+   249→    }
+   250→  }
+   251→
+   252→  return (
+   253→    <div className="space-y-4">
+   254→      {/* Toolbar */}
+   255→      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+   256→        <div className="relative w-full sm:max-w-xs">
+   257→          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+   258→          <Input
+   259→            value={search}
+   260→            onChange={(e) => setSearch(e.target.value)}
+   261→            placeholder="Search users by name, email, role…"
+   262→            className="pl-9 h-9"
+   263→          />
+   264→        </div>
+   265→        <Button size="sm" onClick={openCreate}>
+   266→          <UserPlus className="size-3.5 mr-1.5" /> Invite user
+   267→        </Button>
+   268→      </div>
+   269→
+   270→      {/* Users table — desktop */}
+   271→      <Card className="overflow-hidden hidden md:block">
+   272→        {isLoading ? (
+   273→          <UsersTableSkeleton />
+   274→        ) : filtered.length === 0 ? (
+   275→          <UsersEmpty search={search} />
+   276→        ) : (
+   277→          <Table>
+   278→            <TableHeader>
+   279→              <TableRow className="bg-muted/40">
+   280→                <TableHead className="pl-5">Name</TableHead>
+   281→                <TableHead>Email</TableHead>
+   282→                <TableHead>Role</TableHead>
+   283→                <TableHead>Assigned Locations</TableHead>
+   284→                <TableHead>Status</TableHead>
+   285→                <TableHead>Last login</TableHead>
+   286→                <TableHead>Created</TableHead>
+   287→                <TableHead className="pr-5 text-right">Actions</TableHead>
+   288→              </TableRow>
+   289→            </TableHeader>
+   290→            <TableBody>
+   291→              {filtered.map((u) => (
+   292→                <UserTableRow
+   293→                  key={u.id}
+   294→                  u={u}
+   295→                  locationMap={locationMap}
+   296→                  toggling={togglingId === u.id}
+   297→                  onToggle={() => toggleStatus(u)}
+   298→                  onEdit={() => openEdit(u)}
+   299→                />
+   300→              ))}
+   301→            </TableBody>
+   302→          </Table>
+   303→        )}
+   304→      </Card>
+   305→
+   306→      {/* Users list — mobile cards */}
+   307→      <div className="md:hidden space-y-3">
+   308→        {isLoading ? (
+   309→          <div className="space-y-3">
+   310→            {Array.from({ length: 4 }).map((_, i) => (
+   311→              <Skeleton key={i} className="h-32 rounded-xl" />
+   312→            ))}
+   313→          </div>
+   314→        ) : filtered.length === 0 ? (
+   315→          <Card><CardContent className="py-0"><UsersEmpty search={search} /></CardContent></Card>
+   316→        ) : (
+   317→          filtered.map((u) => (
+   318→            <UserCard
+   319→              key={u.id}
+   320→              u={u}
+   321→              locationMap={locationMap}
+   322→              toggling={togglingId === u.id}
+   323→              onToggle={() => toggleStatus(u)}
+   324→              onEdit={() => openEdit(u)}
+   325→            />
+   326→          ))
+   327→        )}
+   328→      </div>
+   329→
+   330→      {/* Role legend */}
+   331→      <RoleLegend />
+   332→
+   333→      {/* Create / Edit dialog */}
+   334→      <UserDialog
+   335→        open={dialogOpen}
+   336→        onOpenChange={setDialogOpen}
+   337→        editing={editing}
+   338→      />
+   339→    </div>
+   340→  );
+   341→}
+   342→
+   343→function UserTableRow({
+   344→  u, locationMap, toggling, onToggle, onEdit,
+   345→}: {
+   346→  u: UserRow;
+   347→  locationMap: Map<string, string>;
+   348→  toggling: boolean;
+   349→  onToggle: () => void;
+   350→  onEdit: () => void;
+   351→}) {
+   352→  const assignedCities = u.assignedLocationIds
+   353→    .map((id) => locationMap.get(id))
+   354→    .filter(Boolean) as string[];
+   355→
+   356→  return (
+   357→    <TableRow className="hover:bg-accent/30">
+   358→      <TableCell className="pl-5">
+   359→        <div className="flex items-center gap-2.5 min-w-0">
+   360→          <Avatar className="size-8">
+   361→            {u.avatar ? <AvatarImage src={u.avatar} alt={u.name} /> : null}
+   362→            <AvatarFallback className={cn("text-[10px] font-semibold", ROLE_BADGE[u.role].split(" ").slice(0, 2).join(" "))}>
+   363→              {initials(u.name)}
+   364→            </AvatarFallback>
+   365→          </Avatar>
+   366→          <span className="font-medium truncate">{u.name}</span>
+   367→        </div>
+   368→      </TableCell>
+   369→      <TableCell className="text-muted-foreground">{u.email}</TableCell>
+   370→      <TableCell>
+   371→        <RoleBadge role={u.role} />
+   372→      </TableCell>
+   373→      <TableCell>
+   374→        {u.role === "branch_manager" ? (
+   375→          assignedCities.length === 0 ? (
+   376→            <span className="text-xs text-muted-foreground italic">Unassigned</span>
+   377→          ) : (
+   378→            <div className="flex flex-wrap gap-1 max-w-[220px]">
+   379→              {assignedCities.slice(0, 3).map((c) => (
+   380→                <Badge key={c} variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+   381→                  {c}
+   382→                </Badge>
+   383→              ))}
+   384→              {assignedCities.length > 3 && (
+   385→                <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+   386→                  +{assignedCities.length - 3}
+   387→                </Badge>
+   388→              )}
+   389→            </div>
+   390→          )
+   391→        ) : (
+   392→          <span className="text-xs text-muted-foreground">All</span>
+   393→        )}
+   394→      </TableCell>
+   395→      <TableCell>
+   396→        <div className="flex items-center gap-2">
+   397→          <Switch checked={u.status === "active"} onCheckedChange={onToggle} disabled={toggling} aria-label="Toggle active" />
+   398→          {u.status === "active" ? (
+   399→            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Active</span>
+   400→          ) : (
+   401→            <span className="text-xs text-muted-foreground">Inactive</span>
+   402→          )}
+   403→        </div>
+   404→      </TableCell>
+   405→      <TableCell className="text-xs text-muted-foreground tabular-nums">
+   406→        {u.lastLoginAt ? formatDistanceToNow(new Date(u.lastLoginAt), { addSuffix: true }) : "Never"}
+   407→      </TableCell>
+   408→      <TableCell className="text-xs text-muted-foreground tabular-nums">
+   409→        {format(new Date(u.createdAt), "dd MMM yyyy")}
+   410→      </TableCell>
+   411→      <TableCell className="pr-5 text-right">
+   412→        <Button variant="ghost" size="sm" onClick={onEdit} className="h-7 px-2">
+   413→          <Pencil className="size-3.5 mr-1" /> Edit
+   414→        </Button>
+   415→      </TableCell>
+   416→    </TableRow>
+   417→  );
+   418→}
+   419→
+   420→function UserCard({
+   421→  u, locationMap, toggling, onToggle, onEdit,
+   422→}: {
+   423→  u: UserRow;
+   424→  locationMap: Map<string, string>;
+   425→  toggling: boolean;
+   426→  onToggle: () => void;
+   427→  onEdit: () => void;
+   428→}) {
+   429→  const assignedCities = u.assignedLocationIds
+   430→    .map((id) => locationMap.get(id))
+   431→    .filter(Boolean) as string[];
+   432→
+   433→  return (
+   434→    <Card>
+   435→      <CardContent className="p-4 space-y-3">
+   436→        <div className="flex items-start justify-between gap-2">
+   437→          <div className="flex items-center gap-2.5 min-w-0">
+   438→            <Avatar className="size-9">
+   439→              {u.avatar ? <AvatarImage src={u.avatar} alt={u.name} /> : null}
+   440→              <AvatarFallback className={cn("text-[11px] font-semibold", ROLE_BADGE[u.role].split(" ").slice(0, 2).join(" "))}>
+   441→                {initials(u.name)}
+   442→              </AvatarFallback>
+   443→            </Avatar>
+   444→            <div className="min-w-0">
+   445→              <div className="font-medium truncate">{u.name}</div>
+   446→              <div className="text-xs text-muted-foreground truncate">{u.email}</div>
+   447→            </div>
+   448→          </div>
+   449→          <RoleBadge role={u.role} />
+   450→        </div>
+   451→
+   452→        <div className="grid grid-cols-2 gap-2 text-xs">
+   453→          <div>
+   454→            <div className="text-muted-foreground">Status</div>
+   455→            <div className="flex items-center gap-2 mt-1">
+   456→              <Switch checked={u.status === "active"} onCheckedChange={onToggle} disabled={toggling} aria-label="Toggle active" />
+   457→              {u.status === "active" ? (
+   458→                <span className="text-emerald-600 dark:text-emerald-400 font-medium">Active</span>
+   459→              ) : (
+   460→                <span className="text-muted-foreground">Inactive</span>
+   461→              )}
+   462→            </div>
+   463→          </div>
+   464→          <div>
+   465→            <div className="text-muted-foreground">Last login</div>
+   466→            <div className="mt-1 tabular-nums">
+   467→              {u.lastLoginAt ? formatDistanceToNow(new Date(u.lastLoginAt), { addSuffix: true }) : "Never"}
+   468→            </div>
+   469→          </div>
+   470→        </div>
+   471→
+   472→        {u.role === "branch_manager" && (
+   473→          <div className="text-xs">
+   474→            <div className="text-muted-foreground mb-1">Assigned locations</div>
+   475→            {assignedCities.length === 0 ? (
+   476→              <span className="italic text-muted-foreground">Unassigned</span>
+   477→            ) : (
+   478→              <div className="flex flex-wrap gap-1">
+   479→                {assignedCities.map((c) => (
+   480→                  <Badge key={c} variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+   481→                    {c}
+   482→                  </Badge>
+   483→                ))}
+   484→              </div>
+   485→            )}
+   486→          </div>
+   487→        )}
+   488→
+   489→        <div className="flex justify-end pt-1 border-t">
+   490→          <Button variant="outline" size="sm" onClick={onEdit} className="h-7">
+   491→            <Pencil className="size-3.5 mr-1" /> Edit
+   492→          </Button>
+   493→        </div>
+   494→      </CardContent>
+   495→    </Card>
+   496→  );
+   497→}
+   498→
+   499→function RoleBadge({ role }: { role: Role }) {
+   500→  return (
+   501→    <Badge variant="outline" className={cn("font-medium", ROLE_BADGE[role])}>
+   502→      <span className={cn("size-1.5 rounded-full", ROLE_DOT[role])} />
+   503→      {roleLabel(role)}
+   504→    </Badge>
+   505→  );
+   506→}
+   507→
+   508→function UsersTableSkeleton() {
+   509→  return (
+   510→    <Table>
+   511→      <TableHeader>
+   512→        <TableRow className="bg-muted/40">
+   513→          {Array.from({ length: 8 }).map((_, i) => (
+   514→            <TableHead key={i}><Skeleton className="h-3 w-16" /></TableHead>
+   515→          ))}
+   516→        </TableRow>
+   517→      </TableHeader>
+   518→      <TableBody>
+   519→        {Array.from({ length: 5 }).map((_, i) => (
+   520→          <TableRow key={i}>
+   521→            {Array.from({ length: 8 }).map((_, j) => (
+   522→              <TableCell key={j}><Skeleton className="h-5 w-full" /></TableCell>
+   523→            ))}
+   524→          </TableRow>
+   525→        ))}
+   526→      </TableBody>
+   527→    </Table>
+   528→  );
+   529→}
+   530→
+   531→function UsersEmpty({ search }: { search: string }) {
+   532→  return (
+   533→    <div className="flex flex-col items-center justify-center text-center py-14 px-4">
+   534→      <div className="size-12 rounded-full bg-muted flex items-center justify-center mb-3">
+   535→        <Users className="size-6 text-muted-foreground" />
+   536→      </div>
+   537→      <h3 className="text-base font-semibold">
+   538→        {search ? "No users match your search" : "No users yet"}
+   539→      </h3>
+   540→      <p className="text-sm text-muted-foreground mt-1 max-w-xs">
+   541→        {search
+   542→          ? `No users found for "${search}". Try a different name, email, or role.`
+   543→          : "Invite your first team member to start managing MyFNG."}
+   544→      </p>
+   545→    </div>
+   546→  );
+   547→}
+   548→
+   549→function RoleLegend() {
+   550→  return (
+   551→    <CardSection
+   552→      title="Roles & Permissions"
+   553→      description="Five role tiers power the MyFNG RBAC matrix"
+   554→    >
+   555→      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+   556→        {ROLES.map((r) => {
+   557→          const Icon = ROLE_ICON[r.value];
+   558→          return (
+   559→            <div key={r.value} className="rounded-lg border p-3 flex gap-3">
+   560→              <div className={cn("size-8 rounded-md flex items-center justify-center shrink-0", ROLE_BADGE[r.value])}>
+   561→                <Icon className="size-4" />
+   562→              </div>
+   563→              <div className="min-w-0">
+   564→                <div className="flex items-center gap-1.5">
+   565→                  <span className="text-sm font-semibold">{r.label}</span>
+   566→                  <span className={cn("size-1.5 rounded-full", ROLE_DOT[r.value])} />
+   567→                </div>
+   568→                <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{r.description}</p>
+   569→              </div>
+   570→            </div>
+   571→          );
+   572→        })}
+   573→      </div>
+   574→    </CardSection>
+   575→  );
+   576→}
+   577→
+   578→// ---------------------------------------------------------------------------
+   579→// Create / Edit user dialog
+   580→// ---------------------------------------------------------------------------
+   581→function UserDialog({
+   582→  open, onOpenChange, editing,
+   583→}: {
+   584→  open: boolean;
+   585→  onOpenChange: (o: boolean) => void;
+   586→  editing: UserRow | null;
+   587→}) {
+   588→  const qc = useQueryClient();
+   589→  const { data: locations, isLoading: locationsLoading } = useLocations();
+   590→
+   591→  const isEdit = !!editing;
+   592→  const [name, setName] = useState("");
+   593→  const [email, setEmail] = useState("");
+   594→  const [role, setRole] = useState<Role>("viewer");
+   595→  const [password, setPassword] = useState("");
+   596→  const [assignedIds, setAssignedIds] = useState<string[]>([]);
+   597→  const [active, setActive] = useState(true);
+   598→  const [errors, setErrors] = useState<Record<string, string>>({});
+   599→  const [saving, setSaving] = useState(false);
+   600→
+   601→  // Sync form when dialog opens
+   602→  useEffect(() => {
+   603→    if (!open) return;
+   604→    if (editing) {
+   605→      setName(editing.name);
+   606→      setEmail(editing.email);
+   607→      setRole(editing.role);
+   608→      setPassword("");
+   609→      setAssignedIds(editing.assignedLocationIds ?? []);
+   610→      setActive(editing.status === "active");
+   611→    } else {
+   612→      setName("");
+   613→      setEmail("");
+   614→      setRole("viewer");
+   615→      setPassword("");
+   616→      setAssignedIds([]);
+   617→      setActive(true);
+   618→    }
+   619→    setErrors({});
+   620→  }, [open, editing]);
+   621→
+   622→  function toggleLocation(id: string) {
+   623→    setAssignedIds((prev) =>
+   624→      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+   625→    );
+   626→  }
+   627→
+   628→  function validate(): boolean {
+   629→    const e: Record<string, string> = {};
+   630→    if (!name.trim()) e.name = "Name is required";
+   631→    if (!email.trim()) e.email = "Email is required";
+   632→    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = "Invalid email";
+   633→    if (!isEdit && !password) e.password = "Password is required";
+   634→    else if (!isEdit && password.length < 8) e.password = "Min 8 characters";
+   635→    if (role === "branch_manager" && assignedIds.length === 0) {
+   636→      e.assigned = "Assign at least one location";
+   637→    }
+   638→    setErrors(e);
+   639→    return Object.keys(e).length === 0;
+   640→  }
+   641→
+   642→  async function handleSubmit() {
+   643→    if (!validate()) return;
+   644→    setSaving(true);
+   645→    try {
+   646→      if (isEdit) {
+   647→        await api("/api/users", {
+   648→          method: "PATCH",
+   649→          body: JSON.stringify({
+   650→            id: editing!.id,
+   651→            name: name.trim(),
+   652→            role,
+   653→            active,
+   654→            assignedLocationIds: role === "branch_manager" ? assignedIds : [],
+   655→          }),
+   656→        });
+   657→        toast.success("User updated");
+   658→      } else {
+   659→        await api("/api/users", {
+   660→          method: "POST",
+   661→          body: JSON.stringify({
+   662→            name: name.trim(),
+   663→            email: email.trim(),
+   664→            role,
+   665→            password,
+   666→            assignedLocationIds: role === "branch_manager" ? assignedIds : [],
+   667→          }),
+   668→        });
+   669→        toast.success("User invited");
+   670→      }
+   671→      qc.invalidateQueries({ queryKey: ["users"] });
+   672→      onOpenChange(false);
+   673→    } catch (e: any) {
+   674→      toast.error(e?.message || "Failed to save user");
+   675→    } finally {
+   676→      setSaving(false);
+   677→    }
+   678→  }
+   679→
+   680→  return (
+   681→    <Dialog open={open} onOpenChange={onOpenChange}>
+   682→      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto scroll-area">
+   683→        <DialogHeader>
+   684→          <DialogTitle>{isEdit ? "Edit user" : "Invite a new user"}</DialogTitle>
+   685→          <DialogDescription>
+   686→            {isEdit
+   687→              ? "Update role, location assignments, and status."
+   688→              : "Create a new team member and assign a role."}
+   689→          </DialogDescription>
+   690→        </DialogHeader>
+   691→
+   692→        <div className="space-y-4">
+   693→          {/* Name */}
+   694→          <div className="space-y-1.5">
+   695→            <Label htmlFor="u-name">Full name</Label>
+   696→            <Input
+   697→              id="u-name"
+   698→              value={name}
+   699→              onChange={(e) => setName(e.target.value)}
+   700→              placeholder="e.g. Priya Sharma"
+   701→              aria-invalid={!!errors.name}
+   702→            />
+   703→            {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
+   704→          </div>
+   705→
+   706→          {/* Email */}
+   707→          <div className="space-y-1.5">
+   708→            <Label htmlFor="u-email">Email</Label>
+   709→            <Input
+   710→              id="u-email"
+   711→              type="email"
+   712→              value={email}
+   713→              onChange={(e) => setEmail(e.target.value)}
+   714→              placeholder="name@myfng.in"
+   715→              aria-invalid={!!errors.email}
+   716→              disabled={isEdit}
+   717→            />
+   718→            {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
+   719→            {isEdit && (
+   720→              <p className="text-[11px] text-muted-foreground">Email cannot be changed after creation.</p>
+   721→            )}
+   722→          </div>
+   723→
+   724→          {/* Password (create only) */}
+   725→          {!isEdit && (
+   726→            <div className="space-y-1.5">
+   727→              <Label htmlFor="u-pass">Password</Label>
+   728→              <Input
+   729→                id="u-pass"
+   730→                type="password"
+   731→                value={password}
+   732→                onChange={(e) => setPassword(e.target.value)}
+   733→                placeholder="Min 8 characters"
+   734→                aria-invalid={!!errors.password}
+   735→              />
+   736→              {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
+   737→            </div>
+   738→          )}
+   739→
+   740→          {/* Role */}
+   741→          <div className="space-y-1.5">
+   742→            <Label>Role</Label>
+   743→            <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+   744→              <SelectTrigger className="w-full">
+   745→                <SelectValue />
+   746→              </SelectTrigger>
+   747→              <SelectContent>
+   748→                {ROLES.map((r) => (
+   749→                  <SelectItem key={r.value} value={r.value}>
+   750→                    {r.label}
+   751→                  </SelectItem>
+   752→                ))}
+   753→              </SelectContent>
+   754→            </Select>
+   755→            <p className="text-[11px] text-muted-foreground leading-snug">
+   756→              {ROLES.find((r) => r.value === role)?.description}
+   757→            </p>
+   758→          </div>
+   759→
+   760→          {/* Assigned locations — only for branch_manager */}
+   761→          {role === "branch_manager" && (
+   762→            <div className="space-y-1.5">
+   763→              <Label>Assigned locations</Label>
+   764→              <div className="rounded-md border max-h-44 overflow-y-auto scroll-area divide-y">
+   765→                {locationsLoading ? (
+   766→                  <div className="p-3 space-y-2">
+   767→                    {Array.from({ length: 3 }).map((_, i) => (
+   768→                      <Skeleton key={i} className="h-5 w-full" />
+   769→                    ))}
+   770→                  </div>
+   771→                ) : (locations ?? []).length === 0 ? (
+   772→                  <p className="text-xs text-muted-foreground p-3">No locations available.</p>
+   773→                ) : (
+   774→                  (locations ?? []).map((l) => (
+   775→                    <label
+   776→                      key={l.id}
+   777→                      className="flex items-center gap-2.5 px-3 py-2 hover:bg-accent/40 cursor-pointer"
+   778→                    >
+   779→                      <Checkbox
+   780→                        checked={assignedIds.includes(l.id)}
+   781→                        onCheckedChange={() => toggleLocation(l.id)}
+   782→                      />
+   783→                      <span className="text-sm">{l.name}</span>
+   784→                      <span className="text-xs text-muted-foreground ml-auto">{l.city}</span>
+   785→                    </label>
+   786→                  ))
+   787→                )}
+   788→              </div>
+   789→              {errors.assigned && <p className="text-xs text-destructive">{errors.assigned}</p>}
+   790→              <p className="text-[11px] text-muted-foreground">
+   791→                Branch managers can only see & act on assigned locations.
+   792→              </p>
+   793→            </div>
+   794→          )}
+   795→
+   796→          {/* Active toggle (edit only) */}
+   797→          {isEdit && (
+   798→            <div className="flex items-center justify-between rounded-md border p-3">
+   799→              <div>
+   800→                <Label className="cursor-default">Account active</Label>
+   801→                <p className="text-[11px] text-muted-foreground mt-0.5">Inactive users cannot sign in.</p>
+   802→              </div>
+   803→              <Switch checked={active} onCheckedChange={setActive} />
+   804→            </div>
+   805→          )}
+   806→        </div>
+   807→
+   808→        <DialogFooter>
+   809→          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+   810→            Cancel
+   811→          </Button>
+   812→          <Button onClick={handleSubmit} disabled={saving}>
+   813→            {saving ? (
+   814→              <><RefreshCw className="size-3.5 mr-1.5 animate-spin" /> Saving…</>
+   815→            ) : (
+   816→              <>{isEdit ? "Save changes" : "Invite user"}</>
+   817→            )}
+   818→          </Button>
+   819→        </DialogFooter>
+   820→      </DialogContent>
+   821→    </Dialog>
+   822→  );
+   823→}
+   824→
+   825→// ===========================================================================
+   826→// BRAND TAB
+   827→// ===========================================================================
+   828→function BrandTab({ readonly }: { readonly: boolean }) {
+   829→  const qc = useQueryClient();
+   830→  const { data: settings, isLoading } = useQuery<SettingsMap>({
+   831→    queryKey: ["settings"],
+   832→    queryFn: () => api<SettingsMap>("/api/settings"),
+   833→  });
+   834→
+   835→  const brand: BrandSettings = (settings?.brand as BrandSettings) ?? {};
+   836→  const [form, setForm] = useState<BrandSettings>({});
+   837→  const [saving, setSaving] = useState(false);
+   838→  const [errors, setErrors] = useState<Record<string, string>>({});
+   839→
+   840→  useEffect(() => {
+   841→    if (brand && Object.keys(brand).length > 0) {
+   842→      setForm({
+   843→        name: brand.name ?? "MyFNG",
+   844→        tagline: brand.tagline ?? "",
+   845→        supportEmail: brand.supportEmail ?? "",
+   846→        supportPhone: brand.supportPhone ?? "",
+   847→      });
+   848→    }
+   849→  }, [settings]);
+   850→
+   851→  function set<K extends keyof BrandSettings>(k: K, v: BrandSettings[K]) {
+   852→    setForm((p) => ({ ...p, [k]: v }));
+   853→  }
+   854→
+   855→  function validate() {
+   856→    const e: Record<string, string> = {};
+   857→    if (!form.name?.trim()) e.name = "Brand name is required";
+   858→    if (form.supportEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.supportEmail)) {
+   859→      e.supportEmail = "Invalid email";
+   860→    }
+   861→    setErrors(e);
+   862→    return Object.keys(e).length === 0;
+   863→  }
+   864→
+   865→  async function save() {
+   866→    if (!validate()) return;
+   867→    setSaving(true);
+   868→    try {
+   869→      await api("/api/settings", {
+   870→        method: "PATCH",
+   871→        body: JSON.stringify({ key: "brand", value: form }),
+   872→      });
+   873→      qc.invalidateQueries({ queryKey: ["settings"] });
+   874→      toast.success("Brand settings saved");
+   875→    } catch (e: any) {
+   876→      toast.error(e?.message || "Failed to save brand settings");
+   877→    } finally {
+   878→      setSaving(false);
+   879→    }
+   880→  }
+   881→
+   882→  if (isLoading) return <BrandSkeleton />;
+   883→
+   884→  return (
+   885→    <CardSection
+   886→      title="Brand & Support"
+   887→      description="Customer-facing identity used across the platform"
+   888→      action={readonly ? (
+   889→        <Badge variant="outline" className="text-xs text-muted-foreground">
+   890→          <Lock className="size-3 mr-1" /> Read-only
+   891→        </Badge>
+   892→      ) : undefined}
+   893→    >
+   894→      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   895→        <Field
+   896→          label="Brand name"
+   897→          icon={Building2}
+   898→          error={errors.name}
+   899→        >
+   900→          <Input
+   901→            value={form.name ?? ""}
+   902→            onChange={(e) => set("name", e.target.value)}
+   903→            disabled={readonly}
+   904→            placeholder="MyFNG"
+   905→            aria-invalid={!!errors.name}
+   906→          />
+   907→        </Field>
+   908→
+   909→        <Field label="Tagline" icon={Sparkles}>
+   910→          <Input
+   911→            value={form.tagline ?? ""}
+   912→            onChange={(e) => set("tagline", e.target.value)}
+   913→            disabled={readonly}
+   914→            placeholder="Home Interiors & Services"
+   915→          />
+   916→        </Field>
+   917→
+   918→        <Field
+   919→          label="Support email"
+   920→          icon={Mail}
+   921→          error={errors.supportEmail}
+   922→        >
+   923→          <Input
+   924→            type="email"
+   925→            value={form.supportEmail ?? ""}
+   926→            onChange={(e) => set("supportEmail", e.target.value)}
+   927→            disabled={readonly}
+   928→            placeholder="care@myfng.in"
+   929→            aria-invalid={!!errors.supportEmail}
+   930→          />
+   931→        </Field>
+   932→
+   933→        <Field label="Support phone" icon={Phone}>
+   934→          <Input
+   935→            value={form.supportPhone ?? ""}
+   936→            onChange={(e) => set("supportPhone", e.target.value)}
+   937→            disabled={readonly}
+   938→            placeholder="+91 22 4000 1000"
+   939→          />
+   940→        </Field>
+   941→      </div>
+   942→
+   943→      <div className="flex justify-end pt-4 mt-2 border-t">
+   944→        <Button onClick={save} disabled={saving || readonly}>
+   945→          {saving ? (
+   946→            <><RefreshCw className="size-3.5 mr-1.5 animate-spin" /> Saving…</>
+   947→          ) : (
+   948→            <><Save className="size-3.5 mr-1.5" /> Save brand settings</>
+   949→          )}
+   950→        </Button>
+   951→      </div>
+   952→    </CardSection>
+   953→  );
+   954→}
+   955→
+   956→function BrandSkeleton() {
+   957→  return (
+   958→    <Card>
+   959→      <CardContent className="p-5 space-y-4">
+   960→        <Skeleton className="h-5 w-40" />
+   961→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   962→          {Array.from({ length: 4 }).map((_, i) => (
+   963→            <div key={i} className="space-y-2">
+   964→              <Skeleton className="h-3 w-20" />
+   965→              <Skeleton className="h-9 w-full" />
+   966→            </div>
+   967→          ))}
+   968→        </div>
+   969→        <Skeleton className="h-9 w-44 ml-auto" />
+   970→      </CardContent>
+   971→    </Card>
+   972→  );
+   973→}
+   974→
+   975→// ===========================================================================
+   976→// AI ASSISTANT TAB
+   977→// ===========================================================================
+   978→const AI_MODELS = [
+   979→  { value: "glm-4.6", label: "GLM-4.6 (Recommended)" },
+   980→  { value: "glm-4-air", label: "GLM-4 Air (Fast)" },
+   981→  { value: "glm-4-flash", label: "GLM-4 Flash (Lightweight)" },
+   982→];
+   983→
+   984→function AiTab({ readonly }: { readonly: boolean }) {
+   985→  const qc = useQueryClient();
+   986→  const { data: settings, isLoading } = useQuery<SettingsMap>({
+   987→    queryKey: ["settings"],
+   988→    queryFn: () => api<SettingsMap>("/api/settings"),
+   989→  });
+   990→
+   991→  const ai: AiSettings = (settings?.ai as AiSettings) ?? {};
+   992→  const [form, setForm] = useState<AiSettings>({});
+   993→  const [saving, setSaving] = useState(false);
+   994→  const [errors, setErrors] = useState<Record<string, string>>({});
+   995→
+   996→  useEffect(() => {
+   997→    if (ai && Object.keys(ai).length > 0) {
+   998→      setForm({
+   999→        assistantName: ai.assistantName ?? "MiSA AI",
+  1000→        defaultModel: ai.defaultModel ?? "glm-4.6",
+  1001→        autoApprove: ai.autoApprove ?? false,
+  1002→        maxTokensPerDay: ai.maxTokensPerDay ?? 200000,
+  1003→      });
+  1004→    }
+  1005→  }, [settings]);
+  1006→
+  1007→  function set<K extends keyof AiSettings>(k: K, v: AiSettings[K]) {
+  1008→    setForm((p) => ({ ...p, [k]: v }));
+  1009→  }
+  1010→
+  1011→  function validate() {
+  1012→    const e: Record<string, string> = {};
+  1013→    if (!form.assistantName?.trim()) e.assistantName = "Assistant name is required";
+  1014→    if (form.maxTokensPerDay != null && form.maxTokensPerDay < 0) {
+  1015→      e.maxTokensPerDay = "Must be ≥ 0";
+  1016→    }
+  1017→    setErrors(e);
+  1018→    return Object.keys(e).length === 0;
+  1019→  }
+  1020→
+  1021→  async function save() {
+  1022→    if (!validate()) return;
+  1023→    setSaving(true);
+  1024→    try {
+  1025→      await api("/api/settings", {
+  1026→        method: "PATCH",
+  1027→        body: JSON.stringify({ key: "ai", value: form }),
+  1028→      });
+  1029→      qc.invalidateQueries({ queryKey: ["settings"] });
+  1030→      toast.success("AI settings saved");
+  1031→    } catch (e: any) {
+  1032→      toast.error(e?.message || "Failed to save AI settings");
+  1033→    } finally {
+  1034→      setSaving(false);
+  1035→    }
+  1036→  }
+  1037→
+  1038→  if (isLoading) return <AiSkeleton />;
+  1039→
+  1040→  return (
+  1041→    <div className="space-y-4">
+  1042→      <CardSection
+  1043→        title="MiSA AI Configuration"
+  1044→        description="Tune the assistant that powers review replies, posts & SEO recs"
+  1045→        action={readonly ? (
+  1046→          <Badge variant="outline" className="text-xs text-muted-foreground">
+  1047→            <Lock className="size-3 mr-1" /> Read-only
+  1048→          </Badge>
+  1049→        ) : undefined}
+  1050→      >
+  1051→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1052→          <Field
+  1053→            label="Assistant name"
+  1054→            icon={Sparkles}
+  1055→            error={errors.assistantName}
+  1056→          >
+  1057→            <Input
+  1058→              value={form.assistantName ?? ""}
+  1059→              onChange={(e) => set("assistantName", e.target.value)}
+  1060→              disabled={readonly}
+  1061→              placeholder="MiSA AI"
+  1062→              aria-invalid={!!errors.assistantName}
+  1063→            />
+  1064→          </Field>
+  1065→
+  1066→          <Field label="Default model" icon={Cpu}>
+  1067→            <Select
+  1068→              value={form.defaultModel ?? "glm-4.6"}
+  1069→              onValueChange={(v) => set("defaultModel", v)}
+  1070→              disabled={readonly}
+  1071→            >
+  1072→              <SelectTrigger className="w-full">
+  1073→                <SelectValue />
+  1074→              </SelectTrigger>
+  1075→              <SelectContent>
+  1076→                {AI_MODELS.map((m) => (
+  1077→                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+  1078→                ))}
+  1079→              </SelectContent>
+  1080→            </Select>
+  1081→          </Field>
+  1082→
+  1083→          <Field
+  1084→            label="Max tokens / day"
+  1085→            icon={Zap}
+  1086→            error={errors.maxTokensPerDay}
+  1087→          >
+  1088→            <Input
+  1089→              type="number"
+  1090→              min={0}
+  1091→              step={10000}
+  1092→              value={form.maxTokensPerDay ?? 0}
+  1093→              onChange={(e) => set("maxTokensPerDay", Number(e.target.value))}
+  1094→              disabled={readonly}
+  1095→              aria-invalid={!!errors.maxTokensPerDay}
+  1096→            />
+  1097→          </Field>
+  1098→        </div>
+  1099→
+  1100→        {/* Auto-approve toggle */}
+  1101→        <div className="mt-4 rounded-lg border p-4 flex items-start gap-3">
+  1102→          <div className="size-9 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+  1103→            <Sparkles className="size-4" />
+  1104→          </div>
+  1105→          <div className="flex-1 min-w-0">
+  1106→            <div className="flex items-center justify-between gap-2">
+  1107→              <Label htmlFor="ai-auto" className="cursor-default text-sm font-medium">
+  1108→                Auto-approve AI actions
+  1109→              </Label>
+  1110→              <Switch
+  1111→                id="ai-auto"
+  1112→                checked={!!form.autoApprove}
+  1113→                onCheckedChange={(v) => set("autoApprove", v)}
+  1114→                disabled={readonly}
+  1115→              />
+  1116→            </div>
+  1117→            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+  1118→              When <span className="font-medium">off</span>, AI suggestions (review replies, posts, SEO recs) require
+  1119→              human review before publishing — per doc §11. When on, MiSA AI may publish directly to Google Business Profile.
+  1120→            </p>
+  1121→            <div className="mt-2">
+  1122→              {form.autoApprove ? (
+  1123→                <Badge variant="outline" className="text-amber-600 dark:text-amber-400 border-amber-500/20 bg-amber-500/10">
+  1124→                  <Zap className="size-3 mr-1" /> Auto-publishing enabled
+  1125→                </Badge>
+  1126→              ) : (
+  1127→                <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400 border-emerald-500/20 bg-emerald-500/10">
+  1128→                  <CheckCircle2 className="size-3 mr-1" /> Human review required
+  1129→                </Badge>
+  1130→              )}
+  1131→            </div>
+  1132→          </div>
+  1133→        </div>
+  1134→
+  1135→        <div className="flex justify-end pt-4 mt-4 border-t">
+  1136→          <Button onClick={save} disabled={saving || readonly}>
+  1137→            {saving ? (
+  1138→              <><RefreshCw className="size-3.5 mr-1.5 animate-spin" /> Saving…</>
+  1139→            ) : (
+  1140→              <><Save className="size-3.5 mr-1.5" /> Save AI settings</>
+  1141→            )}
+  1142→          </Button>
+  1143→        </div>
+  1144→      </CardSection>
+  1145→    </div>
+  1146→  );
+  1147→}
+  1148→
+  1149→function AiSkeleton() {
+  1150→  return (
+  1151→    <Card>
+  1152→      <CardContent className="p-5 space-y-4">
+  1153→        <Skeleton className="h-5 w-44" />
+  1154→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1155→          {Array.from({ length: 3 }).map((_, i) => (
+  1156→            <div key={i} className="space-y-2">
+  1157→              <Skeleton className="h-3 w-24" />
+  1158→              <Skeleton className="h-9 w-full" />
+  1159→            </div>
+  1160→          ))}
+  1161→        </div>
+  1162→        <Skeleton className="h-20 w-full" />
+  1163→        <Skeleton className="h-9 w-36 ml-auto" />
+  1164→      </CardContent>
+  1165→    </Card>
+  1166→  );
+  1167→}
+  1168→
+  1169→// ===========================================================================
+  1170→// SYNC SCHEDULE TAB
+  1171→// ===========================================================================
+  1172→const SYNC_ITEMS = [
+  1173→  {
+  1174→    key: "reviews",
+  1175→    label: "Reviews",
+  1176→    icon: Star,
+  1177→    interval: "5 min",
+  1178→    description: "New Google reviews & ratings across all locations.",
+  1179→    color: "text-amber-600 dark:text-amber-400 bg-amber-500/10",
+  1180→  },
+  1181→  {
+  1182→    key: "businessInfo",
+  1183→    label: "Business Info",
+  1184→    icon: Building2,
+  1185→    interval: "30 min",
+  1186→    description: "Hours, photos, address, contact details.",
+  1187→    color: "text-teal-600 dark:text-teal-400 bg-teal-500/10",
+  1188→  },
+  1189→  {
+  1190→    key: "posts",
+  1191→    label: "Posts",
+  1192→    icon: MessageSquare,
+  1193→    interval: "30 min",
+  1194→    description: "Published Whats New, offers, events & updates.",
+  1195→    color: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+  1196→  },
+  1197→  {
+  1198→    key: "analytics",
+  1199→    label: "Analytics",
+  1200→    icon: BarChart3,
+  1201→    interval: "Daily",
+  1202→    description: "Search views, maps views, calls, direction requests.",
+  1203→    color: "text-rose-600 dark:text-rose-400 bg-rose-500/10",
+  1204→  },
+  1205→];
+  1206→
+  1207→function SyncTab({ readonly }: { readonly: boolean }) {
+  1208→  const qc = useQueryClient();
+  1209→  const { data: settings } = useQuery<SettingsMap>({
+  1210→    queryKey: ["settings"],
+  1211→    queryFn: () => api<SettingsMap>("/api/settings"),
+  1212→  });
+  1213→
+  1214→  const sync: SyncSettings = (settings?.sync as SyncSettings) ?? {};
+  1215→  const [intervals, setIntervals] = useState<Record<string, string>>({
+  1216→    reviewsInterval: "5m",
+  1217→    businessInfoInterval: "30m",
+  1218→    postsInterval: "30m",
+  1219→    analyticsInterval: "daily",
+  1220→  });
+  1221→  const [saving, setSaving] = useState(false);
+  1222→
+  1223→  useEffect(() => {
+  1224→    if (sync && Object.keys(sync).length > 0) {
+  1225→      setIntervals({
+  1226→        reviewsInterval: sync.reviewsInterval ?? "5m",
+  1227→        businessInfoInterval: sync.businessInfoInterval ?? "30m",
+  1228→        postsInterval: sync.postsInterval ?? "30m",
+  1229→        analyticsInterval: sync.analyticsInterval ?? "daily",
+  1230→      });
+  1231→    }
+  1232→  }, [settings]);
+  1233→
+  1234→  async function save() {
+  1235→    setSaving(true);
+  1236→    try {
+  1237→      await api("/api/settings", {
+  1238→        method: "PATCH",
+  1239→        body: JSON.stringify({ key: "sync", value: intervals }),
+  1240→      });
+  1241→      qc.invalidateQueries({ queryKey: ["settings"] });
+  1242→      toast.success("Sync schedule saved");
+  1243→    } catch (e: any) {
+  1244→      toast.error(e?.message || "Failed to save sync schedule");
+  1245→    } finally {
+  1246→      setSaving(false);
+  1247→    }
+  1248→  }
+  1249→
+  1250→  return (
+  1251→    <div className="space-y-4">
+  1252→      <CardSection
+  1253→        title="Sync Schedule"
+  1254→        description="How often MyFNG polls Google Business Profile"
+  1255→        action={readonly ? (
+  1256→          <Badge variant="outline" className="text-xs text-muted-foreground">
+  1257→            <Lock className="size-3 mr-1" /> Read-only
+  1258→          </Badge>
+  1259→        ) : undefined}
+  1260→      >
+  1261→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1262→          {SYNC_ITEMS.map((item) => (
+  1263→            <div key={item.key} className="rounded-lg border p-4 flex gap-3">
+  1264→              <div className={cn("size-10 rounded-md flex items-center justify-center shrink-0", item.color)}>
+  1265→                <item.icon className="size-5" />
+  1266→              </div>
+  1267→              <div className="flex-1 min-w-0">
+  1268→                <div className="flex items-center justify-between gap-2">
+  1269→                  <span className="text-sm font-semibold">{item.label}</span>
+  1270→                  <Badge variant="outline" className="text-[10px] font-normal">
+  1271→                    <Clock className="size-3 mr-1" />
+  1272→                    {item.interval}
+  1273→                  </Badge>
+  1274→                </div>
+  1275→                <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{item.description}</p>
+  1276→                {!readonly && (
+  1277→                  <div className="mt-2">
+  1278→                    <Input
+  1279→                      value={intervals[`${item.key}Interval`] ?? ""}
+  1280→                      onChange={(e) =>
+  1281→                        setIntervals((p) => ({ ...p, [`${item.key}Interval`]: e.target.value }))
+  1282→                      }
+  1283→                      className="h-7 text-xs"
+  1284→                      placeholder="e.g. 5m, 30m, daily"
+  1285→                    />
+  1286→                  </div>
+  1287→                )}
+  1288→              </div>
+  1289→            </div>
+  1290→          ))}
+  1291→        </div>
+  1292→
+  1293→        <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2.5">
+  1294→          <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+  1295→          <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+  1296→            Sync intervals are saved as settings, but the actual cron jobs run on the backend. Changes to
+  1297→            production cron schedules require a deployment. Use this panel to record the intended cadence.
+  1298→          </p>
+  1299→        </div>
+  1300→
+  1301→        {!readonly && (
+  1302→          <div className="flex justify-end pt-4 mt-2 border-t">
+  1303→            <Button onClick={save} disabled={saving}>
+  1304→              {saving ? (
+  1305→                <><RefreshCw className="size-3.5 mr-1.5 animate-spin" /> Saving…</>
+  1306→              ) : (
+  1307→                <><Save className="size-3.5 mr-1.5" /> Save schedule</>
+  1308→              )}
+  1309→            </Button>
+  1310→          </div>
+  1311→        )}
+  1312→      </CardSection>
+  1313→    </div>
+  1314→  );
+  1315→}
+  1316→
+  1317→// ===========================================================================
+  1318→// API & INTEGRATIONS TAB
+  1319→// ===========================================================================
+  1320→const INTEGRATIONS = [
+  1321→  {
+  1322→    key: "gbp",
+  1323→    name: "Google Business Profile API",
+  1324→    description: "Pulls reviews, business info, posts & analytics for all MyFNG locations.",
+  1325→    icon: Building2,
+  1326→    status: "Connected",
+  1327→    statusClass: "text-emerald-600 dark:text-emerald-400 border-emerald-500/20 bg-emerald-500/10",
+  1328→    lastSync: "3 min ago",
+  1329→  },
+  1330→  {
+  1331→    key: "oauth",
+  1332→    name: "Google OAuth 2.0",
+  1333→    description: "Authorization flow used to access GBP on behalf of MyFNG managers.",
+  1334→    icon: KeyRound,
+  1335→    status: "Active",
+  1336→    statusClass: "text-emerald-600 dark:text-emerald-400 border-emerald-500/20 bg-emerald-500/10",
+  1337→    lastSync: "—",
+  1338→  },
+  1339→  {
+  1340→    key: "misa",
+  1341→    name: "MiSA AI (glm-4.6)",
+  1342→    description: "Powers review replies, post generation, SEO recs & monthly summaries.",
+  1343→    icon: Sparkles,
+  1344→    status: "Active",
+  1345→    statusClass: "text-amber-600 dark:text-amber-400 border-amber-500/20 bg-amber-500/10",
+  1346→    lastSync: "Always on",
+  1347→  },
+  1348→];
+  1349→
+  1350→function ApiTab() {
+  1351→  const [testing, setTesting] = useState<string | null>(null);
+  1352→
+  1353→  function testConnection(key: string, name: string) {
+  1354→    setTesting(key);
+  1355→    setTimeout(() => {
+  1356→      setTesting(null);
+  1357→      toast.success(`${name}: Connection successful`);
+  1358→    }, 900);
+  1359→  }
+  1360→
+  1361→  function reauthorize() {
+  1362→    toast.message("Redirecting to Google…", {
+  1363→      description: "You'll be asked to grant MyFNG access to your Business Profile.",
+  1364→    });
+  1365→  }
+  1366→
+  1367→  return (
+  1368→    <div className="space-y-4">
+  1369→      {/* Integration status cards */}
+  1370→      <CardSection
+  1371→        title="Integration Status"
+  1372→        description="External services powering MyFNG"
+  1373→      >
+  1374→        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+  1375→          {INTEGRATIONS.map((it) => (
+  1376→            <div key={it.key} className="rounded-lg border p-4 flex flex-col gap-3">
+  1377→              <div className="flex items-start justify-between gap-2">
+  1378→                <div className="size-9 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0">
+  1379→                  <it.icon className="size-4" />
+  1380→                </div>
+  1381→                <Badge variant="outline" className={cn("text-[10px] font-medium", it.statusClass)}>
+  1382→                  <span className="size-1.5 rounded-full bg-emerald-500 mr-1" />
+  1383→                  {it.status}
+  1384→                </Badge>
+  1385→              </div>
+  1386→              <div>
+  1387→                <h4 className="text-sm font-semibold">{it.name}</h4>
+  1388→                <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{it.description}</p>
+  1389→              </div>
+  1390→              <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+  1391→                <Clock className="size-3" /> Last sync: <span className="text-foreground">{it.lastSync}</span>
+  1392→              </div>
+  1393→              <Button
+  1394→                size="sm"
+  1395→                variant="outline"
+  1396→                className="w-full mt-1"
+  1397→                onClick={() => testConnection(it.key, it.name)}
+  1398→                disabled={testing === it.key}
+  1399→              >
+  1400→                {testing === it.key ? (
+  1401→                  <><RefreshCw className="size-3.5 mr-1.5 animate-spin" /> Testing…</>
+  1402→                ) : (
+  1403→                  <><Zap className="size-3.5 mr-1.5" /> Test connection</>
+  1404→                )}
+  1405→              </Button>
+  1406→            </div>
+  1407→          ))}
+  1408→        </div>
+  1409→      </CardSection>
+  1410→
+  1411→      {/* Google OAuth credentials */}
+  1412→      <CardSection
+  1413→        title="Google OAuth Credentials"
+  1414→        description="Service-account & OAuth client used for GBP access"
+  1415→      >
+  1416→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1417→          <div className="space-y-1.5">
+  1418→            <Label>Client ID</Label>
+  1419→            <div className="flex items-center gap-2">
+  1420→              <Input
+  1421→                readOnly
+  1422→                value="••••••••••••••••••••••.apps.googleusercontent.com"
+  1423→                className="font-mono text-xs"
+  1424→              />
+  1425→            </div>
+  1426→            <p className="text-[11px] text-muted-foreground">Masked for security. Reveal requires admin role.</p>
+  1427→          </div>
+  1428→          <div className="space-y-1.5">
+  1429→            <Label>Client Secret</Label>
+  1430→            <div className="flex items-center gap-2">
+  1431→              <Input
+  1432→                readOnly
+  1433→                value="••••••••••••••••"
+  1434→                className="font-mono text-xs"
+  1435→              />
+  1436→            </div>
+  1437→            <p className="text-[11px] text-muted-foreground">Masked. Stored encrypted in environment variables.</p>
+  1438→          </div>
+  1439→        </div>
+  1440→
+  1441→        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4 pt-4 border-t">
+  1442→          <div className="flex items-start gap-2.5">
+  1443→            <ShieldCheck className="size-4 text-emerald-500 shrink-0 mt-0.5" />
+  1444→            <p className="text-xs text-muted-foreground leading-relaxed max-w-md">
+  1445→              OAuth tokens are refreshed automatically. If sync stops, re-authorize to grant fresh
+  1446→              permissions for all linked locations.
+  1447→            </p>
+  1448→          </div>
+  1449→          <Button variant="outline" onClick={reauthorize} className="shrink-0">
+  1450→            <ExternalLink className="size-3.5 mr-1.5" /> Re-authorize
+  1451→          </Button>
+  1452→        </div>
+  1453→      </CardSection>
+  1454→
+  1455→      {/* API monitoring note */}
+  1456→      <CardSection
+  1457→        title="API Monitoring"
+  1458→        description="Quota & rate-limit overview"
+  1459→      >
+  1460→        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+  1461→          <ApiMetric label="GBP calls today" value="1,284" hint="of 50,000 quota" accent="text-emerald-600 dark:text-emerald-400" />
+  1462→          <ApiMetric label="AI tokens today" value="48.2k" hint="of 200k cap" accent="text-amber-600 dark:text-amber-400" />
+  1463→          <ApiMetric label="Avg response" value="312 ms" hint="last 1h" accent="text-teal-600 dark:text-teal-400" />
+  1464→          <ApiMetric label="Error rate" value="0.2%" hint="last 24h" accent="text-emerald-600 dark:text-emerald-400" />
+  1465→        </div>
+  1466→        <div className="mt-3 rounded-lg border bg-muted/30 p-3 flex items-center gap-2">
+  1467→          <Server className="size-4 text-muted-foreground shrink-0" />
+  1468→          <p className="text-xs text-muted-foreground">
+  1469→            Detailed request logs are available in the Audit Logs module. Sync failures trigger notifications.
+  1470→          </p>
+  1471→        </div>
+  1472→      </CardSection>
+  1473→    </div>
+  1474→  );
+  1475→}
+  1476→
+  1477→function ApiMetric({ label, value, hint, accent }: { label: string; value: string; hint: string; accent: string }) {
+  1478→  return (
+  1479→    <div className="rounded-lg border bg-muted/30 p-3">
+  1480→      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</div>
+  1481→      <div className={cn("text-lg font-bold tabular-nums mt-0.5", accent)}>{value}</div>
+  1482→      <div className="text-[11px] text-muted-foreground mt-0.5">{hint}</div>
+  1483→    </div>
+  1484→  );
+  1485→}
+  1486→
+  1487→// ===========================================================================
+  1488→// Shared helpers
+  1489→// ===========================================================================
+  1490→function Field({
+  1491→  label, icon: Icon, error, children,
+  1492→}: {
+  1493→  label: string;
+  1494→  icon?: React.ComponentType<{ className?: string }>;
+  1495→  error?: string;
+  1496→  children: React.ReactNode;
+  1497→}) {
+  1498→  return (
+  1499→    <div className="space-y-1.5">
+  1500→      <Label>
+  1501→        {Icon && <Icon className="size-3.5 text-muted-foreground" />}
+  1502→        {label}
+  1503→      </Label>
+  1504→      {children}
+  1505→      {error && <p className="text-xs text-destructive">{error}</p>}
+  1506→    </div>
+  1507→  );
+  1508→}
+  1509→
+  1510→// ===========================================================================
+  1511→// Access-restricted card for users without users.manage
+  1512→// ===========================================================================
+  1513→function UsersAccessRestricted() {
+  1514→  return (
+  1515→    <Card>
+  1516→      <CardContent className="p-10 text-center">
+  1517→        <div className="size-14 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
+  1518→          <Lock className="size-7 text-amber-500" />
+  1519→        </div>
+  1520→        <h3 className="text-base font-semibold">User management is restricted</h3>
+  1521→        <p className="text-sm text-muted-foreground mt-1.5 max-w-sm mx-auto">
+  1522→          Only Super Admins can invite, edit, or deactivate users. You can still configure brand,
+  1523→          AI, sync and integration settings below.
+  1524→        </p>
+  1525→        <div className="mt-4 inline-flex items-center gap-2 rounded-full border bg-muted/40 px-3 py-1.5">
+  1526→          <ShieldCheck className="size-3.5 text-emerald-500" />
+  1527→          <span className="text-xs text-muted-foreground">Need access? Contact your Super Admin.</span>
+  1528→        </div>
+  1529→      </CardContent>
+  1530→    </Card>
+  1531→  );
+  1532→}
+  1533→

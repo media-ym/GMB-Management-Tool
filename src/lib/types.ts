@@ -29,6 +29,7 @@ export type ViewKey =
   | "notifications"
   | "audit"
   | "system"
+  | "api-docs"
   | "settings";
 
 export interface SessionUser {

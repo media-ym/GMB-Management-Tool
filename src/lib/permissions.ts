@@ -103,6 +103,7 @@ export function canAccessView(role: Role | undefined, view: string): boolean {
     notifications: "notifications.view",
     audit: "audit.view",
     system: "system.view",
+    "api-docs": "dashboard.view",
     settings: "settings.view",
   };
   const perm = map[view];
