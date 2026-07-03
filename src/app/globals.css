@@ -44,48 +44,48 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   MyFNG Local AI Manager — Top-Nav Design (Reference Image Match)
-   Blue-to-purple gradient top bar, no sidebar, light gray bg, white cards.
+   MyFNG Local AI Manager — Ceres Reference Match
+   Solid blue top bar, blue hero section, light gray bg, white cards, 12px radius.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --radius: 0.5rem;                             /* 8px */
-  --background: oklch(0.97 0.003 240);           /* #f8f9fa light gray */
-  --foreground: oklch(0.22 0.02 260);            /* #333 dark text */
-  --card: oklch(1 0 0);                          /* white */
-  --card-foreground: oklch(0.22 0.02 260);
+  --radius: 0.75rem;                             /* 12px — matches reference */
+  --background: oklch(0.97 0.003 240);           /* #F8FAFC light gray */
+  --foreground: oklch(0.27 0.03 255);            /* #1E293B dark slate */
+  --card: oklch(1 0 0);                          /* #FFFFFF white */
+  --card-foreground: oklch(0.27 0.03 255);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.02 260);
-  --primary: oklch(0.55 0.2 265);                /* #4154f1 blue */
+  --popover-foreground: oklch(0.27 0.03 255);
+  --primary: oklch(0.55 0.2 265);                /* #2563EB blue */
   --primary-foreground: oklch(0.99 0.01 260);
-  --secondary: oklch(0.95 0.005 260);
-  --secondary-foreground: oklch(0.3 0.02 260);
-  --muted: oklch(0.95 0.005 260);
-  --muted-foreground: oklch(0.52 0.015 260);     /* #6c757d */
+  --secondary: oklch(0.95 0.005 240);            /* #E2E8F0 */
+  --secondary-foreground: oklch(0.4 0.03 255);   /* #475569 */
+  --muted: oklch(0.95 0.005 240);
+  --muted-foreground: oklch(0.55 0.02 255);      /* #64748B */
   --accent: oklch(0.93 0.008 265);
   --accent-foreground: oklch(0.4 0.06 265);
-  --destructive: oklch(0.6 0.22 25);             /* #ef4444 */
-  --border: oklch(0.91 0.004 260);               /* #e9ecef */
-  --input: oklch(0.93 0.004 260);
+  --destructive: oklch(0.6 0.22 25);             /* #EF4444 */
+  --border: oklch(0.91 0.005 240);               /* #E2E8F0 */
+  --input: oklch(0.93 0.005 240);
   --ring: oklch(0.55 0.2 265);
-  --chart-1: oklch(0.55 0.2 265);                /* blue #4154f1 */
-  --chart-2: oklch(0.65 0.16 150);               /* green #10b981 */
-  --chart-3: oklch(0.7 0.18 55);                 /* amber #f59e0b */
-  --chart-4: oklch(0.58 0.22 340);               /* rose #ef4444 */
-  --chart-5: oklch(0.55 0.2 290);                /* purple #8b5cf6 */
+  --chart-1: oklch(0.58 0.2 265);                /* #3B82F6 blue */
+  --chart-2: oklch(0.65 0.16 150);               /* #10B981 green */
+  --chart-3: oklch(0.7 0.18 55);                 /* #F59E0B amber */
+  --chart-4: oklch(0.58 0.22 340);               /* #EF4444 rose */
+  --chart-5: oklch(0.55 0.2 290);                /* #8B5CF6 purple */
   --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.22 0.02 260);
+  --sidebar-foreground: oklch(0.27 0.03 255);
   --sidebar-primary: oklch(0.55 0.2 265);
   --sidebar-primary-foreground: oklch(0.99 0.01 260);
-  --sidebar-accent: oklch(0.95 0.005 260);
-  --sidebar-accent-foreground: oklch(0.3 0.02 260);
-  --sidebar-border: oklch(0.91 0.004 260);
+  --sidebar-accent: oklch(0.95 0.005 240);
+  --sidebar-accent-foreground: oklch(0.4 0.03 255);
+  --sidebar-border: oklch(0.91 0.005 240);
   --sidebar-ring: oklch(0.55 0.2 265);
-  --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.05);
-  --card-shadow-hover: 0 4px 12px 0 rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
-  --card-shadow-lg: 0 10px 30px 0 rgb(0 0 0 / 0.08), 0 4px 12px -4px rgb(0 0 0 / 0.04);
-  /* Blue-to-purple gradient — matches reference image */
-  --gradient-topnav: linear-gradient(90deg, #4154f1 0%, #6a11cb 100%);
-  --gradient-header: linear-gradient(135deg, #4154f1 0%, #6a11cb 100%);
+  --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+  --card-shadow-hover: 0 4px 12px 0 rgb(0 0 0 / 0.1);
+  --card-shadow-lg: 0 10px 30px 0 rgb(0 0 0 / 0.1);
+  /* Solid blue top bar + blue hero gradient */
+  --topbar-bg: #2563EB;
+  --hero-gradient: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
 }
 
 .dark {
@@ -120,11 +120,11 @@
   --sidebar-accent-foreground: oklch(0.96 0.005 260);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.65 0.18 265);
-  --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.3);
-  --card-shadow-hover: 0 4px 12px 0 rgb(0 0 0 / 0.35), 0 2px 4px -2px rgb(0 0 0 / 0.25);
-  --card-shadow-lg: 0 10px 30px 0 rgb(0 0 0 / 0.35), 0 4px 12px -4px rgb(0 0 0 / 0.2);
-  --gradient-topnav: linear-gradient(90deg, #4154f1 0%, #6a11cb 100%);
-  --gradient-header: linear-gradient(135deg, #4154f1 0%, #6a11cb 100%);
+  --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3);
+  --card-shadow-hover: 0 4px 12px 0 rgb(0 0 0 / 0.35);
+  --card-shadow-lg: 0 10px 30px 0 rgb(0 0 0 / 0.35);
+  --topbar-bg: #1E40AF;
+  --hero-gradient: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%);
 }
 
 @layer base {
@@ -240,20 +240,27 @@
   background-color: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
 }
 
-/* Top nav active item — white pill on gradient */
+/* Top nav — solid blue bar, text-only items, white active with underline */
 .kt-nav-active {
-  background: rgba(255, 255, 255, 0.18);
   color: #fff;
-  border-radius: 0.5rem;
   font-weight: 600;
+  position: relative;
+}
+.kt-nav-active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: #fff;
+  border-radius: 2px;
 }
 .kt-nav-item {
-  border-radius: 0.5rem;
   transition: all 0.15s ease;
   white-space: nowrap;
 }
 .kt-nav-item:hover {
-  background: rgba(255, 255, 255, 0.12);
   color: #fff;
 }
 

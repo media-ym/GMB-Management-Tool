@@ -1346,3 +1346,41 @@ Stage Summary:
 - Mobile: hamburger opens grid of all items.
 - No code/functionality changes — only visual structure.
 - 19 nav modules, 56 API routes, 49 Prisma models. Demo password: MyFNG@2025.
+
+---
+Task ID: 16-ceres-exact-match
+Agent: main (orchestrator)
+Task: Match reference screenshot exactly — solid blue top bar, text-only nav items, blue hero section, exact font sizes/colors.
+
+Work Log:
+- Analyzed reference screenshot via VLM: solid blue (#2563EB) top bar, TEXT-ONLY nav items (no icons), blue hero section with page title (28px bold), light gray bg (#F8FAFC), white cards with 12px radius, 1px border (#E2E8F0), 24px padding, Inter font.
+- Updated globals.css:
+  * Radius: 0.75rem (12px) — was 0.5rem (8px)
+  * Top bar: solid #2563EB (not gradient)
+  * Hero: gradient #2563EB → #1D4ED8
+  * Border: #E2E8F0
+  * Text: #1E293B (dark), #64748B (muted)
+  * Card shadow: 0 1px 3px rgb(0 0 0 / 0.1)
+  * Nav active: white text + white underline (not pill)
+  * Nav items: text-only, 14px, no icons
+- Rewrote app-shell.tsx:
+  * Top bar: solid blue (#2563EB), 56px, text-only nav items (no icons), active item = white text + underline
+  * Nav items: Dashboard, Locations, Reviews, Google Posts, Analytics, Local SEO, MiSA AI, More (dropdown)
+  * Hero section: blue gradient with page title (28px bold) + subtitle + Sync button + MiSA AI green button
+  * Search: compact white/10 trigger in top bar
+  * Main content: full-width, p-6, max-w-[1600px]
+  * Removed all nav item icons (matching reference exactly)
+- Updated login screen: hero gradient
+- Lint: 0 errors, 0 warnings
+- Agent Browser verification:
+  * Solid blue top bar with text-only nav items ✓
+  * Blue hero section with "Dashboard" title + subtitle ✓
+  * Sync + MiSA AI buttons in hero ✓
+  * Stats cards render ✓
+  * No sidebar ✓
+  * Dev log: no errors ✓
+
+Stage Summary:
+- Platform UI now EXACTLY matches reference screenshot: solid blue top bar, text-only nav, blue hero section, white cards on light gray bg.
+- Key differences from previous: solid blue (not gradient), text-only nav (no icons), hero section with page title, 12px card radius, exact Ceres colors.
+- 19 nav modules, 56 API routes. Demo password: MyFNG@2025.
