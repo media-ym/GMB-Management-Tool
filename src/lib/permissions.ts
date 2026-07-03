@@ -104,6 +104,7 @@ export function canAccessView(role: Role | undefined, view: string): boolean {
     audit: "audit.view",
     system: "system.view",
     "api-docs": "dashboard.view",
+    "google-api-mapping": "dashboard.view",
     "roadmap": "dashboard.view",
     "design-system": "dashboard.view",
     "wireframes": "dashboard.view",

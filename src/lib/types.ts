@@ -30,6 +30,7 @@ export type ViewKey =
   | "audit"
   | "system"
   | "api-docs"
+  | "google-api-mapping"
   | "roadmap"
   | "design-system"
   | "wireframes"

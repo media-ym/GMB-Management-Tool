@@ -1193,3 +1193,35 @@ Stage Summary:
 - Screen Wireframes (doc 17): 52-screen catalog with mini wireframe previews, category filtering, implementation status, navigation to live screens.
 - 18 nav modules, 49 Prisma models, 55 API routes. Demo password: MyFNG@2025.
 - Complete documentation set (docs 01-17) now implemented. Ready for any additional docs (18-23 recommended in doc 15).
+
+---
+Task ID: 12-google-api-mapping
+Agent: main (orchestrator)
+Task: Implement doc 20 (Google API Mapping) — complete Google Business Profile API → DB mapping reference.
+
+Work Log:
+- Read doc 20 (Google API Mapping). Defines complete field-by-field mapping between Google Business Profile API objects and database tables, sync frequencies, error handling, retry policies, service layer, background jobs, security, and production checklist.
+- Created /api/google-api-mapping (GET) — returns full mapping data: 6 Google APIs, 7-step auth flow, 13 entity mappings (Google Account, Business Profile, Business Information, Business Hours, Holiday Hours, Categories, Services, Products, Photos, Reviews, Review Replies, Google Posts, Performance Metrics) each with Google Field → DB Column → Type → Notes, aggregation flow (daily→monthly→dashboard_cache), sync direction (google-to-db / db-to-google / bidirectional), 8 sync frequencies, 6 error mappings (401/403/404/429/500/503), retry policy (4 retry conditions + 4 do-not-retry conditions), rate limiting strategy, 10 service layer classes, 7 background jobs, 5 dashboard dependencies, 6 security rules, 10 production checklist items.
+- Added "Google API Map" as 19th nav module (icon: ArrowLeftRight). Updated types.ts, permissions.ts, app-shell.tsx, view-router.tsx.
+- Created Google API Mapping view with 6 tabs:
+  1. Entity Mappings — searchable/filterable mapping cards showing Google Object → DB Table → DB Model with field-by-field table (Google Field, DB Column, Type, Notes) + sync direction badge + frequency + status. Plus Performance Aggregation Flow card.
+  2. Auth Flow — Google APIs used (6 APIs with status badges), 7-step OAuth authentication flow (vertical stepper), Sync Direction diagram (Google→DB / DB→Google with entity badges).
+  3. Sync & Frequency — sync frequency table (8 entities with queue + priority), background sync jobs grid (7 jobs), dashboard dependencies (5 dashboards with table lists).
+  4. Error & Retry — error mapping table (6 HTTP codes with meaning/action/retryable/log level), retry policy cards (4 retry conditions with backoff + max retries), do-not-retry cards (4 conditions with reasons), rate limiting strategy + Google limits.
+  5. Service Layer — 10 Google API service classes (GoogleOAuthService, GoogleProfileService, GoogleReviewService, etc.) with responsibility + methods.
+  6. Security — 6 security rules with implemented/pending badges, 10 production checklist items with done/pending status.
+- Agent Browser verification:
+  * Google API Mapping heading renders ✓
+  * 6 tabs present: Entity Mappings, Auth Flow, Sync & Frequency, Error & Retry, Service Layer, Security ✓
+  * Entity Mappings shows reviews/posts/analytics entities ✓
+  * Error Mapping shows HTTP 401/403/429/500 with actions ✓
+  * Service Layer shows GoogleOAuthService etc. ✓
+  * Lint: 0 errors, 0 warnings ✓
+  * Dev log: no runtime errors ✓
+  * 19 nav modules, 56 API routes ✓
+
+Stage Summary:
+- DOC 20 FULLY IMPLEMENTED & VERIFIED.
+- Google API Mapping reference module complete with 13 entity mappings, 6 tabs covering auth flow, sync frequencies, error handling, retry policies, service layer, and security.
+- 19 nav modules, 49 Prisma models, 56 API routes. Demo password: MyFNG@2025.
+- Ready for next batch of MD files (21_Testing_Strategy.md, 22_OpenAPI_Specification.yaml, 23_Development_Tasks.md).

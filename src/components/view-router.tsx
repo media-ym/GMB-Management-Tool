@@ -16,6 +16,7 @@ import { NotificationsView } from "@/components/views/notifications-view";
 import { AuditView } from "@/components/views/audit-view";
 import { SystemView } from "@/components/views/system-view";
 import { ApiDocsView } from "@/components/views/api-docs-view";
+import { GoogleApiMappingView } from "@/components/views/google-api-mapping-view";
 import { RoadmapView } from "@/components/views/roadmap-view";
 import { DesignSystemView } from "@/components/views/design-system-view";
 import { WireframesView } from "@/components/views/wireframes-view";
@@ -59,6 +60,7 @@ export function ViewRouter() {
     case "audit": return <AuditView />;
     case "system": return <SystemView />;
     case "api-docs": return <ApiDocsView />;
+    case "google-api-mapping": return <GoogleApiMappingView />;
     case "roadmap": return <RoadmapView />;
     case "design-system": return <DesignSystemView />;
     case "wireframes": return <WireframesView />;
