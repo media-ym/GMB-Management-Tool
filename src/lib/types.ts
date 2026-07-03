@@ -30,6 +30,9 @@ export type ViewKey =
   | "audit"
   | "system"
   | "api-docs"
+  | "roadmap"
+  | "design-system"
+  | "wireframes"
   | "settings";
 
 export interface SessionUser {

@@ -1043,3 +1043,153 @@ Stage Summary:
 - Deployment/DevOps (doc 14): Public /api/health endpoint with 7 service checks, /api/system-info environment info, /api/admin/backup backup management.
 - 15 nav modules, 49 Prisma models, 53 API routes. Demo password: MyFNG@2025.
 - Ready for next batch of MD files.
+
+---
+Task ID: 11-foundation
+Agent: main (orchestrator)
+Task: Add 3 new nav modules (Roadmap, Design System, Wireframes) per docs 15/16/17 + create API routes.
+
+Work Log:
+- Read docs 15 (Project Roadmap — 10 phases, 24 weeks, sprints, risks, success metrics), 16 (UI/UX Design System — colors, typography, components, grid, breakpoints), 17 (Screen Wireframes — 50+ screens across 8 categories).
+- Created /api/roadmap (GET) — returns 10 phases with implementation status computed from actual database state (user count, location count, review count, etc.). Each phase has deliverables with done/pending status. Also returns 12 sprints, 6 risks, 7 success metrics with current progress.
+- Created /api/design-system (GET) — returns full design system spec: philosophy, grid, breakpoints, layout, color palette (with note that doc specifies blue #0057FF but platform uses emerald per design rules), typography (Inter, 5 heading sizes), border radius, shadows, buttons, inputs, cards, tables, charts, icons, modals, toasts, loading/empty/error states, animations, accessibility, dark mode, component naming, theme variables, final rules.
+- Added 3 new nav modules: Roadmap (icon: Map), Design System (icon: Palette), Wireframes (icon: Monitor). Updated types.ts (18 ViewKeys), permissions.ts (all 3 use dashboard.view permission — accessible to all authenticated users), app-shell.tsx nav (18 modules), view-router.tsx (3 new view imports + cases).
+- Total: 18 nav modules, 55 API routes, 49 Prisma models.
+
+Stage Summary:
+- Foundation for docs 15/16/17 complete. API routes created. Nav updated to 18 modules.
+- Ready for parallel subagents to build Roadmap, Design System, and Wireframes views.
+
+---
+Task ID: 11-a
+Agent: full-stack-developer (Roadmap View)
+Task: Build the Project Roadmap view with phase timeline, sprint breakdown, risks, and success metrics.
+
+Work Log:
+- Read worklog.md (foundation complete; `/api/roadmap` already returns the full 10-phase / 12-sprint / 6-risk / 7-metric payload derived from live DB counts). View-router already imports `RoadmapView` from `@/components/views/roadmap-view`, so only the view file was needed.
+- Inspected sibling views (seo, posts, audit, reports) for shared conventions: `useQuery` + `api<T>()` envelope, `PageHeader`/`CardSection`/`StatCard`, `.scroll-area` class for thin scrollbars, emerald/amber/teal/rose/slate palette only (no indigo/blue), Tables collapse to cards on mobile.
+- Created /home/z/my-project/src/components/views/roadmap-view.tsx (~520 lines, single self-contained client component).
+- PageHeader: `Map` icon, title "Project Roadmap", description "{totalWeeks} weeks · {methodology} · {sprintLength}", Refresh button (toast on success, error toast on fail, spinner while fetching).
+- Summary stat row: 6 StatCards — Overall Progress % (emerald), Completed Phases (emerald), In Progress (amber), Pending (slate), Total Deliverables (teal), Completed Items (emerald).
+- Overall progress card: large emerald-filled ProgressBar (h-3) with completion %, legend of completed/in-progress/pending phase counts.
+- Phase Timeline (centerpiece): vertical `<ol>` inside `max-h-[calc(100vh-20rem)] overflow-y-auto scroll-area`. Each phase = numbered circle (emerald=completed with check, amber=in-progress, slate=pending) + a full Card containing: phase name + status badge + weeks + milestone badge, objective text, progress bar (color-matched to status) with done/total count, deliverables checklist in a muted box (2-col grid on md+, 1-col mobile) — green CircleCheck for done, gray Circle for pending, pending items struck through. Connector line between circles colored by source phase status.
+- Sprint Breakdown: 12 sprints. Desktop = Table (#, Focus, Phase, Status badge). Mobile = card grid (max-h-96 scroll). Status colors: completed=emerald, in_progress=amber, pending=slate.
+- Risk Register: 6 risks. Desktop = Table (Risk, Impact badge, Mitigation). Mobile = cards. Impact: High=rose, Medium=amber.
+- Success Metrics: 7 metrics. Desktop = Table (Metric, Target, Current, Status). Mobile = cards. Achieved=emerald check badge, Pending=amber clock badge.
+- Platform Stats: 8-count grid (Users/Locations/Reviews/Posts/Keywords/Reports/AI Jobs/Audit Logs) using live data from `data.stats` — each is a mini-card with accent-colored icon tile.
+- Loading state: 6 skeleton StatCards + skeleton overall bar + 5 skeleton phase cards. Error state: ShieldAlert card with Retry button.
+- Mobile responsive throughout (grid-cols-2 → sm:3 → lg:6 for stats, lg:grid-cols-2 for risk/metrics split, tables collapse to cards on mobile).
+- Accessibility: semantic `<ol>` for timeline, `sr-only` summary line for screen readers announcing role + completion count, ARIA-hidden connector lines, descriptive badges with icons.
+
+Stage Summary:
+- File: /home/z/my-project/src/components/views/roadmap-view.tsx (~520 lines).
+- Lint: `bun run lint` clean (no errors or warnings in this file). Verified with `npx eslint src/components/views/roadmap-view.tsx` — no output.
+- Fully wired to existing `/api/roadmap` GET endpoint; uses only shared components from `@/components/shared` and `@/components/ui/*`. Already imported by view-router.tsx.
+- Ready for orchestrator — no other files touched.
+
+---
+Task ID: 11-c
+Agent: full-stack-developer (Wireframes View)
+Task: Build the Screen Wireframes catalog view with all 50+ screens organized by category.
+
+Work Log:
+- Read worklog.md + existing foundation (store/useAppStore with setView, PageHeader, StatCard, shadcn New York, ViewKey union including "wireframes").
+- Verified ViewRouter already imports `WireframesView` from `@/components/views/wireframes-view` (case "wireframes") — file did not yet exist; this task creates it.
+- Confirmed ViewKey union (no "login" key — Login screen marked implemented with no Open button).
+- Inspected shared/page-header.tsx (PageHeader accepts title/description/icon/actions), stat-card.tsx (accent: emerald|amber|teal|rose|slate; cyan not supported by StatCard — used emerald/teal/slate for the 4 stats).
+- Defined CategoryKey union (auth, dashboard, locations, reviews, posts, seo, analytics, ai, admin) + CATEGORIES metadata array with color-coded badge classes per spec: Auth=slate, Dashboard=emerald, Locations=teal, Reviews=amber, Posts=rose, SEO=cyan, Analytics=emerald, AI=amber, Admin=slate. Each has icon (ShieldCheck/LayoutDashboard/MapPin/Star/FileText/Search/BarChart3/Sparkles), badge bg/text/border classes, and a dot color.
+- Authored static SCREENS array with all 52 screens from doc 17 §1: Auth(3) + Dashboard(5) + Locations(9) + Reviews(6) + Posts(6) + SEO(6) + Analytics(5) + AI(6) + Admin(6). Each entry: id, name, category, description (layout from doc), widgets (string[]), status (implemented|wireframe), optional view (ViewKey) + viewLabel, and a WireframeLayout type.
+- Implemented status mapping per task spec: Login = implemented (no view — can't navigate to login while logged in); Dashboard screens → dashboard/analytics/reviews/seo; Locations screens → locations (Photos → media); Reviews → reviews; Posts → posts (Media Library → media); SEO → seo; Analytics → analytics (Reports → reports); AI → ai/reviews/posts/seo/reports per spec; Admin → settings/notifications/audit/system. Calendar View + Publishing Queue + Forgot Password + Reset Password = wireframe.
+- Built MiniWireframe component with 14 distinct CSS layout variants: auth (centered card), kpi-grid (4 top cards + 2-col chart row), tabbed-content (tab strip + 2 panels), detail-tabs (tabs + 1/3-2/3 split), table-list (search bar + 4 rows w/ actions), master-detail (2/3 list + 3/3 detail with active highlight), form-stack (3 labeled fields + primary CTA), photo-grid (4×2 with first cell tinted), editor-split (input+CTA / preview), chat-bubbles (left/right alternating w/ amber AI bubble), calendar (7×4 grid with scheduled cells tinted), queue-list (4 rows w/ colored status dots), sidebar-settings (1/4 nav + 3/4 content), health-grid (4×2 cards w/ emerald/rose status dots). All boxes use bg-muted-foreground/15-35 + primary/30 for accent zones.
+- Built ScreenCard: top 112px (h-28) wireframe preview zone with bg-muted/30, then CardContent p-4 with name (font-semibold), category badge (color-coded icon+label), implementation badge (emerald "Implemented" w/ dot or slate "Wireframe" outline), description (text-sm muted leading-relaxed), widgets as small muted chips. CardFooter border-t bg-muted/20 with: emerald "Open" button (ArrowRight) calling setView(view) when view present; "Available in-app" hint w/ CheckCircle2 when implemented but no view (Login); "Spec only — not yet built" hint w/ PencilRuler when wireframe.
+- PageHeader: title "Screen Wireframes", description "Complete screen specifications & layouts", Monitor icon, actions = search Input (with leading Search icon, pl-8, aria-label) filtering by name/description/widgets.
+- Stat row: 4 StatCards (Total Screens=emerald LayoutGrid, Categories=teal Layers, Implemented=emerald CheckCircle2, Wireframe Only=slate PencilRuler) computed via useMemo from SCREENS.
+- Category filter: Tabs (value=category) with "All" + 9 category triggers, each showing icon + label + count badge. TabsList uses h-auto w-full flex-wrap overflow-x-auto so it wraps on desktop and scrolls horizontally on mobile.
+- Brief mount skeleton (120ms timeout) renders 9 skeleton cards matching the card layout (h-28 preview + name + 2 lines + 2 badges + footer) to satisfy the loading-skeleton requirement without blocking real interaction.
+- Empty state: centered Card with MonitorOff icon in muted circle, "No screens found" message, Clear-filters button that resets search + category.
+- Footer hint line: "Showing X of Y screens [in Category] [matching "q"]."
+- Responsive: grid-cols-1 md:grid-cols-2 xl:grid-cols-3. Mobile: search input full-width, tabs horizontally scrollable, cards stack.
+- Palette strictly emerald/amber/teal/rose/slate/cyan — NO indigo/blue. shadcn components throughout (Card, CardContent, CardFooter, Badge, Button, Input, Skeleton, Tabs). Lucide icons.
+- Lint: `bunx eslint src/components/views/wireframes-view.tsx` → 0 errors / 0 warnings. Full `bun run lint` → clean (0 errors). `bunx tsc --noEmit` → 0 errors in this file. Did not touch any other files.
+
+Stage Summary:
+- File: /home/z/my-project/src/components/views/wireframes-view.tsx (single client component, ~770 lines incl. data + MiniWireframe + ScreenCard + view).
+- Exports: `WireframesView` (named + default) — already wired into view-router.tsx by foundation agent (case "wireframes": return <WireframesView />).
+- All 52 screens from doc 17 §1 cataloged with name, color-coded category badge, implementation status (46 implemented / 6 wireframe), layout description, widgets, mini wireframe preview, and Open button that navigates via Zustand setView(viewKey) for implemented screens with a route.
+- 14 distinct mini wireframe layout variants give each screen a recognizable visual signature.
+- Lint + tsc clean. Ready for end-to-end viewing once dev server resolves sibling view imports.
+
+---
+Task ID: 11-b
+Agent: full-stack-developer (Design System View)
+Task: Build the Design System reference view with colors, typography, components, and tokens.
+
+Work Log:
+- Read worklog.md to confirm Task 11-foundation had already created `/api/design-system` (returns full design spec: philosophy, grid, breakpoints, layout, 12 named color tokens + note, typography with 5 heading sizes, borderRadius, shadows, buttons, inputs, cards, tables, charts, icons, modals, toasts, loading/empty/error states, animations, accessibility, darkMode, componentNaming, themeVariables, finalRules) and wired the `design-system` view key into view-router.tsx (expecting `DesignSystemView` named export).
+- Inspected shared infra: PageHeader/CardSection, StatCard, badges, api<T>() envelope wrapper, useUser(), shadcn Button (variants default/outline/ghost/destructive, sizes sm/default/lg/icon), Input, Textarea, Select, Alert, Table, Skeleton, Badge. Confirmed no `icon` prop on CardSection.
+- Wrote `/home/z/my-project/src/components/views/design-system-view.tsx` (~1220 LOC, single self-contained client component).
+- Used TanStack Query to fetch /api/design-system with a full loading skeleton + centered error state with Retry button.
+- PageHeader: title "Design System", description "Enterprise design tokens, colors, typography & components", icon Palette, Refresh button calling refetch() via toast.promise (throws on r.isError so error toast fires).
+- Amber AI-accent strip banner: "Emerald primary · Amber AI accent · Zero indigo/blue."
+- Philosophy card: 2-col grid — Keywords (emerald badges with Check icon) + Avoid (rose badges with strikethrough).
+- Color Palette: amber Alert showing the doc-vs-platform note (spec says #0057FF blue, platform uses #059669 emerald per design rules). Responsive 1/2/3-col grid of 12 swatches, each: 64x64 (size-16) rounded-lg box with the actual hex as background, hex value rendered inside (white text for dark colors, dark slate for light — via isLightColor() luminance check). Beside swatch: friendly label (Primary, Primary Hover, …, AI Accent), color name (mono), usage text. COLOR_KEYS constant + COLOR_LABELS map enforce spec order.
+- Typography: font-family card (Inter via Geist Sans, emerald-tinted). Each H1–H5 rendered at actual px size + weight via inline style. Beside each: level badge, size, weight, usage. Plus Body (16px), Small (14px), Caption (12px) live samples with spec labels.
+- Border Radius: 4 size-20 visual boxes with inline borderRadius 12/10/10/16 px, each labeled (Cards/Buttons/Inputs/Dialogs).
+- Shadows: 3 cards using Tailwind shadow-sm/shadow-md/shadow-lg with labels. Amber "avoid heavy shadows" rule badge in header.
+- Buttons showcase: live shadcn Buttons — Primary (default emerald), Secondary (outline), Ghost, Danger (destructive rose), Icon Button (outline size=icon with Plus), Loading Button (disabled + Loader2 spin). 3 sizes (Small/Medium/Large). Plus variants/sizes spec badges.
+- Inputs showcase: 6 live shadcn inputs in 2-col grid — Text, Search (Input + leading Search icon + pl-8), Email (type=email + Mail icon), Password (type=password + Lock icon), Select (4 color options), Textarea. Plus input catalog badges.
+- Cards showcase: 3-col grid of 7 card types, each with emerald Component icon + name.
+- Tables: Features (teal badges) + Types (outline badges).
+- Charts: chart types (outline badges) + color tokens grid. Each chart color rendered as a 5x5 rounded-full dot using the actual CSS variable (style={{ backgroundColor: "var(--chart-N)" }}) + label + var name in mono. parseChartColor() helper splits "var(--chart-N) name".
+- Breakpoints & Grid: 4 stat tiles (Desktop Grid, Container, Content Width, Gutter) + shadcn Table with Name | Range | Prefix columns for all 5 breakpoints.
+- App Shell Layout (bonus): sidebar collapsed/expanded badges + footer text + top-nav chips.
+- Accessibility: 4 tiles (Color Contrast WCAG AA, Keyboard Nav, ARIA Support, Focus Ring) each with emerald Check icon.
+- Dark Mode: Supported badge + method badge (CSS Variables via next-themes) + note.
+- Misc specs (bonus 6-card grid): Icons (sizes + live size previews with Plus at 18/20/24px), Modals (size presets), Toasts (Sonner library + 4s duration + types), Loading States, Empty States (Check list), Error States (Check list), Animations (allowed emerald + avoid rose strikethrough).
+- Component Naming: PascalCase names as slate mono badges.
+- Theme Variables: CSS custom properties (--primary, --background, etc.) as amber mono badges.
+- Final Rules: 10 numbered rules in a 2-col grid, each with emerald Check icon + 2-digit index.
+- Footer credit: "Design System v1 · MyFNG Local AI Manager · doc 16".
+- Helpers: isLightColor(hex) (0.299R+0.587G+0.114B luminance > 0.6 → light), parseChartColor(entry) (splits var + label).
+- Lint iteration 1: clean except 2 unused imports (MousePointerClick, Sun) and a stray `icon={undefined as never}` prop on PhilosophyCard's CardSection (CardSection has no `icon` prop). Fixed handleRefresh to throw inside toast.promise so the error branch fires on r.isError.
+- Final lint: `cd /home/z/my-project && bun run lint 2>&1 | tail -30` → exit 0, no errors. `bunx eslint src/components/views/design-system-view.tsx` → exit 0.
+- Type-check: `bunx tsc --noEmit 2>&1 | grep design-system-view` → no errors in this file.
+- Did NOT touch any other file. Did NOT start the dev server.
+
+Stage Summary:
+- File: `/home/z/my-project/src/components/views/design-system-view.tsx` (~1220 LOC, single self-contained client component).
+- Exports named `DesignSystemView` (matches existing import in src/components/view-router.tsx — no router changes needed).
+- Data source: GET /api/design-system via TanStack Query + api<T>() envelope wrapper. Loading skeleton + error Retry state handled.
+- All 17 required UI sections implemented + 4 bonus context cards (App Shell Layout, Component Naming, Theme Variables, Misc Specs grid with Icons/Modals/Toasts/Loading/Empty/Error/Animations) and a footer credit.
+- Live shadcn components rendered for the Buttons, Inputs, Select, Textarea, Alert, Table, Badge, Skeleton showcases — not mock markup.
+- Color swatches use actual hex from the API as background, with white-or-dark text inside based on perceived luminance. Typography samples rendered at actual pixel sizes via inline style. Chart color dots use real var(--chart-N) CSS variables.
+- Palette strictly emerald/amber/teal/rose/slate/cyan + amber AI accent — zero indigo/blue.
+- Lint: PASS (exit 0). Type-check: PASS for this file. Ready for orchestrator end-to-end verification.
+
+---
+Task ID: 11-verification
+Agent: main (orchestrator)
+Task: End-to-end verification of docs 15/16/17 (Roadmap, Design System, Wireframes).
+
+Work Log:
+- Created 2 new API routes: /api/roadmap (GET — 10 phases with implementation status computed from real DB state, 12 sprints, 6 risks, 7 success metrics), /api/design-system (GET — full design tokens spec with color palette, typography, border radius, shadows, components, accessibility, dark mode).
+- Added 3 new nav modules: Roadmap (icon: Map), Design System (icon: Palette), Wireframes (icon: Monitor). Updated types.ts (18 ViewKeys), permissions.ts, app-shell.tsx, view-router.tsx.
+- Dispatched 3 parallel subagents to build the views.
+- Roadmap view: phase timeline with 10 phases (vertical timeline with colored circles, progress bars, deliverables checklists), sprint breakdown table (12 sprints), risk register (6 risks), success metrics (7 metrics with achieved/pending), platform stats grid (8 real counts), overall progress bar.
+- Design System view: philosophy card, color palette (12 swatches with actual hex backgrounds), typography showcase (H1-H5 rendered at actual sizes + body/small/caption), border radius examples, shadow examples, live button showcase (6 variants × 3 sizes), live input showcase (6 types), cards/tables/charts lists, breakpoints table, accessibility card, dark mode card, final rules checklist, plus bonus context cards (app shell layout, component naming, theme variables, misc specs).
+- Wireframes view: 52 screens from doc 17 organized into 9 categories, each with mini CSS wireframe preview, category badge, implementation status badge, layout description, widget chips, "Open" button to navigate to implemented screens. Category filter tabs + search. 4 stat cards (Total Screens, Categories, Implemented, Wireframe Only).
+- Agent Browser verification:
+  * Roadmap: "Project Roadmap" heading, Overall Progress/Completed Phases/In Progress stats visible ✓
+  * Design System: "Design System" heading, philosophy, "Emerald primary · Amber AI accent · Zero indigo/blue" banner ✓
+  * Wireframes: "Screen Wireframes" heading, Total Screens/Implemented stats visible ✓
+  * Lint: 0 errors, 0 warnings ✓
+  * Dev log: no runtime errors ✓
+  * All 18 nav modules present ✓
+
+Stage Summary:
+- DOCS 15/16/17 FULLY IMPLEMENTED & VERIFIED.
+- Project Roadmap (doc 15): 10-phase timeline with real progress tracking, 12 sprints, risk register, success metrics, platform stats.
+- Design System (doc 16): living reference with color palette, typography, border radius, shadows, live button/input showcases, components catalog, accessibility, dark mode, final rules.
+- Screen Wireframes (doc 17): 52-screen catalog with mini wireframe previews, category filtering, implementation status, navigation to live screens.
+- 18 nav modules, 49 Prisma models, 55 API routes. Demo password: MyFNG@2025.
+- Complete documentation set (docs 01-17) now implemented. Ready for any additional docs (18-23 recommended in doc 15).

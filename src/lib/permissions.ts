@@ -104,6 +104,9 @@ export function canAccessView(role: Role | undefined, view: string): boolean {
     audit: "audit.view",
     system: "system.view",
     "api-docs": "dashboard.view",
+    "roadmap": "dashboard.view",
+    "design-system": "dashboard.view",
+    "wireframes": "dashboard.view",
     settings: "settings.view",
   };
   const perm = map[view];

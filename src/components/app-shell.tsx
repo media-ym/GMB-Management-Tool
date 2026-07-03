@@ -17,7 +17,7 @@ import {
   Building2, LayoutDashboard, MapPin, Star, FileText, BarChart3,
   Search, Sparkles, Bell, ScrollText, Settings, Menu, LogOut,
   RefreshCw, Search as SearchIcon, Sun, Moon, ChevronDown, Command,
-  Image as ImageIcon, FileBarChart, Database, Plug, Code2,
+  Image as ImageIcon, FileBarChart, Database, Plug, Code2, Map, Palette, Monitor,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
@@ -53,6 +53,9 @@ const NAV: NavItem[] = [
   { key: "audit", label: "Audit Logs", icon: ScrollText, description: "Immutable action history" },
   { key: "system", label: "System", icon: Database, description: "Database, jobs & integrations" },
   { key: "api-docs", label: "API Docs", icon: Code2, description: "REST API specification" },
+  { key: "roadmap", label: "Roadmap", icon: Map, description: "Project phases & progress" },
+  { key: "design-system", label: "Design System", icon: Palette, description: "Colors, typography & components" },
+  { key: "wireframes", label: "Wireframes", icon: Monitor, description: "Screen specifications & layouts" },
   { key: "settings", label: "Settings", icon: Settings, description: "Users, roles & system config" },
 ];
 

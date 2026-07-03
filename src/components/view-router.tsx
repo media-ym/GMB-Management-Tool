@@ -16,6 +16,9 @@ import { NotificationsView } from "@/components/views/notifications-view";
 import { AuditView } from "@/components/views/audit-view";
 import { SystemView } from "@/components/views/system-view";
 import { ApiDocsView } from "@/components/views/api-docs-view";
+import { RoadmapView } from "@/components/views/roadmap-view";
+import { DesignSystemView } from "@/components/views/design-system-view";
+import { WireframesView } from "@/components/views/wireframes-view";
 import { SettingsView } from "@/components/views/settings-view";
 import { useAppStore as useStore } from "@/lib/store";
 import { ShieldAlert } from "lucide-react";
@@ -56,6 +59,9 @@ export function ViewRouter() {
     case "audit": return <AuditView />;
     case "system": return <SystemView />;
     case "api-docs": return <ApiDocsView />;
+    case "roadmap": return <RoadmapView />;
+    case "design-system": return <DesignSystemView />;
+    case "wireframes": return <WireframesView />;
     case "settings": return <SettingsView />;
     default: return <DashboardView />;
   }

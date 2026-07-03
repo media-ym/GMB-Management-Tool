@@ -1,0 +1,2002 @@
+     1→"use client";
+     2→
+     3→import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+     4→import { useQuery, useQueryClient } from "@tanstack/react-query";
+     5→import { format, parseISO } from "date-fns";
+     6→import { toast } from "sonner";
+     7→import {
+     8→  Search, Sparkles, Lightbulb, RefreshCw, Hash, Trophy, Target,
+     9→  TrendingUp, Minus, MapPin, Compass, Building2,
+    10→  ArrowUpDown, ArrowUp, ArrowDown, Loader2, Info,
+    11→  Plus, Pencil, Trash2, History, Download, ChevronDown, ChevronRight,
+    12→  ClipboardList, CalendarClock, CircleAlert, CheckCircle2,
+    13→} from "lucide-react";
+    14→import {
+    15→  RadialBarChart, RadialBar, ResponsiveContainer, PolarAngleAxis,
+    16→  LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar,
+    17→  Cell, LabelList, ReferenceLine,
+    18→} from "recharts";
+    19→import { api } from "@/lib/api-client";
+    20→import { useAppStore } from "@/lib/store";
+    21→import { useUser } from "@/lib/user-context";
+    22→import { can } from "@/lib/permissions";
+    23→import { useLocations } from "@/hooks/use-locations";
+    24→import { cn } from "@/lib/utils";
+    25→import { PageHeader, CardSection } from "@/components/shared/page-header";
+    26→import { StatCard } from "@/components/shared/stat-card";
+    27→import { Button } from "@/components/ui/button";
+    28→import { Skeleton } from "@/components/ui/skeleton";
+    29→import { Badge } from "@/components/ui/badge";
+    30→import { Input } from "@/components/ui/input";
+    31→import { Label } from "@/components/ui/label";
+    32→import { Progress } from "@/components/ui/progress";
+    33→import {
+    34→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    35→} from "@/components/ui/select";
+    36→import {
+    37→  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+    38→} from "@/components/ui/table";
+    39→import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+    40→import {
+    41→  ToggleGroup, ToggleGroupItem,
+    42→} from "@/components/ui/toggle-group";
+    43→import {
+    44→  Dialog, DialogContent, DialogDescription, DialogFooter,
+    45→  DialogHeader, DialogTitle,
+    46→} from "@/components/ui/dialog";
+    47→import {
+    48→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    49→  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    50→} from "@/components/ui/alert-dialog";
+    51→import type { GeoGridPoint, LocationWithStats } from "@/lib/types";
+    52→
+    53→// ── Types ────────────────────────────────────────────────────────────
+    54→interface SeoKeywordOverview {
+    55→  id: string;
+    56→  keyword: string;
+    57→  city: string;
+    58→  locationId: string;
+    59→  locationName: string;
+    60→  avgRank: number;
+    61→  topRank: number | null;
+    62→  grid: GeoGridPoint[];
+    63→  gridPoints: number;
+    64→}
+    65→
+    66→interface SeoOverview {
+    67→  totalKeywords: number;
+    68→  avgRank: number;
+    69→  top3Count: number;
+    70→  top10Count: number;
+    71→  totalGridPoints: number;
+    72→}
+    73→
+    74→interface SeoResponse {
+    75→  keywords: SeoKeywordOverview[];
+    76→  overview: SeoOverview;
+    77→}
+    78→
+    79→interface KeywordRow {
+    80→  id: string;
+    81→  keyword: string;
+    82→  city: string | null;
+    83→  state: string | null;
+    84→  status: string;
+    85→  locationId: string | null;
+    86→  locationName: string;
+    87→  locationCity: string;
+    88→  currentRank: number | null;
+    89→  previousRank: number | null;
+    90→  bestRank: number | null;
+    91→  worstRank: number | null;
+    92→  rankChange: number;
+    93→  rankHistory: { rank: number; date: string }[];
+    94→  trackingCount: number;
+    95→}
+    96→
+    97→interface GeoGridResponse {
+    98→  location: { name: string; city: string; latitude: number | null; longitude: number | null };
+    99→  keywordId: string | null;
+   100→  size: number;
+   101→  radius: number;
+   102→  grid: { lat: number; lng: number; rank: number }[];
+   103→  summary: { avgRank: number; top3Count: number; top10Count: number; totalPoints: number };
+   104→}
+   105→
+   106→interface LocationComparisonRow {
+   107→  id: string;
+   108→  name: string;
+   109→  city: string;
+   110→  seoScore: number;
+   111→  visibilityScore: number;
+   112→  avgRank: number;
+   113→  keywordCount: number;
+   114→  top3Count: number;
+   115→  avgRating: number;
+   116→  reviewCount: number;
+   117→  postCount: number;
+   118→  responseRate: number;
+   119→}
+   120→
+   121→interface SeoAuditRow {
+   122→  id: string;
+   123→  locationId: string;
+   124→  locationName: string;
+   125→  locationCity: string;
+   126→  auditScore: number;
+   127→  profileStrength: number;
+   128→  missingCategories: string[];
+   129→  missingPhotos: number;
+   130→  missingServices: number;
+   131→  recommendations: string[];
+   132→  auditedAt: string;
+   133→}
+   134→
+   135→interface CompetitorRow {
+   136→  id: string;
+   137→  businessName: string;
+   138→  category: string | null;
+   139→  address: string | null;
+   140→  locationName: string;
+   141→  locationCity: string;
+   142→  isActive: boolean;
+   143→  rankings: { keyword: string; ranking: number; checkedAt: string }[];
+   144→  avgRank: number | null;
+   145→}
+   146→
+   147→interface LocationOption {
+   148→  id: string;
+   149→  name: string;
+   150→  city: string;
+   151→}
+   152→
+   153→interface KeywordFormData {
+   154→  keyword: string;
+   155→  locationId?: string;
+   156→  city?: string;
+   157→  state?: string;
+   158→}
+   159→
+   160→type TabKey = "keywords" | "geo-grid" | "competitors" | "location-comparison" | "audit" | "ai";
+   161→type SortDir = "asc" | "desc";
+   162→type KeywordSortKey = "keyword" | "city" | "currentRank" | "bestRank" | "worstRank" | "rankChange";
+   163→type ComparisonSortKey = keyof LocationComparisonRow;
+   164→
+   165→// ── Rank → color helpers ─────────────────────────────────────────────
+   166→function rankColor(rank: number): { bg: string; text: string; label: string } {
+   167→  if (!rank || rank <= 0) return { bg: "bg-slate-300 dark:bg-slate-700", text: "text-slate-600 dark:text-slate-300", label: "Not ranked" };
+   168→  if (rank <= 3) return { bg: "bg-emerald-500", text: "text-white", label: "Top 3" };
+   169→  if (rank <= 10) return { bg: "bg-amber-500", text: "text-white", label: "Top 10" };
+   170→  if (rank <= 20) return { bg: "bg-orange-500", text: "text-white", label: "Top 20" };
+   171→  return { bg: "bg-rose-500", text: "text-white", label: "21+" };
+   172→}
+   173→
+   174→function rankTextClass(rank: number): string {
+   175→  if (!rank || rank <= 0) return "text-slate-500";
+   176→  if (rank <= 3) return "text-emerald-600 dark:text-emerald-400";
+   177→  if (rank <= 10) return "text-amber-600 dark:text-amber-400";
+   178→  if (rank <= 20) return "text-orange-600 dark:text-orange-400";
+   179→  return "text-rose-600 dark:text-rose-400";
+   180→}
+   181→
+   182→function scoreBg(score: number): string {
+   183→  if (score >= 75) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400";
+   184→  if (score >= 50) return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+   185→  return "bg-rose-500/15 text-rose-700 dark:text-rose-400";
+   186→}
+   187→
+   188→function rankBandClass(rank: number): string {
+   189→  if (!rank || rank <= 0) return "bg-slate-500/15 text-slate-600 dark:text-slate-400";
+   190→  if (rank <= 3) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400";
+   191→  if (rank <= 10) return "bg-amber-500/15 text-amber-700 dark:text-amber-400";
+   192→  if (rank <= 20) return "bg-orange-500/15 text-orange-700 dark:text-orange-400";
+   193→  return "bg-rose-500/15 text-rose-700 dark:text-rose-400";
+   194→}
+   195→
+   196→// ── Main view ────────────────────────────────────────────────────────
+   197→export function SeoView() {
+   198→  const user = useUser();
+   199→  const queryClient = useQueryClient();
+   200→  const activeLocationId = useAppStore((s) => s.activeLocationId);
+   201→  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+   202→  const canManage = can(user.role, "seo.manage");
+   203→  const canAI = can(user.role, "ai.use") && can(user.role, "seo.manage");
+   204→
+   205→  const { data: locations } = useLocations();
+   206→
+   207→  const [activeTab, setActiveTab] = useState<TabKey>("keywords");
+   208→  const [selectedKeywordId, setSelectedKeywordId] = useState<string | null>(null);
+   209→
+   210→  // Geo-grid config
+   211→  const [gridSize, setGridSize] = useState<number>(5);
+   212→  const [radiusKm, setRadiusKm] = useState<number>(3);
+   213→  const [gridKeywordId, setGridKeywordId] = useState<string | null>(null);
+   214→
+   215→  // Refresh
+   216→  const [refreshing, setRefreshing] = useState(false);
+   217→
+   218→  // AI recs
+   219→  const [recs, setRecs] = useState<string[]>([]);
+   220→  const [recsLoading, setRecsLoading] = useState(false);
+   221→  const [recsError, setRecsError] = useState<string | null>(null);
+   222→  const [hasFetchedRecs, setHasFetchedRecs] = useState(false);
+   223→
+   224→  // AI summary
+   225→  const [summary, setSummary] = useState<string | null>(null);
+   226→  const [summaryLoading, setSummaryLoading] = useState(false);
+   227→  const [summaryError, setSummaryError] = useState<string | null>(null);
+   228→  const [hasFetchedSummary, setHasFetchedSummary] = useState(false);
+   229→
+   230→  const aiDisabled = !activeLocationId || activeLocationId === "all";
+   231→
+   232→  // ── Queries ───────────────────────────────────────────────────────
+   233→  const seoQuery = useQuery<SeoResponse>({
+   234→    queryKey: ["seo", activeLocationId],
+   235→    queryFn: () => {
+   236→      const url = activeLocationId && activeLocationId !== "all"
+   237→        ? `/api/seo?locationId=${encodeURIComponent(activeLocationId)}`
+   238→        : "/api/seo";
+   239→      return api<SeoResponse>(url);
+   240→    },
+   241→  });
+   242→
+   243→  const keywordsQuery = useQuery<KeywordRow[]>({
+   244→    queryKey: ["seo", "keywords", activeLocationId],
+   245→    queryFn: () => {
+   246→      const url = activeLocationId && activeLocationId !== "all"
+   247→        ? `/api/seo/keywords?locationId=${encodeURIComponent(activeLocationId)}`
+   248→        : "/api/seo/keywords";
+   249→      return api<KeywordRow[]>(url);
+   250→    },
+   251→  });
+   252→
+   253→  const locQuery = useQuery<LocationWithStats[]>({
+   254→    queryKey: ["locations", "stats"],
+   255→    queryFn: () => api<LocationWithStats[]>("/api/locations"),
+   256→  });
+   257→
+   258→  const comparisonQuery = useQuery<LocationComparisonRow[]>({
+   259→    queryKey: ["seo", "comparison"],
+   260→    queryFn: () => api<LocationComparisonRow[]>("/api/seo/location-comparison"),
+   261→  });
+   262→
+   263→  const auditsQuery = useQuery<SeoAuditRow[]>({
+   264→    queryKey: ["seo-audits", activeLocationId],
+   265→    queryFn: () => {
+   266→      const url = activeLocationId && activeLocationId !== "all"
+   267→        ? `/api/seo-audits?locationId=${encodeURIComponent(activeLocationId)}`
+   268→        : "/api/seo-audits";
+   269→      return api<SeoAuditRow[]>(url);
+   270→    },
+   271→  });
+   272→
+   273→  const competitorsQuery = useQuery<CompetitorRow[]>({
+   274→    queryKey: ["competitors", activeLocationId],
+   275→    queryFn: () => {
+   276→      const url = activeLocationId && activeLocationId !== "all"
+   277→        ? `/api/competitors?locationId=${encodeURIComponent(activeLocationId)}`
+   278→        : "/api/competitors";
+   279→      return api<CompetitorRow[]>(url);
+   280→    },
+   281→  });
+   282→
+   283→  const keywords = keywordsQuery.data ?? [];
+   284→  const overview = seoQuery.data?.overview;
+   285→  const isOverviewLoading = seoQuery.isLoading;
+   286→  const isKeywordsLoading = keywordsQuery.isLoading;
+   287→
+   288→  // Auto-pick first keyword for geo-grid when none selected
+   289→  useEffect(() => {
+   290→    if (keywords.length > 0) {
+   291→      if (!gridKeywordId || !keywords.find((k) => k.id === gridKeywordId)) {
+   292→        const best = [...keywords].sort(
+   293→          (a, b) => (a.currentRank ?? 99) - (b.currentRank ?? 99),
+   294→        )[0];
+   295→        setGridKeywordId(best.id);
+   296→      }
+   297→    } else if (gridKeywordId !== null) {
+   298→      setGridKeywordId(null);
+   299→    }
+   300→  }, [keywordsQuery.data]);
+   301→
+   302→  // Reset selectedKeywordId when location changes
+   303→  useEffect(() => {
+   304→    setSelectedKeywordId(null);
+   305→  }, [activeLocationId]);
+   306→
+   307→  // Health & visibility for the selected location (or avg of all)
+   308→  const healthScore = useMemo(() => {
+   309→    if (!locQuery.data || locQuery.data.length === 0) return null;
+   310→    if (activeLocationId && activeLocationId !== "all") {
+   311→      const loc = locQuery.data.find((l) => l.id === activeLocationId);
+   312→      return loc ? loc.healthScore : null;
+   313→    }
+   314→    const avg = locQuery.data.reduce((s, l) => s + l.healthScore, 0) / locQuery.data.length;
+   315→    return Math.round(avg);
+   316→  }, [locQuery.data, activeLocationId]);
+   317→
+   318→  const visibilityScore = useMemo(() => {
+   319→    if (!locQuery.data || locQuery.data.length === 0) return null;
+   320→    if (activeLocationId && activeLocationId !== "all") {
+   321→      const loc = locQuery.data.find((l) => l.id === activeLocationId);
+   322→      return loc ? loc.visibilityScore : null;
+   323→    }
+   324→    const avg = locQuery.data.reduce((s, l) => s + l.visibilityScore, 0) / locQuery.data.length;
+   325→    return Math.round(avg);
+   326→  }, [locQuery.data, activeLocationId]);
+   327→
+   328→  const selectedLocationName = useMemo(() => {
+   329→    if (!activeLocationId || activeLocationId === "all") return "All locations";
+   330→    return locations?.find((l) => l.id === activeLocationId)?.name ?? "Selected location";
+   331→  }, [activeLocationId, locations]);
+   332→
+   333→  // ── Actions ───────────────────────────────────────────────────────
+   334→  const handleRefresh = useCallback(async () => {
+   335→    setRefreshing(true);
+   336→    try {
+   337→      const body: { locationId?: string } = {};
+   338→      if (activeLocationId && activeLocationId !== "all") body.locationId = activeLocationId;
+   339→      const res = await api<{ refreshed: number; timestamp: string }>(
+   340→        "/api/seo/refresh",
+   341→        { method: "POST", body: JSON.stringify(body) },
+   342→      );
+   343→      toast.success(`Refreshed rankings for ${res.refreshed} keyword${res.refreshed === 1 ? "" : "s"}`);
+   344→      queryClient.invalidateQueries({ queryKey: ["seo"] });
+   345→      queryClient.invalidateQueries({ queryKey: ["seo-audits"] });
+   346→      queryClient.invalidateQueries({ queryKey: ["competitors"] });
+   347→    } catch (e: unknown) {
+   348→      const msg = e instanceof Error ? e.message : "Failed to refresh rankings";
+   349→      toast.error(msg);
+   350→    } finally {
+   351→      setRefreshing(false);
+   352→    }
+   353→  }, [activeLocationId, queryClient]);
+   354→
+   355→  const fetchRecs = useCallback(async () => {
+   356→    if (aiDisabled) return;
+   357→    setRecsLoading(true);
+   358→    setRecsError(null);
+   359→    setHasFetchedRecs(true);
+   360→    try {
+   361→      const res = await api<{ recommendations: string[] }>("/api/ai", {
+   362→        method: "POST",
+   363→        body: JSON.stringify({ action: "seo", locationId: activeLocationId }),
+   364→      });
+   365→      setRecs(res.recommendations ?? []);
+   366→      toast.success("MiSA AI recommendations ready");
+   367→      setActiveTab("ai");
+   368→    } catch (e: unknown) {
+   369→      const msg = e instanceof Error ? e.message : "Failed to fetch recommendations";
+   370→      setRecsError(msg);
+   371→      toast.error(msg);
+   372→    } finally {
+   373→      setRecsLoading(false);
+   374→    }
+   375→  }, [aiDisabled, activeLocationId]);
+   376→
+   377→  const fetchSummary = useCallback(async () => {
+   378→    if (aiDisabled) return;
+   379→    setSummaryLoading(true);
+   380→    setSummaryError(null);
+   381→    setHasFetchedSummary(true);
+   382→    try {
+   383→      const res = await api<{ summary: string }>("/api/ai", {
+   384→        method: "POST",
+   385→        body: JSON.stringify({ action: "summary", locationId: activeLocationId }),
+   386→      });
+   387→      setSummary(res.summary ?? "");
+   388→      toast.success("MiSA AI monthly summary ready");
+   389→      setActiveTab("ai");
+   390→    } catch (e: unknown) {
+   391→      const msg = e instanceof Error ? e.message : "Failed to fetch summary";
+   392→      setSummaryError(msg);
+   393→      toast.error(msg);
+   394→    } finally {
+   395→      setSummaryLoading(false);
+   396→    }
+   397→  }, [aiDisabled, activeLocationId]);
+   398→
+   399→  const handleSelectKeyword = useCallback((id: string) => {
+   400→    setSelectedKeywordId(id);
+   401→    setGridKeywordId(id);
+   402→  }, []);
+   403→
+   404→  return (
+   405→    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+   406→      <PageHeader
+   407→        title="Local SEO"
+   408→        description="Track keyword rankings, geo-grid visibility & competitor performance"
+   409→        icon={Search}
+   410→        actions={
+   411→          <>
+   412→            <Select
+   413→              value={activeLocationId}
+   414→              onValueChange={(v) => setActiveLocationId(v as string)}
+   415→            >
+   416→              <SelectTrigger size="sm" className="w-[180px]">
+   417→                <MapPin className="size-3.5 mr-1 text-muted-foreground" />
+   418→                <SelectValue placeholder="All locations" />
+   419→              </SelectTrigger>
+   420→              <SelectContent>
+   421→                <SelectItem value="all">All locations</SelectItem>
+   422→                {locations?.map((l) => (
+   423→                  <SelectItem key={l.id} value={l.id}>
+   424→                    {l.name}
+   425→                  </SelectItem>
+   426→                ))}
+   427→              </SelectContent>
+   428→            </Select>
+   429→            {canManage && (
+   430→              <Button
+   431→                size="sm"
+   432→                variant="outline"
+   433→                onClick={handleRefresh}
+   434→                disabled={refreshing}
+   435→              >
+   436→                {refreshing ? (
+   437→                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+   438→                ) : (
+   439→                  <RefreshCw className="size-3.5 mr-1.5" />
+   440→                )}
+   441→                Refresh Rankings
+   442→              </Button>
+   443→            )}
+   444→            {canAI && (
+   445→              <Button
+   446→                size="sm"
+   447→                onClick={fetchRecs}
+   448→                disabled={recsLoading || aiDisabled}
+   449→                title={aiDisabled ? "Select a specific location to generate recommendations" : undefined}
+   450→              >
+   451→                {recsLoading ? (
+   452→                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+   453→                ) : (
+   454→                  <Sparkles className="size-3.5 mr-1.5" />
+   455→                )}
+   456→                AI Recommendations
+   457→              </Button>
+   458→            )}
+   459→            {canAI && (
+   460→              <Button
+   461→                size="sm"
+   462→                variant="outline"
+   463→                onClick={fetchSummary}
+   464→                disabled={summaryLoading || aiDisabled}
+   465→                title={aiDisabled ? "Select a specific location to generate summary" : undefined}
+   466→              >
+   467→                {summaryLoading ? (
+   468→                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+   469→                ) : (
+   470→                  <CalendarClock className="size-3.5 mr-1.5" />
+   471→                )}
+   472→                AI Monthly Summary
+   473→              </Button>
+   474→            )}
+   475→          </>
+   476→        }
+   477→      />
+   478→
+   479→      {/* Overview stat row */}
+   480→      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+   481→        {isOverviewLoading || !overview ? (
+   482→          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)
+   483→        ) : (
+   484→          <>
+   485→            <StatCard
+   486→              label="Total Keywords"
+   487→              value={overview.totalKeywords}
+   488→              icon={Hash}
+   489→              hint="Tracked across locations"
+   490→              accent="emerald"
+   491→            />
+   492→            <StatCard
+   493→              label="Avg Rank"
+   494→              value={overview.avgRank ? `#${overview.avgRank}` : "—"}
+   495→              icon={TrendingUp}
+   496→              hint="Across all grid points"
+   497→              accent="amber"
+   498→            />
+   499→            <StatCard
+   500→              label="Top 3 Positions"
+   501→              value={overview.top3Count}
+   502→              icon={Trophy}
+   503→              hint="Grid points ranked 1–3"
+   504→              accent="emerald"
+   505→            />
+   506→            <StatCard
+   507→              label="Top 10 Positions"
+   508→              value={overview.top10Count}
+   509→              icon={Target}
+   510→              hint="Grid points ranked 1–10"
+   511→              accent="teal"
+   512→            />
+   513→          </>
+   514→        )}
+   515→      </div>
+   516→
+   517→      {/* Health & Visibility scores */}
+   518→      <CardSection title="Health & Visibility" description={selectedLocationName}>
+   519→        {isOverviewLoading || healthScore === null || visibilityScore === null ? (
+   520→          <Skeleton className="h-40 w-full" />
+   521→        ) : (
+   522→          <div className="grid grid-cols-2 gap-3">
+   523→            <ScoreRing label="Health" value={healthScore} />
+   524→            <ScoreRing label="Visibility" value={visibilityScore} />
+   525→          </div>
+   526→        )}
+   527→        <div className="mt-4 pt-4 border-t">
+   528→          <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-2">
+   529→            Rank color legend
+   530→          </div>
+   531→          <div className="grid grid-cols-2 sm:grid-cols-5 gap-y-1.5 gap-x-3 text-[11px]">
+   532→            <LegendItem color="bg-emerald-500" label="1 – 3" />
+   533→            <LegendItem color="bg-amber-500" label="4 – 10" />
+   534→            <LegendItem color="bg-orange-500" label="11 – 20" />
+   535→            <LegendItem color="bg-rose-500" label="21+" />
+   536→            <LegendItem color="bg-slate-300 dark:bg-slate-700" label="Not ranked" />
+   537→          </div>
+   538→        </div>
+   539→      </CardSection>
+   540→
+   541→      {/* Tabs */}
+   542→      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
+   543→        <TabsList className="w-full justify-start overflow-x-auto h-auto flex-wrap">
+   544→          <TabsTrigger value="keywords" className="gap-1.5">
+   545→            <Hash className="size-3.5" /> Keywords
+   546→          </TabsTrigger>
+   547→          <TabsTrigger value="geo-grid" className="gap-1.5">
+   548→            <Compass className="size-3.5" /> Geo Grid
+   549→          </TabsTrigger>
+   550→          <TabsTrigger value="competitors" className="gap-1.5">
+   551→            <Building2 className="size-3.5" /> Competitors
+   552→          </TabsTrigger>
+   553→          <TabsTrigger value="location-comparison" className="gap-1.5">
+   554→            <ArrowUpDown className="size-3.5" /> Comparison
+   555→          </TabsTrigger>
+   556→          <TabsTrigger value="audit" className="gap-1.5">
+   557→            <ClipboardList className="size-3.5" /> Audit
+   558→          </TabsTrigger>
+   559→          <TabsTrigger value="ai" className="gap-1.5">
+   560→            <Sparkles className="size-3.5" /> AI Insights
+   561→          </TabsTrigger>
+   562→        </TabsList>
+   563→
+   564→        <TabsContent value="keywords" className="mt-4">
+   565→          <KeywordsTab
+   566→            keywords={keywords}
+   567→            isLoading={isKeywordsLoading}
+   568→            selectedKeywordId={selectedKeywordId}
+   569→            onSelect={handleSelectKeyword}
+   570→            canManage={canManage}
+   571→            activeLocationId={activeLocationId}
+   572→            locations={locations ?? []}
+   573→          />
+   574→        </TabsContent>
+   575→
+   576→        <TabsContent value="geo-grid" className="mt-4">
+   577→          <GeoGridTab
+   578→            keywords={keywords}
+   579→            keywordsLoading={isKeywordsLoading}
+   580→            gridSize={gridSize}
+   581→            setGridSize={setGridSize}
+   582→            radiusKm={radiusKm}
+   583→            setRadiusKm={setRadiusKm}
+   584→            gridKeywordId={gridKeywordId}
+   585→            setGridKeywordId={setGridKeywordId}
+   586→            selectedLocationName={selectedLocationName}
+   587→            activeLocationId={activeLocationId}
+   588→          />
+   589→        </TabsContent>
+   590→
+   591→        <TabsContent value="competitors" className="mt-4">
+   592→          <CompetitorsTab
+   593→            competitors={competitorsQuery.data ?? []}
+   594→            isLoading={competitorsQuery.isLoading}
+   595→            myAvgRank={overview?.avgRank ?? null}
+   596→            canManage={canManage}
+   597→            activeLocationId={activeLocationId}
+   598→          />
+   599→        </TabsContent>
+   600→
+   601→        <TabsContent value="location-comparison" className="mt-4">
+   602→          <LocationComparisonTab
+   603→            rows={comparisonQuery.data ?? []}
+   604→            isLoading={comparisonQuery.isLoading}
+   605→            activeLocationId={activeLocationId}
+   606→          />
+   607→        </TabsContent>
+   608→
+   609→        <TabsContent value="audit" className="mt-4">
+   610→          <AuditTab
+   611→            audits={auditsQuery.data ?? []}
+   612→            isLoading={auditsQuery.isLoading}
+   613→            canManage={canManage}
+   614→          />
+   615→        </TabsContent>
+   616→
+   617→        <TabsContent value="ai" className="mt-4">
+   618→          <AiInsightsTab
+   619→            locationName={selectedLocationName}
+   620→            canAI={canAI}
+   621→            recs={recs}
+   622→            recsLoading={recsLoading}
+   623→            recsError={recsError}
+   624→            hasFetchedRecs={hasFetchedRecs}
+   625→            recsDisabled={aiDisabled}
+   626→            onGenerateRecs={fetchRecs}
+   627→            summary={summary}
+   628→            summaryLoading={summaryLoading}
+   629→            summaryError={summaryError}
+   630→            hasFetchedSummary={hasFetchedSummary}
+   631→            onGenerateSummary={fetchSummary}
+   632→          />
+   633→        </TabsContent>
+   634→      </Tabs>
+   635→    </div>
+   636→  );
+   637→}
+   638→
+   639→// ── Score ring (radial gauge) ────────────────────────────────────────
+   640→function ScoreRing({ label, value }: { label: string; value: number }) {
+   641→  const color = value >= 75 ? "#10b981" : value >= 50 ? "#f59e0b" : "#f43f5e";
+   642→  const data = [{ name: label, value, fill: color }];
+   643→  return (
+   644→    <div className="flex flex-col items-center">
+   645→      <div className="relative w-full h-28">
+   646→        <ResponsiveContainer width="100%" height="100%">
+   647→          <RadialBarChart
+   648→            innerRadius="72%"
+   649→            outerRadius="100%"
+   650→            data={data}
+   651→            startAngle={90}
+   652→            endAngle={-270}
+   653→          >
+   654→            <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+   655→            <RadialBar
+   656→              background={{ fill: "var(--muted)" }}
+   657→              dataKey="value"
+   658→              cornerRadius={10}
+   659→              angleAxisId={0}
+   660→            />
+   661→          </RadialBarChart>
+   662→        </ResponsiveContainer>
+   663→        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+   664→          <span className="text-xl font-bold tabular-nums" style={{ color }}>{value}</span>
+   665→          <span className="text-[10px] text-muted-foreground">/ 100</span>
+   666→        </div>
+   667→      </div>
+   668→      <div className="text-xs font-medium text-muted-foreground -mt-1">{label}</div>
+   669→    </div>
+   670→  );
+   671→}
+   672→
+   673→function LegendItem({ color, label }: { color: string; label: string }) {
+   674→  return (
+   675→    <div className="flex items-center gap-1.5">
+   676→      <span className={cn("size-3 rounded-sm", color)} />
+   677→      <span className="text-muted-foreground">{label}</span>
+   678→    </div>
+   679→  );
+   680→}
+   681→
+   682→function MiniStat({ label, value }: { label: string; value: string }) {
+   683→  return (
+   684→    <div className="rounded-md border bg-muted/30 px-2.5 py-1 text-center">
+   685→      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+   686→      <div className="text-sm font-bold tabular-nums">{value}</div>
+   687→    </div>
+   688→  );
+   689→}
+   690→
+   691→// ── Keywords Tab (enhanced with CRUD + rank history) ─────────────────
+   692→function KeywordsTab({
+   693→  keywords, isLoading, selectedKeywordId, onSelect, canManage, activeLocationId, locations,
+   694→}: {
+   695→  keywords: KeywordRow[];
+   696→  isLoading: boolean;
+   697→  selectedKeywordId: string | null;
+   698→  onSelect: (id: string) => void;
+   699→  canManage: boolean;
+   700→  activeLocationId: string | "all";
+   701→  locations: LocationOption[];
+   702→}) {
+   703→  const queryClient = useQueryClient();
+   704→  const [search, setSearch] = useState("");
+   705→  const [sortKey, setSortKey] = useState<KeywordSortKey>("currentRank");
+   706→  const [sortDir, setSortDir] = useState<SortDir>("asc");
+   707→  const [addOpen, setAddOpen] = useState(false);
+   708→  const [editingKeyword, setEditingKeyword] = useState<KeywordRow | null>(null);
+   709→  const [deletingKeyword, setDeletingKeyword] = useState<KeywordRow | null>(null);
+   710→  const [historyKeyword, setHistoryKeyword] = useState<KeywordRow | null>(null);
+   711→  const [submitting, setSubmitting] = useState(false);
+   712→
+   713→  const filtered = useMemo(() => {
+   714→    const s = search.toLowerCase().trim();
+   715→    const arr = s
+   716→      ? keywords.filter((k) =>
+   717→          k.keyword.toLowerCase().includes(s) || (k.city ?? "").toLowerCase().includes(s),
+   718→        )
+   719→      : keywords;
+   720→    return [...arr].sort((a, b) => {
+   721→      let cmp = 0;
+   722→      switch (sortKey) {
+   723→        case "keyword": cmp = a.keyword.toLowerCase().localeCompare(b.keyword.toLowerCase()); break;
+   724→        case "city": cmp = (a.city ?? "").toLowerCase().localeCompare((b.city ?? "").toLowerCase()); break;
+   725→        case "currentRank": cmp = (a.currentRank ?? 99) - (b.currentRank ?? 99); break;
+   726→        case "bestRank": cmp = (a.bestRank ?? 99) - (b.bestRank ?? 99); break;
+   727→        case "worstRank": cmp = (a.worstRank ?? 0) - (b.worstRank ?? 0); break;
+   728→        case "rankChange": cmp = (a.rankChange ?? 0) - (b.rankChange ?? 0); break;
+   729→      }
+   730→      return sortDir === "asc" ? cmp : -cmp;
+   731→    });
+   732→  }, [keywords, search, sortKey, sortDir]);
+   733→
+   734→  function toggleSort(key: KeywordSortKey) {
+   735→    if (sortKey === key) {
+   736→      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+   737→    } else {
+   738→      setSortKey(key);
+   739→      setSortDir("asc");
+   740→    }
+   741→  }
+   742→
+   743→  async function invalidateAll() {
+   744→    await Promise.all([
+   745→      queryClient.invalidateQueries({ queryKey: ["seo"] }),
+   746→      queryClient.invalidateQueries({ queryKey: ["seo-audits"] }),
+   747→      queryClient.invalidateQueries({ queryKey: ["competitors"] }),
+   748→    ]);
+   749→  }
+   750→
+   751→  async function handleCreate(data: KeywordFormData) {
+   752→    setSubmitting(true);
+   753→    try {
+   754→      await api("/api/seo/keywords", {
+   755→        method: "POST",
+   756→        body: JSON.stringify(data),
+   757→      });
+   758→      toast.success("Keyword added");
+   759→      setAddOpen(false);
+   760→      await invalidateAll();
+   761→    } catch (e: unknown) {
+   762→      const msg = e instanceof Error ? e.message : "Failed to add keyword";
+   763→      toast.error(msg);
+   764→    } finally {
+   765→      setSubmitting(false);
+   766→    }
+   767→  }
+   768→
+   769→  async function handleUpdate(id: string, data: Partial<KeywordFormData>) {
+   770→    setSubmitting(true);
+   771→    try {
+   772→      await api(`/api/seo/keywords/${id}`, {
+   773→        method: "PUT",
+   774→        body: JSON.stringify(data),
+   775→      });
+   776→      toast.success("Keyword updated");
+   777→      setEditingKeyword(null);
+   778→      await invalidateAll();
+   779→    } catch (e: unknown) {
+   780→      const msg = e instanceof Error ? e.message : "Failed to update keyword";
+   781→      toast.error(msg);
+   782→    } finally {
+   783→      setSubmitting(false);
+   784→    }
+   785→  }
+   786→
+   787→  async function handleDelete(id: string) {
+   788→    setSubmitting(true);
+   789→    try {
+   790→      await api(`/api/seo/keywords/${id}`, { method: "DELETE" });
+   791→      toast.success("Keyword deleted");
+   792→      setDeletingKeyword(null);
+   793→      await invalidateAll();
+   794→    } catch (e: unknown) {
+   795→      const msg = e instanceof Error ? e.message : "Failed to delete keyword";
+   796→      toast.error(msg);
+   797→    } finally {
+   798→      setSubmitting(false);
+   799→    }
+   800→  }
+   801→
+   802→  return (
+   803→    <CardSection
+   804→      title="Keyword Management"
+   805→      description="Add, edit, and track keyword rankings. Click a row to select it for the geo-grid."
+   806→      action={
+   807→        <div className="flex items-center gap-2">
+   808→          <div className="relative">
+   809→            <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+   810→            <Input
+   811→              value={search}
+   812→              onChange={(e) => setSearch(e.target.value)}
+   813→              placeholder="Search keywords..."
+   814→              className="pl-8 h-8 w-[160px] sm:w-[200px]"
+   815→            />
+   816→          </div>
+   817→          {canManage && (
+   818→            <Button size="sm" onClick={() => setAddOpen(true)}>
+   819→              <Plus className="size-3.5 mr-1.5" /> Add Keyword
+   820→            </Button>
+   821→          )}
+   822→        </div>
+   823→      }
+   824→    >
+   825→      {isLoading ? (
+   826→        <Skeleton className="h-96 w-full" />
+   827→      ) : filtered.length === 0 ? (
+   828→        <div className="py-12 text-center text-sm text-muted-foreground">
+   829→          <Hash className="size-8 mx-auto mb-2 text-muted-foreground/40" />
+   830→          {search ? `No keywords match "${search}"` : "No keywords tracked yet. Click \"Add Keyword\" to start."}
+   831→        </div>
+   832→      ) : (
+   833→        <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">
+   834→          <Table>
+   835→            <TableHeader>
+   836→              <TableRow className="bg-muted/30">
+   837→                <SortableHead label="Keyword" k="keyword" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="min-w-[180px]" />
+   838→                <SortableHead label="City" k="city" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+   839→                <SortableHead label="Current" k="currentRank" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+   840→                <TableHead className="text-right">Previous</TableHead>
+   841→                <SortableHead label="Best" k="bestRank" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+   842→                <SortableHead label="Worst" k="worstRank" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+   843→                <SortableHead label="Change" k="rankChange" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+   844→                <TableHead className="text-center">Trend</TableHead>
+   845→                {canManage && <TableHead className="text-right">Actions</TableHead>}
+   846→              </TableRow>
+   847→            </TableHeader>
+   848→            <TableBody>
+   849→              {filtered.map((k) => {
+   850→                const isSelected = k.id === selectedKeywordId;
+   851→                const rankChange = k.rankChange ?? 0;
+   852→                return (
+   853→                  <TableRow
+   854→                    key={k.id}
+   855→                    onClick={() => onSelect(k.id)}
+   856→                    className={cn("cursor-pointer", isSelected && "bg-primary/5")}
+   857→                  >
+   858→                    <TableCell className="font-medium">
+   859→                      <div className="flex items-center gap-2">
+   860→                        {isSelected && <span className="size-1.5 rounded-full bg-primary" />}
+   861→                        <span className="truncate max-w-[220px]">{k.keyword}</span>
+   862→                        {k.status && k.status !== "active" && (
+   863→                          <Badge variant="outline" className="text-[10px] text-muted-foreground">{k.status}</Badge>
+   864→                        )}
+   865→                      </div>
+   866→                    </TableCell>
+   867→                    <TableCell>
+   868→                      {k.city ? (
+   869→                        <Badge variant="outline" className="text-[10px]">{k.city}</Badge>
+   870→                      ) : <span className="text-muted-foreground text-xs">—</span>}
+   871→                    </TableCell>
+   872→                    <TableCell className="text-right">
+   873→                      <span className={cn("font-bold tabular-nums", rankTextClass(k.currentRank ?? 0))}>
+   874→                        {k.currentRank ? `#${k.currentRank}` : "—"}
+   875→                      </span>
+   876→                    </TableCell>
+   877→                    <TableCell className="text-right text-muted-foreground tabular-nums">
+   878→                      {k.previousRank ? `#${k.previousRank}` : "—"}
+   879→                    </TableCell>
+   880→                    <TableCell className="text-right">
+   881→                      {k.bestRank ? (
+   882→                        <span className={cn("font-semibold tabular-nums", rankTextClass(k.bestRank))}>#{k.bestRank}</span>
+   883→                      ) : <span className="text-muted-foreground">—</span>}
+   884→                    </TableCell>
+   885→                    <TableCell className="text-right">
+   886→                      {k.worstRank ? (
+   887→                        <span className="font-semibold tabular-nums text-muted-foreground">#{k.worstRank}</span>
+   888→                      ) : <span className="text-muted-foreground">—</span>}
+   889→                    </TableCell>
+   890→                    <TableCell className="text-right">
+   891→                      <RankChangeBadge change={rankChange} />
+   892→                    </TableCell>
+   893→                    <TableCell className="text-center">
+   894→                      <MiniSparkline history={k.rankHistory} />
+   895→                    </TableCell>
+   896→                    {canManage && (
+   897→                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+   898→                        <div className="flex items-center justify-end gap-1">
+   899→                          <Button size="sm" variant="ghost" className="size-7 p-0" onClick={() => setHistoryKeyword(k)} title="View history">
+   900→                            <History className="size-3.5" />
+   901→                          </Button>
+   902→                          <Button size="sm" variant="ghost" className="size-7 p-0" onClick={() => setEditingKeyword(k)} title="Edit">
+   903→                            <Pencil className="size-3.5" />
+   904→                          </Button>
+   905→                          <Button size="sm" variant="ghost" className="size-7 p-0 text-rose-600 hover:text-rose-700" onClick={() => setDeletingKeyword(k)} title="Delete">
+   906→                            <Trash2 className="size-3.5" />
+   907→                          </Button>
+   908→                        </div>
+   909→                      </TableCell>
+   910→                    )}
+   911→                  </TableRow>
+   912→                );
+   913→              })}
+   914→            </TableBody>
+   915→          </Table>
+   916→        </div>
+   917→      )}
+   918→
+   919→      {/* Add Keyword Dialog */}
+   920→      <KeywordFormDialog
+   921→        open={addOpen}
+   922→        onOpenChange={setAddOpen}
+   923→        onSubmit={handleCreate}
+   924→        submitting={submitting}
+   925→        locations={locations}
+   926→        defaultLocationId={activeLocationId !== "all" ? activeLocationId : undefined}
+   927→        mode="add"
+   928→      />
+   929→
+   930→      {/* Edit Keyword Dialog */}
+   931→      <KeywordFormDialog
+   932→        open={!!editingKeyword}
+   933→        onOpenChange={(open) => !open && setEditingKeyword(null)}
+   934→        onSubmit={(data) => editingKeyword && handleUpdate(editingKeyword.id, data)}
+   935→        submitting={submitting}
+   936→        locations={locations}
+   937→        keyword={editingKeyword}
+   938→        mode="edit"
+   939→      />
+   940→
+   941→      {/* Delete Confirmation */}
+   942→      <AlertDialog open={!!deletingKeyword} onOpenChange={(open) => !open && setDeletingKeyword(null)}>
+   943→        <AlertDialogContent>
+   944→          <AlertDialogHeader>
+   945→            <AlertDialogTitle>Delete keyword?</AlertDialogTitle>
+   946→            <AlertDialogDescription>
+   947→              This will permanently delete <span className="font-semibold text-foreground">{deletingKeyword?.keyword}</span> and all its ranking history. This action cannot be undone.
+   948→            </AlertDialogDescription>
+   949→          </AlertDialogHeader>
+   950→          <AlertDialogFooter>
+   951→            <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
+   952→            <AlertDialogAction
+   953→              onClick={() => deletingKeyword && handleDelete(deletingKeyword.id)}
+   954→              disabled={submitting}
+   955→              className="bg-rose-600 hover:bg-rose-700 text-white"
+   956→            >
+   957→              {submitting ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <Trash2 className="size-3.5 mr-1.5" />}
+   958→              Delete
+   959→            </AlertDialogAction>
+   960→          </AlertDialogFooter>
+   961→        </AlertDialogContent>
+   962→      </AlertDialog>
+   963→
+   964→      {/* Rank History Dialog */}
+   965→      <RankHistoryDialog keyword={historyKeyword} onClose={() => setHistoryKeyword(null)} />
+   966→    </CardSection>
+   967→  );
+   968→}
+   969→
+   970→function SortableHead({
+   971→  label, k, sortKey, sortDir, onSort, align = "left", className,
+   972→}: {
+   973→  label: string;
+   974→  k: KeywordSortKey;
+   975→  sortKey: KeywordSortKey;
+   976→  sortDir: SortDir;
+   977→  onSort: (k: KeywordSortKey) => void;
+   978→  align?: "left" | "right";
+   979→  className?: string;
+   980→}) {
+   981→  const active = sortKey === k;
+   982→  return (
+   983→    <TableHead className={cn(align === "right" && "text-right", className)}>
+   984→      <button
+   985→        onClick={() => onSort(k)}
+   986→        className={cn(
+   987→          "inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wide hover:text-foreground transition",
+   988→          align === "right" && "flex-row-reverse",
+   989→          active ? "text-foreground" : "text-muted-foreground",
+   990→        )}
+   991→      >
+   992→        {label}
+   993→        {active ? (
+   994→          sortDir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />
+   995→        ) : (
+   996→          <ArrowUpDown className="size-3 opacity-40" />
+   997→        )}
+   998→      </button>
+   999→    </TableHead>
+  1000→  );
+  1001→}
+  1002→
+  1003→function RankChangeBadge({ change }: { change: number }) {
+  1004→  if (change === 0) {
+  1005→    return (
+  1006→      <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground tabular-nums">
+  1007→        <Minus className="size-3" /> 0
+  1008→      </span>
+  1009→    );
+  1010→  }
+  1011→  const isGood = change > 0; // positive rankChange = improvement (rank went down)
+  1012→  return (
+  1013→    <span
+  1014→      className={cn(
+  1015→        "inline-flex items-center gap-0.5 text-xs font-medium tabular-nums",
+  1016→        isGood ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+  1017→      )}
+  1018→    >
+  1019→      {isGood ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />}
+  1020→      {Math.abs(change)}
+  1021→    </span>
+  1022→  );
+  1023→}
+  1024→
+  1025→function MiniSparkline({ history }: { history: { rank: number; date: string }[] }) {
+  1026→  const data = useMemo(() => {
+  1027→    return (history ?? [])
+  1028→      .filter((h) => h.rank > 0)
+  1029→      .slice()
+  1030→      .reverse() // API returns newest first; chart wants oldest first
+  1031→      .map((h) => ({ rank: h.rank }));
+  1032→  }, [history]);
+  1033→
+  1034→  if (data.length < 2) {
+  1035→    return <span className="text-xs text-muted-foreground">—</span>;
+  1036→  }
+  1037→  const first = data[0].rank;
+  1038→  const last = data[data.length - 1].rank;
+  1039→  const delta = first - last; // positive = improvement
+  1040→  const color = delta > 0 ? "var(--chart-1)" : delta < 0 ? "var(--chart-4)" : "var(--muted-foreground)";
+  1041→  return (
+  1042→    <div className="w-16 h-6 inline-block">
+  1043→      <ResponsiveContainer width="100%" height="100%">
+  1044→        <LineChart data={data} margin={{ top: 1, right: 1, bottom: 1, left: 1 }}>
+  1045→          <YAxis hide domain={["dataMin - 1", "dataMax + 1"]} reversed />
+  1046→          <Line type="monotone" dataKey="rank" stroke={color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+  1047→        </LineChart>
+  1048→      </ResponsiveContainer>
+  1049→    </div>
+  1050→  );
+  1051→}
+  1052→
+  1053→// ── Keyword Add/Edit Dialog ──────────────────────────────────────────
+  1054→function KeywordFormDialog({
+  1055→  open, onOpenChange, onSubmit, submitting, locations, defaultLocationId, keyword, mode,
+  1056→}: {
+  1057→  open: boolean;
+  1058→  onOpenChange: (open: boolean) => void;
+  1059→  onSubmit: (data: KeywordFormData) => void;
+  1060→  submitting: boolean;
+  1061→  locations: LocationOption[];
+  1062→  defaultLocationId?: string;
+  1063→  keyword?: KeywordRow | null;
+  1064→  mode: "add" | "edit";
+  1065→}) {
+  1066→  const [formKeyword, setFormKeyword] = useState("");
+  1067→  const [formLocationId, setFormLocationId] = useState<string>("none");
+  1068→  const [formCity, setFormCity] = useState("");
+  1069→  const [formState, setFormState] = useState("Maharashtra");
+  1070→
+  1071→  // Sync form state when dialog opens (event-driven, not effect-driven — lint-safe)
+  1072→  function handleOpenChange(next: boolean) {
+  1073→    if (next) {
+  1074→      setFormKeyword(keyword?.keyword ?? "");
+  1075→      setFormLocationId(keyword?.locationId ?? defaultLocationId ?? "none");
+  1076→      setFormCity(keyword?.city ?? "");
+  1077→      setFormState(keyword?.state ?? "Maharashtra");
+  1078→    }
+  1079→    onOpenChange(next);
+  1080→  }
+  1081→
+  1082→  function handleSubmit(e: React.FormEvent) {
+  1083→    e.preventDefault();
+  1084→    if (!formKeyword.trim()) {
+  1085→      toast.error("Keyword is required");
+  1086→      return;
+  1087→    }
+  1088→    onSubmit({
+  1089→      keyword: formKeyword.trim(),
+  1090→      locationId: formLocationId === "none" ? undefined : formLocationId,
+  1091→      city: formCity.trim() || undefined,
+  1092→      state: formState.trim() || undefined,
+  1093→    });
+  1094→  }
+  1095→
+  1096→  return (
+  1097→    <Dialog open={open} onOpenChange={handleOpenChange}>
+  1098→      <DialogContent>
+  1099→        <DialogHeader>
+  1100→          <DialogTitle>{mode === "add" ? "Add Keyword" : "Edit Keyword"}</DialogTitle>
+  1101→          <DialogDescription>
+  1102→            {mode === "add" ? "Track a new keyword across search rankings." : "Update keyword details and assignment."}
+  1103→          </DialogDescription>
+  1104→        </DialogHeader>
+  1105→        <form onSubmit={handleSubmit} className="space-y-4">
+  1106→          <div className="space-y-2">
+  1107→            <Label htmlFor="kw">Keyword</Label>
+  1108→            <Input
+  1109→              id="kw"
+  1110→              value={formKeyword}
+  1111→              onChange={(e) => setFormKeyword(e.target.value)}
+  1112→              placeholder="e.g. interior designer mumbai"
+  1113→              autoFocus
+  1114→            />
+  1115→          </div>
+  1116→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1117→            <div className="space-y-2">
+  1118→              <Label>Location (optional)</Label>
+  1119→              <Select value={formLocationId} onValueChange={setFormLocationId}>
+  1120→                <SelectTrigger>
+  1121→                  <SelectValue placeholder="No specific location" />
+  1122→                </SelectTrigger>
+  1123→                <SelectContent>
+  1124→                  <SelectItem value="none">No specific location</SelectItem>
+  1125→                  {locations.map((l) => (
+  1126→                    <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+  1127→                  ))}
+  1128→                </SelectContent>
+  1129→              </Select>
+  1130→            </div>
+  1131→            <div className="space-y-2">
+  1132→              <Label htmlFor="city">City (optional)</Label>
+  1133→              <Input id="city" value={formCity} onChange={(e) => setFormCity(e.target.value)} placeholder="e.g. Mumbai" />
+  1134→            </div>
+  1135→          </div>
+  1136→          <div className="space-y-2">
+  1137→            <Label htmlFor="state">State</Label>
+  1138→            <Input id="state" value={formState} onChange={(e) => setFormState(e.target.value)} placeholder="Maharashtra" />
+  1139→          </div>
+  1140→          <DialogFooter>
+  1141→            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button>
+  1142→            <Button type="submit" disabled={submitting}>
+  1143→              {submitting && <Loader2 className="size-3.5 mr-1.5 animate-spin" />}
+  1144→              {mode === "add" ? "Add Keyword" : "Save Changes"}
+  1145→            </Button>
+  1146→          </DialogFooter>
+  1147→        </form>
+  1148→      </DialogContent>
+  1149→    </Dialog>
+  1150→  );
+  1151→}
+  1152→
+  1153→// ── Rank History Dialog ──────────────────────────────────────────────
+  1154→function RankHistoryDialog({
+  1155→  keyword, onClose,
+  1156→}: {
+  1157→  keyword: KeywordRow | null;
+  1158→  onClose: () => void;
+  1159→}) {
+  1160→  const chartData = useMemo(() => {
+  1161→    if (!keyword) return [];
+  1162→    return (keyword.rankHistory ?? [])
+  1163→      .filter((h) => h.rank > 0)
+  1164→      .slice()
+  1165→      .reverse() // API returns newest first
+  1166→      .map((h) => ({
+  1167→        date: format(parseISO(h.date), "dd MMM"),
+  1168→        rank: h.rank,
+  1169→      }));
+  1170→  }, [keyword]);
+  1171→
+  1172→  if (!keyword) return null;
+  1173→
+  1174→  const current = keyword.currentRank;
+  1175→  const best = keyword.bestRank;
+  1176→  const worst = keyword.worstRank;
+  1177→  const ranked = (keyword.rankHistory ?? []).filter((h) => h.rank > 0).map((h) => h.rank);
+  1178→  const avg = ranked.length
+  1179→    ? Math.round((ranked.reduce((a, b) => a + b, 0) / ranked.length) * 10) / 10
+  1180→    : null;
+  1181→
+  1182→  const maxRank = ranked.length ? Math.max(...ranked) + 2 : 10;
+  1183→
+  1184→  return (
+  1185→    <Dialog open={!!keyword} onOpenChange={(open) => !open && onClose()}>
+  1186→      <DialogContent className="sm:max-w-2xl">
+  1187→        <DialogHeader>
+  1188→          <DialogTitle className="flex items-center gap-2">
+  1189→            <History className="size-4 text-primary" />
+  1190→            Rank History
+  1191→          </DialogTitle>
+  1192→          <DialogDescription>
+  1193→            <span className="font-semibold text-foreground">{keyword.keyword}</span>
+  1194→            {keyword.city && <span> · {keyword.city}</span>}
+  1195→            {keyword.locationName && <span> · {keyword.locationName}</span>}
+  1196→          </DialogDescription>
+  1197→        </DialogHeader>
+  1198→
+  1199→        {chartData.length === 0 ? (
+  1200→          <div className="py-10 text-center text-sm text-muted-foreground">
+  1201→            <History className="size-8 mx-auto mb-2 text-muted-foreground/40" />
+  1202→            No rank history recorded for this keyword yet.
+  1203→          </div>
+  1204→        ) : (
+  1205→          <>
+  1206→            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+  1207→              <StatTile label="Current" value={current ? `#${current}` : "—"} color={rankTextClass(current ?? 0)} />
+  1208→              <StatTile label="Best" value={best ? `#${best}` : "—"} color={rankTextClass(best ?? 0)} />
+  1209→              <StatTile label="Worst" value={worst ? `#${worst}` : "—"} color="text-muted-foreground" />
+  1210→              <StatTile label="Average" value={avg ? `#${avg}` : "—"} color="text-foreground" />
+  1211→            </div>
+  1212→
+  1213→            <div className="h-72">
+  1214→              <ResponsiveContainer width="100%" height="100%">
+  1215→                <LineChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+  1216→                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+  1217→                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" interval="preserveStartEnd" minTickGap={24} />
+  1218→                  <YAxis reversed domain={[0, maxRank]} tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" allowDecimals={false} />
+  1219→                  <Tooltip
+  1220→                    contentStyle={{
+  1221→                      background: "var(--card)",
+  1222→                      border: "1px solid var(--border)",
+  1223→                      borderRadius: 8,
+  1224→                      fontSize: 12,
+  1225→                    }}
+  1226→                    formatter={(v: number) => [`#${v}`, "Rank"]}
+  1227→                  />
+  1228→                  <Line type="monotone" dataKey="rank" stroke="var(--chart-1)" strokeWidth={2.5} dot={{ r: 3, fill: "var(--chart-1)" }} activeDot={{ r: 5 }} />
+  1229→                  <ReferenceLine y={3} stroke="var(--chart-2)" strokeDasharray="4 4" label={{ value: "Top 3", position: "insideTopRight", fontSize: 10, fill: "var(--muted-foreground)" }} />
+  1230→                  <ReferenceLine y={10} stroke="var(--chart-4)" strokeDasharray="4 4" label={{ value: "Top 10", position: "insideTopRight", fontSize: 10, fill: "var(--muted-foreground)" }} />
+  1231→                </LineChart>
+  1232→              </ResponsiveContainer>
+  1233→            </div>
+  1234→
+  1235→            <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+  1236→              <Info className="size-3.5 shrink-0" />
+  1237→              <span>
+  1238→                Lower rank is better. Y-axis is inverted so rank #1 appears at the top.
+  1239→                {keyword.trackingCount > 0 && <span> · {keyword.trackingCount} data points tracked.</span>}
+  1240→              </span>
+  1241→            </div>
+  1242→          </>
+  1243→        )}
+  1244→      </DialogContent>
+  1245→    </Dialog>
+  1246→  );
+  1247→}
+  1248→
+  1249→function StatTile({ label, value, color }: { label: string; value: string; color: string }) {
+  1250→  return (
+  1251→    <div className="rounded-lg border bg-muted/30 p-3">
+  1252→      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+  1253→      <div className={cn("text-lg font-bold tabular-nums", color)}>{value}</div>
+  1254→    </div>
+  1255→  );
+  1256→}
+  1257→
+  1258→// ── Geo Grid Tab (configurable size + radius) ────────────────────────
+  1259→function GeoGridTab({
+  1260→  keywords, keywordsLoading, gridSize, setGridSize, radiusKm, setRadiusKm,
+  1261→  gridKeywordId, setGridKeywordId, selectedLocationName, activeLocationId,
+  1262→}: {
+  1263→  keywords: KeywordRow[];
+  1264→  keywordsLoading: boolean;
+  1265→  gridSize: number;
+  1266→  setGridSize: (n: number) => void;
+  1267→  radiusKm: number;
+  1268→  setRadiusKm: (n: number) => void;
+  1269→  gridKeywordId: string | null;
+  1270→  setGridKeywordId: (id: string | null) => void;
+  1271→  selectedLocationName: string;
+  1272→  activeLocationId: string | "all";
+  1273→}) {
+  1274→  const isAllLocations = !activeLocationId || activeLocationId === "all";
+  1275→  const locationId = isAllLocations ? null : activeLocationId;
+  1276→
+  1277→  const geoGridQuery = useQuery<GeoGridResponse>({
+  1278→    queryKey: ["seo", "geo-grid", locationId, gridKeywordId, gridSize, radiusKm],
+  1279→    queryFn: () => {
+  1280→      const params = new URLSearchParams({
+  1281→        size: String(gridSize),
+  1282→        radius: String(radiusKm),
+  1283→      });
+  1284→      if (locationId) params.set("locationId", locationId);
+  1285→      if (gridKeywordId) params.set("keywordId", gridKeywordId);
+  1286→      return api<GeoGridResponse>(`/api/seo/geo-grid?${params.toString()}`);
+  1287→    },
+  1288→    enabled: !!locationId && !!gridKeywordId,
+  1289→  });
+  1290→
+  1291→  return (
+  1292→    <CardSection
+  1293→      title="Geo-Grid Ranking"
+  1294→      description="Heatmap of keyword ranking at different lat/lng points around your location"
+  1295→      action={
+  1296→        <div className="flex items-center gap-2 flex-wrap">
+  1297→          <ToggleGroup
+  1298→            type="single"
+  1299→            value={String(gridSize)}
+  1300→            onValueChange={(v) => v && setGridSize(Number(v))}
+  1301→            size="sm"
+  1302→            variant="outline"
+  1303→          >
+  1304→            <ToggleGroupItem value="3">3×3</ToggleGroupItem>
+  1305→            <ToggleGroupItem value="5">5×5</ToggleGroupItem>
+  1306→            <ToggleGroupItem value="7">7×7</ToggleGroupItem>
+  1307→          </ToggleGroup>
+  1308→          <Select value={String(radiusKm)} onValueChange={(v) => setRadiusKm(Number(v))}>
+  1309→            <SelectTrigger size="sm" className="w-[100px]">
+  1310→              <Compass className="size-3.5 mr-1.5 text-muted-foreground" />
+  1311→              <SelectValue />
+  1312→            </SelectTrigger>
+  1313→            <SelectContent>
+  1314→              <SelectItem value="1">1 km</SelectItem>
+  1315→              <SelectItem value="3">3 km</SelectItem>
+  1316→              <SelectItem value="5">5 km</SelectItem>
+  1317→              <SelectItem value="10">10 km</SelectItem>
+  1318→            </SelectContent>
+  1319→          </Select>
+  1320→        </div>
+  1321→      }
+  1322→    >
+  1323→      {/* Keyword selector */}
+  1324→      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+  1325→        <div className="flex items-center gap-2">
+  1326→          <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Keyword:</span>
+  1327→          <Select
+  1328→            value={gridKeywordId ?? undefined}
+  1329→            onValueChange={(v) => setGridKeywordId(v)}
+  1330→            disabled={keywordsLoading || keywords.length === 0 || isAllLocations}
+  1331→          >
+  1332→            <SelectTrigger size="sm" className="w-[260px]">
+  1333→              <SelectValue placeholder={
+  1334→                isAllLocations ? "Select a location first"
+  1335→                : keywords.length === 0 ? "No keywords available"
+  1336→                : "Select keyword"
+  1337→              } />
+  1338→            </SelectTrigger>
+  1339→            <SelectContent>
+  1340→              {keywords.map((k) => (
+  1341→                <SelectItem key={k.id} value={k.id}>
+  1342→                  {k.keyword} {k.currentRank ? `(#${k.currentRank})` : ""}
+  1343→                </SelectItem>
+  1344→              ))}
+  1345→            </SelectContent>
+  1346→          </Select>
+  1347→        </div>
+  1348→        {isAllLocations && (
+  1349→          <div className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+  1350→            <Info className="size-3.5" />
+  1351→            Select a specific location above to view its geo-grid.
+  1352→          </div>
+  1353→        )}
+  1354→      </div>
+  1355→
+  1356→      {isAllLocations ? (
+  1357→        <div className="py-16 text-center">
+  1358→          <Compass className="size-10 mx-auto mb-3 text-muted-foreground/40" />
+  1359→          <p className="text-sm text-muted-foreground">Select a specific location to view its geo-grid heatmap.</p>
+  1360→        </div>
+  1361→      ) : geoGridQuery.isLoading || geoGridQuery.isFetching ? (
+  1362→        <div className="flex justify-center py-8">
+  1363→          <Skeleton className="h-[340px] w-full max-w-md" />
+  1364→        </div>
+  1365→      ) : geoGridQuery.isError ? (
+  1366→        <div className="py-10 text-center text-sm text-rose-600 dark:text-rose-400">
+  1367→          Failed to load geo-grid. Try again.
+  1368→        </div>
+  1369→      ) : !gridKeywordId ? (
+  1370→        <div className="py-12 text-center text-sm text-muted-foreground">
+  1371→          No keyword selected. Choose a keyword above to view its geo-grid.
+  1372→        </div>
+  1373→      ) : (
+  1374→        <GeoGridHeatmap
+  1375→          grid={geoGridQuery.data?.grid ?? []}
+  1376→          size={gridSize}
+  1377→          radius={radiusKm}
+  1378→          summary={geoGridQuery.data?.summary}
+  1379→          locationName={selectedLocationName}
+  1380→          keywordLabel={keywords.find((k) => k.id === gridKeywordId)?.keyword ?? ""}
+  1381→        />
+  1382→      )}
+  1383→    </CardSection>
+  1384→  );
+  1385→}
+  1386→
+  1387→function GeoGridHeatmap({
+  1388→  grid, size, radius, summary, locationName, keywordLabel,
+  1389→}: {
+  1390→  grid: { lat: number; lng: number; rank: number }[];
+  1391→  size: number;
+  1392→  radius: number;
+  1393→  summary?: { avgRank: number; top3Count: number; top10Count: number; totalPoints: number };
+  1394→  locationName: string;
+  1395→  keywordLabel: string;
+  1396→}) {
+  1397→  const grid2d = useMemo(() => {
+  1398→    if (grid.length === 0) {
+  1399→      return Array.from({ length: size }, () =>
+  1400→        Array.from({ length: size }, () => null as { lat: number; lng: number; rank: number } | null),
+  1401→      );
+  1402→    }
+  1403→    const lats = Array.from(new Set(grid.map((p) => p.lat))).sort((a, b) => b - a);
+  1404→    const lngs = Array.from(new Set(grid.map((p) => p.lng))).sort((a, b) => a - b);
+  1405→    const g: ({ lat: number; lng: number; rank: number } | null)[][] = Array.from({ length: size }, () =>
+  1406→      Array.from({ length: size }, () => null),
+  1407→    );
+  1408→    grid.forEach((p) => {
+  1409→      const row = lats.indexOf(p.lat);
+  1410→      const col = lngs.indexOf(p.lng);
+  1411→      if (row >= 0 && row < size && col >= 0 && col < size) {
+  1412→        g[row][col] = p;
+  1413→      }
+  1414→    });
+  1415→    return g;
+  1416→  }, [grid, size]);
+  1417→
+  1418→  const cellSize = size === 3 ? "size-14 sm:size-16" : size === 5 ? "size-12 sm:size-14" : "size-10 sm:size-11";
+  1419→  const fontSize = size === 7 ? "text-xs" : "text-sm";
+  1420→
+  1421→  return (
+  1422→    <div className="space-y-4">
+  1423→      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+  1424→        <div>
+  1425→          <div className="text-xs text-muted-foreground">{locationName} · {radius} km radius</div>
+  1426→          <div className="text-base font-semibold">
+  1427→            Geo-Grid — <span className="text-primary">{keywordLabel || "—"}</span>
+  1428→          </div>
+  1429→        </div>
+  1430→        <div className="flex items-center gap-2 flex-wrap">
+  1431→          <MiniStat label="Avg" value={summary?.avgRank ? `#${summary.avgRank}` : "—"} />
+  1432→          <MiniStat label="Top 3" value={`${summary?.top3Count ?? 0}/${summary?.totalPoints ?? size * size}`} />
+  1433→          <MiniStat label="Top 10" value={`${summary?.top10Count ?? 0}/${summary?.totalPoints ?? size * size}`} />
+  1434→        </div>
+  1435→      </div>
+  1436→
+  1437→      <div className="flex justify-center">
+  1438→        <div className="flex items-stretch gap-2">
+  1439→          <div className="flex flex-col items-center justify-between py-1">
+  1440→            <span className="text-[10px] font-medium text-muted-foreground">N</span>
+  1441→            <Compass className="size-3 text-muted-foreground/60" />
+  1442→            <span className="text-[10px] font-medium text-muted-foreground">S</span>
+  1443→          </div>
+  1444→          <div>
+  1445→            <div className="flex items-center justify-between px-1 mb-1">
+  1446→              <span className="text-[10px] font-medium text-muted-foreground">W</span>
+  1447→              <span className="text-[10px] text-muted-foreground/70">lat ↓ / lng →</span>
+  1448→              <span className="text-[10px] font-medium text-muted-foreground">E</span>
+  1449→            </div>
+  1450→            <div
+  1451→              className="grid gap-1.5"
+  1452→              style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+  1453→            >
+  1454→              {grid2d.flat().map((cell, idx) => {
+  1455→                if (!cell) {
+  1456→                  return (
+  1457→                    <div key={idx} className={cn("rounded-md bg-muted/40 border border-dashed", cellSize)} />
+  1458→                  );
+  1459→                }
+  1460→                const c = rankColor(cell.rank);
+  1461→                return (
+  1462→                  <div
+  1463→                    key={idx}
+  1464→                    title={`Rank #${cell.rank || "—"} · lat ${cell.lat.toFixed(4)}, lng ${cell.lng.toFixed(4)}`}
+  1465→                    className={cn(
+  1466→                      "rounded-md flex items-center justify-center font-bold tabular-nums font-mono shadow-sm transition-transform hover:scale-105 cursor-default",
+  1467→                      cellSize, fontSize, c.bg, c.text,
+  1468→                    )}
+  1469→                  >
+  1470→                    {cell.rank > 0 ? cell.rank : "—"}
+  1471→                  </div>
+  1472→                );
+  1473→              })}
+  1474→            </div>
+  1475→          </div>
+  1476→        </div>
+  1477→      </div>
+  1478→
+  1479→      <div className="flex items-center justify-center gap-3 flex-wrap text-[11px]">
+  1480→        <LegendItem color="bg-emerald-500" label="1–3" />
+  1481→        <LegendItem color="bg-amber-500" label="4–10" />
+  1482→        <LegendItem color="bg-orange-500" label="11–20" />
+  1483→        <LegendItem color="bg-rose-500" label="21+" />
+  1484→        <LegendItem color="bg-slate-300 dark:bg-slate-700" label="N/A" />
+  1485→      </div>
+  1486→
+  1487→      <div className="flex items-start gap-2 text-[11px] text-muted-foreground bg-muted/30 rounded-md p-2.5">
+  1488→        <Info className="size-3.5 shrink-0 mt-0.5" />
+  1489→        <span>
+  1490→          Each cell represents a search performed at that lat/lng point around {locationName} within a {radius} km radius.
+  1491→          Brighter colors = better ranking. The center cell is the location&apos;s exact coordinates.
+  1492→        </span>
+  1493→      </div>
+  1494→    </div>
+  1495→  );
+  1496→}
+  1497→
+  1498→// ── Competitors Tab (real API data + comparison chart) ───────────────
+  1499→function CompetitorsTab({
+  1500→  competitors, isLoading, myAvgRank, canManage, activeLocationId,
+  1501→}: {
+  1502→  competitors: CompetitorRow[];
+  1503→  isLoading: boolean;
+  1504→  myAvgRank: number | null;
+  1505→  canManage: boolean;
+  1506→  activeLocationId: string | "all";
+  1507→}) {
+  1508→  const [expanded, setExpanded] = useState<string | null>(null);
+  1509→  const isAllLocations = !activeLocationId || activeLocationId === "all";
+  1510→
+  1511→  const chartData = useMemo(() => {
+  1512→    const arr: { name: string; avgRank: number; isMe: boolean }[] = [];
+  1513→    if (myAvgRank && myAvgRank > 0) {
+  1514→      arr.push({ name: "MyFNG (you)", avgRank: myAvgRank, isMe: true });
+  1515→    }
+  1516→    competitors.forEach((c) => {
+  1517→      if (c.avgRank !== null && c.avgRank > 0) {
+  1518→        arr.push({ name: c.businessName, avgRank: c.avgRank, isMe: false });
+  1519→      }
+  1520→    });
+  1521→    return arr.sort((a, b) => a.avgRank - b.avgRank);
+  1522→  }, [competitors, myAvgRank]);
+  1523→
+  1524→  return (
+  1525→    <div className="space-y-4">
+  1526→      <CardSection
+  1527→        title="Competitor Monitoring"
+  1528→        description="Real competitor rankings across your tracked keywords"
+  1529→        action={
+  1530→          canManage && (
+  1531→            <Button
+  1532→              size="sm"
+  1533→              variant="outline"
+  1534→              onClick={() => toast.success("Competitor tracking setup queued")}
+  1535→            >
+  1536→              <Plus className="size-3.5 mr-1.5" /> Add Competitor
+  1537→            </Button>
+  1538→          )
+  1539→        }
+  1540→      >
+  1541→        {isLoading ? (
+  1542→          <Skeleton className="h-64 w-full" />
+  1543→        ) : competitors.length === 0 ? (
+  1544→          <div className="py-12 text-center text-sm text-muted-foreground">
+  1545→            <Building2 className="size-8 mx-auto mb-2 text-muted-foreground/40" />
+  1546→            No competitors tracked {isAllLocations ? "yet" : "for this location"}.
+  1547→            {canManage && <span> Click \"Add Competitor\" to set up tracking.</span>}
+  1548→          </div>
+  1549→        ) : (
+  1550→          <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">
+  1551→            <Table>
+  1552→              <TableHeader>
+  1553→                <TableRow className="bg-muted/30">
+  1554→                  <TableHead className="w-8" />
+  1555→                  <TableHead className="min-w-[180px]">Business</TableHead>
+  1556→                  <TableHead>Category</TableHead>
+  1557→                  <TableHead className="text-right">Avg Rank</TableHead>
+  1558→                  <TableHead className="text-center">Keywords Tracked</TableHead>
+  1559→                  <TableHead className="text-center">Status</TableHead>
+  1560→                </TableRow>
+  1561→              </TableHeader>
+  1562→              <TableBody>
+  1563→                {competitors.map((c) => {
+  1564→                  const isExpanded = expanded === c.id;
+  1565→                  return (
+  1566→                    <Fragment key={c.id}>
+  1567→                      <TableRow
+  1568→                        className={cn("cursor-pointer hover:bg-accent/30", isExpanded && "bg-muted/30")}
+  1569→                        onClick={() => setExpanded(isExpanded ? null : c.id)}
+  1570→                      >
+  1571→                        <TableCell>
+  1572→                          {c.rankings.length > 0 && (
+  1573→                            isExpanded ? <ChevronDown className="size-3.5 text-muted-foreground" /> : <ChevronRight className="size-3.5 text-muted-foreground" />
+  1574→                          )}
+  1575→                        </TableCell>
+  1576→                        <TableCell className="font-medium">
+  1577→                          <div className="flex items-center gap-2">
+  1578→                            <Building2 className="size-3.5 text-muted-foreground shrink-0" />
+  1579→                            <div className="min-w-0">
+  1580→                              <div className="truncate max-w-[200px]">{c.businessName}</div>
+  1581→                              {c.locationName && (
+  1582→                                <div className="text-[10px] text-muted-foreground mt-0.5">{c.locationName}</div>
+  1583→                              )}
+  1584→                            </div>
+  1585→                          </div>
+  1586→                        </TableCell>
+  1587→                        <TableCell>
+  1588→                          {c.category ? (
+  1589→                            <Badge variant="outline" className="text-[10px]">{c.category}</Badge>
+  1590→                          ) : <span className="text-muted-foreground text-xs">—</span>}
+  1591→                        </TableCell>
+  1592→                        <TableCell className="text-right">
+  1593→                          {c.avgRank !== null ? (
+  1594→                            <span className={cn("font-bold tabular-nums", rankTextClass(c.avgRank))}>#{c.avgRank}</span>
+  1595→                          ) : <span className="text-muted-foreground">—</span>}
+  1596→                        </TableCell>
+  1597→                        <TableCell className="text-center text-xs tabular-nums">{c.rankings.length}</TableCell>
+  1598→                        <TableCell className="text-center">
+  1599→                          <Badge variant={c.isActive ? "default" : "secondary"} className="text-[10px]">
+  1600→                            {c.isActive ? "Active" : "Paused"}
+  1601→                          </Badge>
+  1602→                        </TableCell>
+  1603→                      </TableRow>
+  1604→                      {isExpanded && c.rankings.length > 0 && (
+  1605→                        <TableRow className="bg-muted/20 hover:bg-muted/20">
+  1606→                          <TableCell colSpan={6} className="p-3">
+  1607→                            <div className="rounded-md border bg-card p-3">
+  1608→                              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+  1609→                                Keyword Rankings
+  1610→                              </div>
+  1611→                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+  1612→                                {c.rankings.map((r, i) => (
+  1613→                                  <div key={i} className="flex items-center justify-between text-xs py-1 px-2 rounded hover:bg-muted/50">
+  1614→                                    <span className="truncate">{r.keyword}</span>
+  1615→                                    <span className={cn("font-bold tabular-nums ml-2", rankTextClass(r.ranking))}>
+  1616→                                      #{r.ranking}
+  1617→                                    </span>
+  1618→                                  </div>
+  1619→                                ))}
+  1620→                              </div>
+  1621→                            </div>
+  1622→                          </TableCell>
+  1623→                        </TableRow>
+  1624→                      )}
+  1625→                    </Fragment>
+  1626→                  );
+  1627→                })}
+  1628→              </TableBody>
+  1629→            </Table>
+  1630→          </div>
+  1631→        )}
+  1632→      </CardSection>
+  1633→
+  1634→      {/* Comparison bar chart */}
+  1635→      {chartData.length > 0 && (
+  1636→        <CardSection
+  1637→          title="Avg Rank Comparison"
+  1638→          description="Lower rank = better visibility. MyFNG vs tracked competitors."
+  1639→        >
+  1640→          <div className="h-72">
+  1641→            <ResponsiveContainer width="100%" height="100%">
+  1642→              <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 32, left: 5, bottom: 5 }} barCategoryGap={8}>
+  1643→                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+  1644→                <XAxis type="number" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" domain={[0, "dataMax + 2"]} />
+  1645→                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" width={120} interval={0} />
+  1646→                <Tooltip
+  1647→                  contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+  1648→                  formatter={(v: number) => [`#${v}`, "Avg Rank"]}
+  1649→                />
+  1650→                <Bar dataKey="avgRank" name="Avg Rank" radius={[0, 4, 4, 0]} maxBarSize={20}>
+  1651→                  {chartData.map((d, i) => (
+  1652→                    <Cell key={i} fill={d.isMe ? "var(--chart-1)" : "var(--chart-2)"} />
+  1653→                  ))}
+  1654→                  <LabelList dataKey="avgRank" position="right" formatter={(v: number) => `#${v}`} style={{ fontSize: 10, fill: "var(--muted-foreground)" }} />
+  1655→                </Bar>
+  1656→              </BarChart>
+  1657→            </ResponsiveContainer>
+  1658→          </div>
+  1659→          <div className="mt-3 flex items-center gap-4 text-[11px]">
+  1660→            <div className="flex items-center gap-1.5">
+  1661→              <span className="size-3 rounded-sm bg-emerald-500" />
+  1662→              <span className="text-muted-foreground">MyFNG (you)</span>
+  1663→            </div>
+  1664→            <div className="flex items-center gap-1.5">
+  1665→              <span className="size-3 rounded-sm bg-amber-500" />
+  1666→              <span className="text-muted-foreground">Competitors</span>
+  1667→            </div>
+  1668→          </div>
+  1669→        </CardSection>
+  1670→      )}
+  1671→    </div>
+  1672→  );
+  1673→}
+  1674→
+  1675→// ── Location Comparison Tab ──────────────────────────────────────────
+  1676→function LocationComparisonTab({
+  1677→  rows, isLoading, activeLocationId,
+  1678→}: {
+  1679→  rows: LocationComparisonRow[];
+  1680→  isLoading: boolean;
+  1681→  activeLocationId: string | "all";
+  1682→}) {
+  1683→  const [sortKey, setSortKey] = useState<ComparisonSortKey>("seoScore");
+  1684→  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  1685→
+  1686→  const sorted = useMemo(() => {
+  1687→    const arr = [...rows];
+  1688→    arr.sort((a, b) => {
+  1689→      let cmp = 0;
+  1690→      switch (sortKey) {
+  1691→        case "name": cmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase()); break;
+  1692→        case "city": cmp = a.city.toLowerCase().localeCompare(b.city.toLowerCase()); break;
+  1693→        case "seoScore": cmp = a.seoScore - b.seoScore; break;
+  1694→        case "visibilityScore": cmp = a.visibilityScore - b.visibilityScore; break;
+  1695→        case "avgRank": cmp = (a.avgRank || 99) - (b.avgRank || 99); break;
+  1696→        case "keywordCount": cmp = a.keywordCount - b.keywordCount; break;
+  1697→        case "top3Count": cmp = a.top3Count - b.top3Count; break;
+  1698→        case "avgRating": cmp = a.avgRating - b.avgRating; break;
+  1699→        case "reviewCount": cmp = a.reviewCount - b.reviewCount; break;
+  1700→        case "postCount": cmp = a.postCount - b.postCount; break;
+  1701→        case "responseRate": cmp = a.responseRate - b.responseRate; break;
+  1702→        default: cmp = 0;
+  1703→      }
+  1704→      return sortDir === "asc" ? cmp : -cmp;
+  1705→    });
+  1706→    return arr;
+  1707→  }, [rows, sortKey, sortDir]);
+  1708→
+  1709→  function toggleSort(key: ComparisonSortKey) {
+  1710→    if (sortKey === key) {
+  1711→      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+  1712→    } else {
+  1713→      setSortKey(key);
+  1714→      setSortDir("desc");
+  1715→    }
+  1716→  }
+  1717→
+  1718→  function exportCsv() {
+  1719→    const headers = ["City", "Name", "SEO Score", "Visibility", "Avg Rank", "Keywords", "Top 3", "Rating", "Reviews", "Posts", "Response Rate"];
+  1720→    const lines = [headers.join(",")];
+  1721→    sorted.forEach((r) => {
+  1722→      lines.push([
+  1723→        `"${r.city}"`,
+  1724→        `"${r.name}"`,
+  1725→        r.seoScore,
+  1726→        r.visibilityScore,
+  1727→        r.avgRank || "",
+  1728→        r.keywordCount,
+  1729→        r.top3Count,
+  1730→        r.avgRating || "",
+  1731→        r.reviewCount,
+  1732→        r.postCount,
+  1733→        `${r.responseRate}%`,
+  1734→      ].join(","));
+  1735→    });
+  1736→    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  1737→    const url = URL.createObjectURL(blob);
+  1738→    const a = document.createElement("a");
+  1739→    a.href = url;
+  1740→    a.download = `seo-comparison-${format(new Date(), "yyyy-MM-dd")}.csv`;
+  1741→    a.click();
+  1742→    URL.revokeObjectURL(url);
+  1743→    toast.success("Comparison exported");
+  1744→  }
+  1745→
+  1746→  return (
+  1747→    <CardSection
+  1748→      title="Location Comparison"
+  1749→      description="Compare all locations by SEO and engagement metrics"
+  1750→      action={
+  1751→        <Button size="sm" variant="outline" onClick={exportCsv} disabled={rows.length === 0}>
+  1752→          <Download className="size-3.5 mr-1.5" /> Export CSV
+  1753→        </Button>
+  1754→      }
+  1755→    >
+  1756→      {isLoading ? (
+  1757→        <Skeleton className="h-64 w-full" />
+  1758→      ) : rows.length === 0 ? (
+  1759→        <div className="py-12 text-center text-sm text-muted-foreground">
+  1760→          <ArrowUpDown className="size-8 mx-auto mb-2 text-muted-foreground/40" />
+  1761→          No locations to compare.
+  1762→        </div>
+  1763→      ) : (
+  1764→        <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">
+  1765→          <Table>
+  1766→            <TableHeader>
+  1767→              <TableRow className="bg-muted/30">
+  1768→                <ComparisonSortHead label="City" k="city" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+  1769→                <ComparisonSortHead label="Name" k="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+  1770→                <ComparisonSortHead label="SEO" k="seoScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1771→                <ComparisonSortHead label="Visibility" k="visibilityScore" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1772→                <ComparisonSortHead label="Avg Rank" k="avgRank" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1773→                <ComparisonSortHead label="Keywords" k="keywordCount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1774→                <ComparisonSortHead label="Top 3" k="top3Count" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1775→                <ComparisonSortHead label="Rating" k="avgRating" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1776→                <ComparisonSortHead label="Reviews" k="reviewCount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1777→                <ComparisonSortHead label="Posts" k="postCount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1778→                <ComparisonSortHead label="Resp %" k="responseRate" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+  1779→              </TableRow>
+  1780→            </TableHeader>
+  1781→            <TableBody>
+  1782→              {sorted.map((r) => {
+  1783→                const isActive = r.id === activeLocationId;
+  1784→                return (
+  1785→                  <TableRow key={r.id} className={cn(isActive && "bg-primary/5")}>
+  1786→                    <TableCell>
+  1787→                      <Badge variant="outline" className="text-[10px]">{r.city}</Badge>
+  1788→                    </TableCell>
+  1789→                    <TableCell className="font-medium">
+  1790→                      <div className="flex items-center gap-1.5">
+  1791→                        {isActive && <span className="size-1.5 rounded-full bg-primary" />}
+  1792→                        <span className="truncate max-w-[160px]">{r.name}</span>
+  1793→                      </div>
+  1794→                    </TableCell>
+  1795→                    <TableCell className="text-right">
+  1796→                      <span className={cn("inline-flex items-center justify-end font-bold tabular-nums rounded px-1.5 py-0.5", scoreBg(r.seoScore))}>
+  1797→                        {r.seoScore}
+  1798→                      </span>
+  1799→                    </TableCell>
+  1800→                    <TableCell className="text-right">
+  1801→                      <span className={cn("inline-flex items-center justify-end font-bold tabular-nums rounded px-1.5 py-0.5", scoreBg(r.visibilityScore))}>
+  1802→                        {r.visibilityScore}
+  1803→                      </span>
+  1804→                    </TableCell>
+  1805→                    <TableCell className="text-right">
+  1806→                      {r.avgRank ? (
+  1807→                        <span className={cn("inline-flex items-center justify-end font-bold tabular-nums rounded px-1.5 py-0.5", rankBandClass(r.avgRank))}>
+  1808→                          #{r.avgRank}
+  1809→                        </span>
+  1810→                      ) : <span className="text-muted-foreground">—</span>}
+  1811→                    </TableCell>
+  1812→                    <TableCell className="text-right tabular-nums text-xs">{r.keywordCount}</TableCell>
+  1813→                    <TableCell className="text-right tabular-nums text-xs">{r.top3Count}</TableCell>
+  1814→                    <TableCell className="text-right tabular-nums text-xs">
+  1815→                      {r.avgRating ? r.avgRating.toFixed(1) : "—"}
+  1816→                    </TableCell>
+  1817→                    <TableCell className="text-right tabular-nums text-xs">{r.reviewCount}</TableCell>
+  1818→                    <TableCell className="text-right tabular-nums text-xs">{r.postCount}</TableCell>
+  1819→                    <TableCell className="text-right tabular-nums text-xs">{r.responseRate}%</TableCell>
+  1820→                  </TableRow>
+  1821→                );
+  1822→              })}
+  1823→            </TableBody>
+  1824→          </Table>
+  1825→        </div>
+  1826→      )}
+  1827→    </CardSection>
+  1828→  );
+  1829→}
+  1830→
+  1831→function ComparisonSortHead({
+  1832→  label, k, sortKey, sortDir, onSort, align = "left",
+  1833→}: {
+  1834→  label: string;
+  1835→  k: ComparisonSortKey;
+  1836→  sortKey: ComparisonSortKey;
+  1837→  sortDir: SortDir;
+  1838→  onSort: (k: ComparisonSortKey) => void;
+  1839→  align?: "left" | "right";
+  1840→}) {
+  1841→  const active = sortKey === k;
+  1842→  return (
+  1843→    <TableHead className={cn(align === "right" && "text-right")}>
+  1844→      <button
+  1845→        onClick={() => onSort(k)}
+  1846→        className={cn(
+  1847→          "inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wide hover:text-foreground transition",
+  1848→          align === "right" && "flex-row-reverse",
+  1849→          active ? "text-foreground" : "text-muted-foreground",
+  1850→        )}
+  1851→      >
+  1852→        {label}
+  1853→        {active ? (
+  1854→          sortDir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />
+  1855→        ) : (
+  1856→          <ArrowUpDown className="size-3 opacity-40" />
+  1857→        )}
+  1858→      </button>
+  1859→    </TableHead>
+  1860→  );
+  1861→}
+  1862→
+  1863→// ── Audit Tab ────────────────────────────────────────────────────────
+  1864→function AuditTab({
+  1865→  audits, isLoading, canManage,
+  1866→}: {
+  1867→  audits: SeoAuditRow[];
+  1868→  isLoading: boolean;
+  1869→  canManage: boolean;
+  1870→}) {
+  1871→  const [expanded, setExpanded] = useState<string | null>(null);
+  1872→
+  1873→  return (
+  1874→    <CardSection
+  1875→      title="SEO Audits"
+  1876→      description="Profile strength, missing items & recommendations per location"
+  1877→      action={
+  1878→        canManage && (
+  1879→          <Button size="sm" variant="outline" onClick={() => toast.success("Audit queued")}>
+  1880→            <ClipboardList className="size-3.5 mr-1.5" /> Run Audit
+  1881→          </Button>
+  1882→        )
+  1883→      }
+  1884→    >
+  1885→      {isLoading ? (
+  1886→        <Skeleton className="h-64 w-full" />
+  1887→      ) : audits.length === 0 ? (
+  1888→        <div className="py-12 text-center text-sm text-muted-foreground">
+  1889→          <ClipboardList className="size-8 mx-auto mb-2 text-muted-foreground/40" />
+  1890→          No SEO audits recorded yet.
+  1891→        </div>
+  1892→      ) : (
+  1893→        <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">
+  1894→          <Table>
+  1895→            <TableHeader>
+  1896→              <TableRow className="bg-muted/30">
+  1897→                <TableHead className="w-8" />
+  1898→                <TableHead className="min-w-[180px]">Location</TableHead>
+  1899→                <TableHead className="text-right">Audit Score</TableHead>
+  1900→                <TableHead className="text-right min-w-[140px]">Profile Strength</TableHead>
+  1901→                <TableHead className="text-center">Missing Photos</TableHead>
+  1902→                <TableHead className="text-center">Missing Services</TableHead>
+  1903→                <TableHead className="text-center">Recommendations</TableHead>
+  1904→                <TableHead className="text-right">Audited</TableHead>
+  1905→              </TableRow>
+  1906→            </TableHeader>
+  1907→            <TableBody>
+  1908→              {audits.map((a) => {
+  1909→                const isExpanded = expanded === a.id;
+  1910→                const hasDetails = a.recommendations.length > 0 || a.missingCategories.length > 0;
+  1911→                return (
+  1912→                  <Fragment key={a.id}>
+  1913→                    <TableRow
+  1914→                      className={cn("cursor-pointer hover:bg-accent/30", isExpanded && "bg-muted/30")}
+  1915→                      onClick={() => hasDetails && setExpanded(isExpanded ? null : a.id)}
+  1916→                    >
+  1917→                      <TableCell>
+  1918→                        {hasDetails && (
+  1919→                          isExpanded ? <ChevronDown className="size-3.5 text-muted-foreground" /> : <ChevronRight className="size-3.5 text-muted-foreground" />
+  1920→                        )}
+  1921→                      </TableCell>
+  1922→                      <TableCell className="font-medium">
+  1923→                        <div className="flex items-center gap-2">
+  1924→                          <Building2 className="size-3.5 text-muted-foreground shrink-0" />
+  1925→                          <div>
+  1926→                            <div>{a.locationName}</div>
+  1927→                            {a.locationCity && <div className="text-[10px] text-muted-foreground">{a.locationCity}</div>}
+  1928→                          </div>
+  1929→                        </div>
+  1930→                      </TableCell>
+  1931→                      <TableCell className="text-right">
+  1932→                        <span className={cn("inline-flex items-center justify-end font-bold tabular-nums rounded px-1.5 py-0.5", scoreBg(a.auditScore))}>
+  1933→                          {a.auditScore}
+  1934→                        </span>
+  1935→                      </TableCell>
+  1936→                      <TableCell className="text-right">
+  1937→                        <div className="flex items-center justify-end gap-1.5">
+  1938→                          <Progress value={a.profileStrength} className="w-14 h-2" />
+  1939→                          <span className="text-xs tabular-nums w-9">{a.profileStrength}%</span>
+  1940→                        </div>
+  1941→                      </TableCell>
+  1942→                      <TableCell className="text-center">
+  1943→                        {a.missingPhotos > 0 ? (
+  1944→                          <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-400 border-amber-500/30">{a.missingPhotos}</Badge>
+  1945→                        ) : <CheckCircle2 className="size-3.5 text-emerald-500 mx-auto" />}
+  1946→                      </TableCell>
+  1947→                      <TableCell className="text-center">
+  1948→                        {a.missingServices > 0 ? (
+  1949→                          <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-400 border-amber-500/30">{a.missingServices}</Badge>
+  1950→                        ) : <CheckCircle2 className="size-3.5 text-emerald-500 mx-auto" />}
+  1951→                      </TableCell>
+  1952→                      <TableCell className="text-center">
+  1953→                        {a.recommendations.length > 0 ? (
+  1954→                          <Badge variant="outline" className="text-[10px]">{a.recommendations.length}</Badge>
+  1955→                        ) : <CheckCircle2 className="size-3.5 text-emerald-500 mx-auto" />}
+  1956→                      </TableCell>
+  1957→                      <TableCell className="text-right text-xs text-muted-foreground">
+  1958→                        {format(parseISO(a.auditedAt), "dd MMM yyyy")}
+  1959→                      </TableCell>
+  1960→                    </TableRow>
+  1961→                    {isExpanded && hasDetails && (
+  1962→                      <TableRow className="bg-muted/20 hover:bg-muted/20">
+  1963→                        <TableCell colSpan={8} className="p-3">
+  1964→                          <div className="rounded-md border bg-card p-3 space-y-3">
+  1965→                            {a.missingCategories.length > 0 && (
+  1966→                              <div>
+  1967→                                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+  1968→                                  Missing Categories
+  1969→                                </div>
+  1970→                                <div className="flex flex-wrap gap-1.5">
+  1971→                                  {a.missingCategories.map((cat, i) => (
+  1972→                                    <Badge key={i} variant="outline" className="text-[10px] text-amber-700 dark:text-amber-400 border-amber-500/30">{cat}</Badge>
+  1973→                                  ))}
+  1974→                                </div>
+  1975→                              </div>
+  1976→                            )}
+  1977→                            {a.recommendations.length > 0 && (
+  1978→                              <div>
+  1979→                                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+  1980→                                  Recommendations
+  1981→                                </div>
+  1982→                                <ul className="space-y-1.5">
+  1983→                                  {a.recommendations.map((rec, i) => (
+  1984→                                    <li key={i} className="text-xs flex items-start gap-2">
+  1985→                                      <span className="size-4 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5">
+  1986→                                        {i + 1}
+  1987→                                      </span>
+  1988→                                      <span>{rec}</span>
+  1989→                                    </li>
+  1990→                                  ))}
+  1991→                                </ul>
+  1992→                              </div>
+  1993→                            )}
+  1994→                          </div>
+  1995→                        </TableCell>
+  1996→                      </TableRow>
+  1997→                    )}
+  1998→                  </Fragment>
+  1999→                );
+  2000→              })}
+
+[showing lines 1-2000 of 2182; use offset=2001 with limit to continue reading]
