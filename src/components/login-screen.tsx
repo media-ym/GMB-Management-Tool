@@ -52,16 +52,16 @@ export function LoginScreen() {
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
       {/* Brand panel */}
-      <div className="lg:w-1/2 bg-sidebar text-sidebar-foreground flex flex-col justify-between p-8 lg:p-12 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 20% 30%, var(--sidebar-primary) 0, transparent 40%), radial-gradient(circle at 80% 70%, var(--chart-2) 0, transparent 40%)" }} />
+      <div className="lg:w-1/2 bg-gradient-to-br from-emerald-600 via-emerald-700 to-emerald-800 text-white flex flex-col justify-between p-8 lg:p-12 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(circle at 20% 30%, white 0, transparent 40%), radial-gradient(circle at 80% 70%, #F59E0B 0, transparent 40%)" }} />
         <div className="relative">
           <div className="flex items-center gap-3">
-            <div className="size-11 rounded-xl bg-sidebar-primary flex items-center justify-center text-sidebar-primary-foreground shadow-lg">
+            <div className="size-11 rounded-xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-lg">
               <Building2 className="size-6" />
             </div>
             <div>
               <div className="font-semibold text-lg">MyFNG</div>
-              <div className="text-xs text-sidebar-foreground/70">Local AI Manager</div>
+              <div className="text-xs text-white/70">Local AI Manager</div>
             </div>
           </div>
         </div>
@@ -70,7 +70,7 @@ export function LoginScreen() {
           <h1 className="text-3xl lg:text-4xl font-bold leading-tight">
             One dashboard for every MyFNG Google Business Profile.
           </h1>
-          <p className="text-sidebar-foreground/70">
+          <p className="text-white/70">
             Centralize reviews, posts, local SEO, and analytics across all 15+ MyFNG locations. Powered by MiSA AI for faster, smarter operations.
           </p>
           <div className="grid grid-cols-2 gap-3 pt-4">
@@ -80,15 +80,15 @@ export function LoginScreen() {
               { icon: "⌖", label: "Local SEO Tracking" },
               { icon: "✦", label: "MiSA AI Assistant" },
             ].map((f) => (
-              <div key={f.label} className="flex items-center gap-2 text-sm text-sidebar-foreground/80">
-                <span className="text-sidebar-primary font-bold">{f.icon}</span>
+              <div key={f.label} className="flex items-center gap-2 text-sm text-white/80">
+                <span className="text-amber-300 font-bold">{f.icon}</span>
                 {f.label}
               </div>
             ))}
           </div>
         </div>
 
-        <div className="relative text-xs text-sidebar-foreground/50">
+        <div className="relative text-xs text-white/40">
           Internal Enterprise Platform · Authorized MyFNG personnel only · v1.0
         </div>
       </div>

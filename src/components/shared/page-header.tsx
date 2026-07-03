@@ -11,16 +11,16 @@ export function PageHeader({
   icon?: React.ComponentType<{ className?: string }>;
 }) {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
       <div className="flex items-start gap-3">
         {Icon && (
-          <div className="size-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+          <div className="size-11 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
             <Icon className="size-5" />
           </div>
         )}
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">{title}</h1>
-          {description && <p className="text-sm text-muted-foreground mt-0.5">{description}</p>}
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">{title}</h1>
+          {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}
         </div>
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
@@ -29,24 +29,25 @@ export function PageHeader({
 }
 
 export function CardSection({
-  title, description, action, children, className,
+  title, description, action, children, className, noPadding,
 }: {
   title: string;
   description?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  noPadding?: boolean;
 }) {
   return (
-    <div className={cn("rounded-xl border bg-card", className)}>
-      <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3 border-b">
-        <div>
-          <h3 className="text-sm font-semibold">{title}</h3>
+    <div className={cn("kt-card", className)}>
+      <div className="kt-card-header">
+        <div className="min-w-0">
+          <h3 className="kt-card-title">{title}</h3>
           {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
         </div>
-        {action}
+        {action && <div className="shrink-0">{action}</div>}
       </div>
-      <div className="p-4 sm:p-5">{children}</div>
+      <div className={cn(!noPadding && "kt-card-body")}>{children}</div>
     </div>
   );
 }

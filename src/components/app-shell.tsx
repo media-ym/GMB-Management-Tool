@@ -113,9 +113,9 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Top bar */}
-      <header className="sticky top-0 z-40 h-14 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="h-full flex items-center gap-2 px-3 sm:px-4">
+      {/* Top bar — Ceres style: white, subtle shadow, spacious */}
+      <header className="sticky top-0 z-40 h-16 bg-card border-b border-border/60 shadow-sm">
+        <div className="h-full flex items-center gap-2 px-4 sm:px-6">
           {/* Mobile menu */}
           <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
             <SheetTrigger asChild>
@@ -146,7 +146,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
           {/* Search trigger */}
           <button
             onClick={() => setCommandOpen(true)}
-            className="hidden md:flex items-center gap-2 ml-2 h-9 px-3 rounded-md border bg-muted/40 text-sm text-muted-foreground hover:bg-muted transition w-72"
+            className="hidden md:flex items-center gap-2 ml-2 h-9 px-3.5 rounded-lg border border-border/60 bg-muted/30 text-sm text-muted-foreground hover:bg-muted/60 hover:border-border transition w-80"
           >
             <SearchIcon className="size-4" />
             <span>Search or jump to…</span>
@@ -209,8 +209,8 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
       </header>
 
       <div className="flex-1 flex">
-        {/* Desktop sidebar */}
-        <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+        {/* Desktop sidebar — Ceres style: white with subtle border */}
+        <aside className="hidden lg:flex w-[260px] shrink-0 flex-col border-r border-border/60 bg-sidebar">
           <SidebarContent
             user={user}
             view={view}
@@ -222,25 +222,25 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
         </aside>
 
         {/* Main content */}
-        <main className="flex-1 min-w-0">
+        <main className="flex-1 min-w-0 kt-fade-in">
           {children}
         </main>
       </div>
 
-      {/* Sticky footer */}
-      <footer className="mt-auto border-t bg-background">
-        <div className="px-4 sm:px-6 py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
+      {/* Footer — Ceres style: subtle, clean */}
+      <footer className="mt-auto border-t border-border/60 bg-card">
+        <div className="px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
             <span className="font-medium text-foreground">MyFNG Local AI Manager</span>
-            <span>v1.0</span>
-            <span className="hidden sm:inline">·</span>
+            <span className="text-muted-foreground/60">v1.0</span>
+            <span className="hidden sm:inline text-muted-foreground/40">·</span>
             <span className="hidden sm:inline">Internal Enterprise Platform</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1.5">
-              <Sparkles className="size-3 text-amber-500" /> MiSA AI
+              <Sparkles className="size-3 text-amber-500" /> MiSA AI Ready
             </span>
-            <span>·</span>
+            <span className="text-muted-foreground/40">·</span>
             <span>Authorized MyFNG personnel only</span>
           </div>
         </div>
@@ -289,20 +289,20 @@ function SidebarContent({
   onSignOut: () => void;
 }) {
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-sidebar">
       {/* Brand */}
-      <div className="h-14 flex items-center gap-2.5 px-4 border-b border-sidebar-border">
-        <div className="size-9 rounded-lg bg-sidebar-primary flex items-center justify-center text-sidebar-primary-foreground shadow-sm">
+      <div className="h-16 flex items-center gap-2.5 px-5 border-b border-sidebar-border">
+        <div className="size-9 rounded-xl bg-primary flex items-center justify-center text-primary-foreground shadow-sm">
           <Building2 className="size-5" />
         </div>
         <div className="min-w-0">
-          <div className="font-semibold leading-tight">MyFNG</div>
-          <div className="text-[11px] text-sidebar-foreground/60 leading-tight">Local AI Manager</div>
+          <div className="font-semibold leading-tight text-sidebar-foreground">MyFNG</div>
+          <div className="text-[11px] text-muted-foreground leading-tight">Local AI Manager</div>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto scroll-area p-3 space-y-1">
+      <nav className="flex-1 overflow-y-auto scroll-area px-3 py-4 space-y-0.5">
         {nav.map((n) => {
           const active = view === n.key;
           return (
@@ -310,14 +310,14 @@ function SidebarContent({
               key={n.key}
               onClick={() => onSelect(n.key)}
               className={cn(
-                "w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition group",
+                "w-full flex items-center gap-2.5 px-3 py-2 text-sm transition group kt-nav-item",
                 active
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-                  : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  ? "kt-nav-active font-semibold"
+                  : "text-sidebar-foreground/70 font-medium",
               )}
             >
-              <n.icon className={cn("size-4 shrink-0", active ? "text-sidebar-primary-foreground" : "text-sidebar-foreground/60 group-hover:text-sidebar-accent-foreground")} />
-              <span className="font-medium">{n.label}</span>
+              <n.icon className={cn("size-[18px] shrink-0", active ? "text-primary-foreground" : "text-muted-foreground group-hover:text-sidebar-accent-foreground")} />
+              <span>{n.label}</span>
             </button>
           );
         })}
@@ -325,17 +325,19 @@ function SidebarContent({
 
       {/* AI promo card */}
       <div className="p-3">
-        <div className="rounded-lg border border-sidebar-border bg-sidebar-accent/40 p-3">
-          <div className="flex items-center gap-2 text-sidebar-foreground">
-            <Sparkles className="size-4 text-amber-400" />
-            <span className="text-sm font-semibold">MiSA AI</span>
+        <div className="rounded-xl bg-gradient-to-br from-amber-500/10 to-amber-500/5 border border-amber-500/20 p-4">
+          <div className="flex items-center gap-2">
+            <div className="size-7 rounded-lg bg-amber-500/15 flex items-center justify-center">
+              <Sparkles className="size-3.5 text-amber-500" />
+            </div>
+            <span className="text-sm font-semibold text-foreground">MiSA AI</span>
           </div>
-          <p className="mt-1 text-[11px] text-sidebar-foreground/60 leading-relaxed">
+          <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
             Draft replies, generate posts, surface locations needing attention.
           </p>
           <button
             onClick={() => onSelect("ai")}
-            className="mt-2 w-full rounded-md bg-sidebar-primary text-sidebar-primary-foreground text-xs font-medium py-1.5 hover:opacity-90 transition"
+            className="mt-2.5 w-full rounded-lg bg-primary text-primary-foreground text-xs font-medium py-2 hover:opacity-90 transition shadow-sm"
           >
             Open MiSA AI
           </button>
@@ -344,17 +346,17 @@ function SidebarContent({
 
       {/* User mini */}
       <div className="p-3 border-t border-sidebar-border">
-        <div className="flex items-center gap-2">
-          <Avatar className="size-8">
-            <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-xs">
+        <div className="flex items-center gap-2.5">
+          <Avatar className="size-9">
+            <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
               {user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase()}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <div className="text-xs font-medium text-sidebar-foreground truncate">{user.name}</div>
-            <div className="text-[10px] text-sidebar-foreground/60 truncate">{roleLabel(user.role)}</div>
+            <div className="text-[10px] text-muted-foreground truncate">{roleLabel(user.role)}</div>
           </div>
-          <Button variant="ghost" size="icon" onClick={onSignOut} className="size-7 text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent">
+          <Button variant="ghost" size="icon" onClick={onSignOut} className="size-7 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent">
             <LogOut className="size-3.5" />
           </Button>
         </div>
