@@ -113,8 +113,8 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Top bar — Ceres style: white, subtle shadow, spacious */}
-      <header className="sticky top-0 z-40 h-16 bg-card border-b border-border/60 shadow-sm">
+      {/* Top bar — blue gradient matching sidebar */}
+      <header className="sticky top-0 z-40 h-16 text-sidebar-foreground" style={{ background: "var(--gradient-header)" }}>
         <div className="h-full flex items-center gap-2 px-4 sm:px-6">
           {/* Mobile menu */}
           <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
@@ -137,30 +137,30 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
 
           {/* Brand (mobile) */}
           <div className="flex items-center gap-2 lg:hidden">
-            <div className="size-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground">
+            <div className="size-8 rounded-lg bg-white/15 flex items-center justify-center text-white">
               <Building2 className="size-4" />
             </div>
-            <span className="font-semibold">MyFNG</span>
+            <span className="font-semibold text-white">MyFNG</span>
           </div>
 
           {/* Search trigger */}
           <button
             onClick={() => setCommandOpen(true)}
-            className="hidden md:flex items-center gap-2 ml-2 h-9 px-3.5 rounded-lg border border-border/60 bg-muted/30 text-sm text-muted-foreground hover:bg-muted/60 hover:border-border transition w-80"
+            className="hidden md:flex items-center gap-2 ml-2 h-9 px-3.5 rounded-lg bg-white/15 text-sm text-white/90 hover:bg-white/25 transition w-80 backdrop-blur"
           >
             <SearchIcon className="size-4" />
             <span>Search or jump to…</span>
-            <kbd className="ml-auto inline-flex items-center gap-0.5 rounded border bg-background px-1 text-[10px] font-mono">
+            <kbd className="ml-auto inline-flex items-center gap-0.5 rounded bg-white/20 px-1.5 text-[10px] font-mono text-white/80">
               <Command className="size-2.5" />K
             </kbd>
           </button>
 
           <div className="ml-auto flex items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={handleSync} className="hidden sm:flex">
+            <Button variant="ghost" size="sm" onClick={handleSync} className="hidden sm:flex text-white/90 hover:bg-white/15 hover:text-white">
               <RefreshCw className="size-4 mr-1.5" /> Sync
             </Button>
 
-            <Button variant="ghost" size="icon" onClick={() => setView("notifications")} aria-label="Notifications" className="relative">
+            <Button variant="ghost" size="icon" onClick={() => setView("notifications")} aria-label="Notifications" className="relative text-white/90 hover:bg-white/15 hover:text-white">
               <Bell className="size-5" />
               {unreadCount > 0 && (
                 <span className="absolute top-1 right-1 size-4 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
@@ -169,21 +169,21 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
               )}
             </Button>
 
-            <Button variant="ghost" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">
+            <Button variant="ghost" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme" className="text-white/90 hover:bg-white/15 hover:text-white">
               {mounted && theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
             </Button>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="h-9 px-1.5 sm:px-2 gap-1.5">
+                <Button variant="ghost" className="h-9 px-1.5 sm:px-2 gap-1.5 text-white/90 hover:bg-white/15 hover:text-white">
                   <Avatar className="size-7">
-                    <AvatarFallback className="bg-primary text-primary-foreground text-xs">{initials(user.name)}</AvatarFallback>
+                    <AvatarFallback className="bg-white/20 text-white text-xs">{initials(user.name)}</AvatarFallback>
                   </Avatar>
                   <div className="hidden sm:block text-left leading-tight">
-                    <div className="text-xs font-medium">{user.name}</div>
-                    <div className="text-[10px] text-muted-foreground">{roleLabel(user.role)}</div>
+                    <div className="text-xs font-medium text-white">{user.name}</div>
+                    <div className="text-[10px] text-white/60">{roleLabel(user.role)}</div>
                   </div>
-                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                  <ChevronDown className="size-3.5 text-white/60" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -209,8 +209,8 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
       </header>
 
       <div className="flex-1 flex">
-        {/* Desktop sidebar — Ceres style: white with subtle border */}
-        <aside className="hidden lg:flex w-[260px] shrink-0 flex-col border-r border-border/60 bg-sidebar">
+        {/* Desktop sidebar — blue gradient */}
+        <aside className="hidden lg:flex w-[260px] shrink-0 flex-col text-sidebar-foreground" style={{ background: "var(--gradient-sidebar)" }}>
           <SidebarContent
             user={user}
             view={view}
@@ -227,7 +227,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
         </main>
       </div>
 
-      {/* Footer — Ceres style: subtle, clean */}
+      {/* Footer — subtle, clean */}
       <footer className="mt-auto border-t border-border/60 bg-card">
         <div className="px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
@@ -289,15 +289,15 @@ function SidebarContent({
   onSignOut: () => void;
 }) {
   return (
-    <div className="flex flex-col h-full bg-sidebar">
+    <div className="flex flex-col h-full">
       {/* Brand */}
-      <div className="h-16 flex items-center gap-2.5 px-5 border-b border-sidebar-border">
-        <div className="size-9 rounded-xl bg-primary flex items-center justify-center text-primary-foreground shadow-sm">
+      <div className="h-16 flex items-center gap-2.5 px-5 border-b border-white/10">
+        <div className="size-9 rounded-xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-sm">
           <Building2 className="size-5" />
         </div>
         <div className="min-w-0">
-          <div className="font-semibold leading-tight text-sidebar-foreground">MyFNG</div>
-          <div className="text-[11px] text-muted-foreground leading-tight">Local AI Manager</div>
+          <div className="font-semibold leading-tight text-white">MyFNG</div>
+          <div className="text-[11px] text-white/60 leading-tight">Local AI Manager</div>
         </div>
       </div>
 
@@ -313,10 +313,10 @@ function SidebarContent({
                 "w-full flex items-center gap-2.5 px-3 py-2 text-sm transition group kt-nav-item",
                 active
                   ? "kt-nav-active font-semibold"
-                  : "text-sidebar-foreground/70 font-medium",
+                  : "text-white/70 font-medium",
               )}
             >
-              <n.icon className={cn("size-[18px] shrink-0", active ? "text-primary-foreground" : "text-muted-foreground group-hover:text-sidebar-accent-foreground")} />
+              <n.icon className={cn("size-[18px] shrink-0", active ? "text-white" : "text-white/50 group-hover:text-white")} />
               <span>{n.label}</span>
             </button>
           );
@@ -325,19 +325,19 @@ function SidebarContent({
 
       {/* AI promo card */}
       <div className="p-3">
-        <div className="rounded-xl bg-gradient-to-br from-amber-500/10 to-amber-500/5 border border-amber-500/20 p-4">
+        <div className="rounded-xl bg-white/10 backdrop-blur border border-white/15 p-4">
           <div className="flex items-center gap-2">
-            <div className="size-7 rounded-lg bg-amber-500/15 flex items-center justify-center">
-              <Sparkles className="size-3.5 text-amber-500" />
+            <div className="size-7 rounded-lg bg-amber-400/20 flex items-center justify-center">
+              <Sparkles className="size-3.5 text-amber-300" />
             </div>
-            <span className="text-sm font-semibold text-foreground">MiSA AI</span>
+            <span className="text-sm font-semibold text-white">MiSA AI</span>
           </div>
-          <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
+          <p className="mt-2 text-[11px] text-white/60 leading-relaxed">
             Draft replies, generate posts, surface locations needing attention.
           </p>
           <button
             onClick={() => onSelect("ai")}
-            className="mt-2.5 w-full rounded-lg bg-primary text-primary-foreground text-xs font-medium py-2 hover:opacity-90 transition shadow-sm"
+            className="mt-2.5 w-full rounded-lg bg-white text-sidebar text-xs font-medium py-2 hover:bg-white/90 transition shadow-sm"
           >
             Open MiSA AI
           </button>
@@ -345,18 +345,18 @@ function SidebarContent({
       </div>
 
       {/* User mini */}
-      <div className="p-3 border-t border-sidebar-border">
+      <div className="p-3 border-t border-white/10">
         <div className="flex items-center gap-2.5">
           <Avatar className="size-9">
-            <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
+            <AvatarFallback className="bg-white/20 text-white text-xs font-semibold">
               {user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase()}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-medium text-sidebar-foreground truncate">{user.name}</div>
-            <div className="text-[10px] text-muted-foreground truncate">{roleLabel(user.role)}</div>
+            <div className="text-xs font-medium text-white truncate">{user.name}</div>
+            <div className="text-[10px] text-white/50 truncate">{roleLabel(user.role)}</div>
           </div>
-          <Button variant="ghost" size="icon" onClick={onSignOut} className="size-7 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent">
+          <Button variant="ghost" size="icon" onClick={onSignOut} className="size-7 text-white/50 hover:text-white hover:bg-white/10">
             <LogOut className="size-3.5" />
           </Button>
         </div>
