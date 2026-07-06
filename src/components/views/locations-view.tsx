@@ -2370,125 +2370,223 @@ function DetailRow({
   );
 }
 
-// ═══ Add Location Dialog ═══════════════════════════════════════════════════
+// ═══ Import from Google Dialog ═══════════════════════════════════════════
 function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const qc = useQueryClient();
-  const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [form, setForm] = useState({
-    name: "", locationCode: "", city: "", address: "", phone: "", email: "", website: "", pincode: "", latitude: "", longitude: "",
-  });
+  const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [gmbLocations, setGmbLocations] = useState<any[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [connected, setConnected] = useState(true);
+  const [mode, setMode] = useState<string>("mock");
+  const [fetched, setFetched] = useState(false);
 
-  function set<K extends keyof typeof form>(key: K, value: string) {
-    setForm((f) => ({ ...f, [key]: value }));
-    setErrors((e) => ({ ...e, [key]: "" }));
+  // Fetch available GMB locations when dialog opens
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    setFetched(false);
+    setSelected(new Set());
+    fetch("/api/google/available-locations")
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.success) {
+          setGmbLocations(json.data.locations || []);
+          setConnected(json.data.connected);
+          setMode(json.data.mode || "mock");
+        } else {
+          toast.error(json.message || "Failed to fetch GMB locations");
+          setGmbLocations([]);
+          setConnected(false);
+        }
+      })
+      .catch((e) => {
+        toast.error("Failed to fetch GMB locations");
+        setConnected(false);
+      })
+      .finally(() => {
+        setLoading(false);
+        setFetched(true);
+      });
+  }, [open]);
+
+  function toggleSelect(googleLocationId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(googleLocationId)) next.delete(googleLocationId);
+      else next.add(googleLocationId);
+      return next;
+    });
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const errs: Record<string, string> = {};
-    if (!form.name.trim()) errs.name = "Location name is required";
-    if (!form.city.trim()) errs.city = "City is required";
-    if (!form.address.trim()) errs.address = "Address is required";
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+  function selectAll() {
+    setSelected(new Set(gmbLocations.map((l) => l.googleLocationId)));
+  }
+  function deselectAll() {
+    setSelected(new Set());
+  }
 
-    setSaving(true);
+  async function handleImport() {
+    if (selected.size === 0) {
+      toast.error("Select at least one location to import");
+      return;
+    }
+    setImporting(true);
     try {
-      const res = await fetch("/api/locations", {
+      const toImport = gmbLocations.filter((l) => selected.has(l.googleLocationId));
+      const res = await fetch("/api/locations/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ locations: toImport }),
       });
       const json = await res.json();
-      if (!json.success) {
-        toast.error(json.message || "Failed to create location");
-        return;
+      if (json.success) {
+        toast.success(json.message || `${json.data.count} location(s) imported from Google Business Profile`);
+        qc.invalidateQueries({ queryKey: ["locations"] });
+        onOpenChange(false);
+      } else {
+        toast.error(json.message || "Import failed");
       }
-      toast.success(json.message || `Location "${form.name}" created successfully`);
-      qc.invalidateQueries({ queryKey: ["locations"] });
-      setForm({ name: "", locationCode: "", city: "", address: "", phone: "", email: "", website: "", pincode: "", latitude: "", longitude: "" });
-      onOpenChange(false);
     } catch (e: any) {
-      toast.error(e.message || "Failed to create location");
+      toast.error(e.message || "Import failed");
     } finally {
-      setSaving(false);
+      setImporting(false);
     }
+  }
+
+  // ─── Not connected state ────────────────────────────────────────────────
+  if (fetched && !connected) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="size-5 text-primary" /> Connect Google Business Profile
+            </DialogTitle>
+            <DialogDescription>
+              To add locations, you need to connect your Google Business Profile account first.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-6 text-center space-y-4">
+            <div className="size-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
+              <Building2 className="size-8 text-primary" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Google account not connected</p>
+              <p className="text-xs text-muted-foreground">
+                Click the button below to authenticate with Google and import your Business Profile locations.
+              </p>
+            </div>
+            <Button onClick={() => { onOpenChange(false); window.location.href = "/api/google/callback?mock=true"; }}>
+              <Building2 className="size-4 mr-1.5" /> Connect Google Business Profile
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto scroll-area">
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto scroll-area">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <MapPin className="size-5 text-primary" /> Add New Location
+            <Building2 className="size-5 text-primary" /> Import Locations from Google
           </DialogTitle>
           <DialogDescription>
-            Create a new MyFNG location. Default business hours, categories, services, and attributes will be added automatically.
+            {mode === "mock"
+              ? "Demo mode — showing sample GMB locations. Configure GOOGLE_CLIENT_ID in .env to fetch real profiles."
+              : "Select Google Business Profile locations to import into MyFNG Local AI Manager."}
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="loc-name" className="text-xs font-medium">Location Name *</Label>
-              <Input id="loc-name" placeholder="e.g. MyFNG Nagpur" value={form.name} onChange={(e) => set("name", e.target.value)} />
-              {errors.name && <p className="text-xs text-rose-500">{errors.name}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="loc-code" className="text-xs font-medium">Location Code</Label>
-              <Input id="loc-code" placeholder="e.g. MYFNG-NGP" value={form.locationCode} onChange={(e) => set("locationCode", e.target.value)} />
-            </div>
+
+        {/* Loading state */}
+        {loading && (
+          <div className="py-12 text-center space-y-3">
+            <Loader2 className="size-8 mx-auto animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Fetching your Google Business Profile locations…</p>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="loc-city" className="text-xs font-medium">City *</Label>
-              <Input id="loc-city" placeholder="e.g. Nagpur" value={form.city} onChange={(e) => set("city", e.target.value)} />
-              {errors.city && <p className="text-xs text-rose-500">{errors.city}</p>}
+        )}
+
+        {/* Locations list */}
+        {!loading && fetched && gmbLocations.length > 0 && (
+          <>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm text-muted-foreground">
+                {gmbLocations.length} location(s) available · {selected.size} selected
+              </span>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={selectAll} className="text-xs h-7">Select All</Button>
+                <Button variant="ghost" size="sm" onClick={deselectAll} className="text-xs h-7">Deselect All</Button>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="loc-pincode" className="text-xs font-medium">Pincode</Label>
-              <Input id="loc-pincode" placeholder="e.g. 440001" value={form.pincode} onChange={(e) => set("pincode", e.target.value)} />
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto scroll-area pr-1">
+              {gmbLocations.map((loc) => {
+                const isSelected = selected.has(loc.googleLocationId);
+                return (
+                  <button
+                    key={loc.googleLocationId}
+                    onClick={() => toggleSelect(loc.googleLocationId)}
+                    className={cn(
+                      "w-full text-left rounded-lg border p-3 transition flex items-start gap-3",
+                      isSelected ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30",
+                    )}
+                  >
+                    <Checkbox checked={isSelected} className="mt-1" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold truncate">{loc.name}</span>
+                        {loc.verificationState === "verified" && (
+                          <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20 shrink-0">Verified</Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{loc.address || loc.city}</p>
+                      <div className="flex items-center gap-3 mt-1.5 text-[11px] text-muted-foreground">
+                        {loc.city && <span>{loc.city}</span>}
+                        {loc.phone && <span>· {loc.phone}</span>}
+                        {loc.totalReviews > 0 && (
+                          <span className="flex items-center gap-0.5">
+                            · <Star className="size-3 fill-amber-400 text-amber-400" /> {loc.averageRating} ({loc.totalReviews})
+                          </span>
+                        )}
+                        {loc.primaryCategory && <span>· {loc.primaryCategory}</span>}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="loc-address" className="text-xs font-medium">Address *</Label>
-            <Textarea id="loc-address" placeholder="Full address of the location" value={form.address} onChange={(e) => set("address", e.target.value)} rows={2} />
-            {errors.address && <p className="text-xs text-rose-500">{errors.address}</p>}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="loc-phone" className="text-xs font-medium">Phone</Label>
-              <Input id="loc-phone" placeholder="+91 XXXXX XXXXX" value={form.phone} onChange={(e) => set("phone", e.target.value)} />
+          </>
+        )}
+
+        {/* Empty state — all already imported */}
+        {!loading && fetched && gmbLocations.length === 0 && connected && (
+          <div className="py-12 text-center space-y-3">
+            <div className="size-14 mx-auto rounded-full bg-emerald-500/10 flex items-center justify-center">
+              <Check className="size-7 text-emerald-500" />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="loc-email" className="text-xs font-medium">Email</Label>
-              <Input id="loc-email" type="email" placeholder="city@myfng.in" value={form.email} onChange={(e) => set("email", e.target.value)} />
-            </div>
+            <p className="text-sm font-medium">All locations already imported</p>
+            <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+              All your Google Business Profile locations are already connected to MyFNG Local AI Manager.
+              New locations will appear here automatically when you add them to your Google Business Profile.
+            </p>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="loc-website" className="text-xs font-medium">Website</Label>
-            <Input id="loc-website" placeholder="https://myfng.in" value={form.website} onChange={(e) => set("website", e.target.value)} />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="loc-lat" className="text-xs font-medium">Latitude</Label>
-              <Input id="loc-lat" placeholder="e.g. 21.1458" value={form.latitude} onChange={(e) => set("latitude", e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="loc-lng" className="text-xs font-medium">Longitude</Label>
-              <Input id="loc-lng" placeholder="e.g. 79.0882" value={form.longitude} onChange={(e) => set("longitude", e.target.value)} />
-            </div>
-          </div>
-          <div className="rounded-lg bg-primary/5 border border-primary/15 p-3 text-xs text-muted-foreground flex items-start gap-2">
-            <MapPin className="size-4 text-primary shrink-0 mt-0.5" />
-            <span>After creation, this location will have default business hours (Mon–Sat 10 AM–8 PM, Sun 11 AM–6 PM), 3 categories, 4 services, and 4 attributes. You can edit these from the location detail page.</span>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> Creating…</> : <><Plus className="size-4 mr-1.5" /> Create Location</>}
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={importing}>Cancel</Button>
+          {gmbLocations.length > 0 && (
+            <Button onClick={handleImport} disabled={importing || selected.size === 0}>
+              {importing
+                ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> Importing…</>
+                : <><Plus className="size-4 mr-1.5" /> Import {selected.size > 0 ? `(${selected.size})` : ""} Location{selected.size !== 1 ? "s" : ""}</>
+              }
             </Button>
-          </DialogFooter>
-        </form>
+          )}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

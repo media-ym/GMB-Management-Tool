@@ -117,7 +117,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   };
 }
 
-async function getValidAccessToken(): Promise<string | null> {
+export async function getValidAccessToken(): Promise<string | null> {
   const account = await db.googleAccount.findFirst();
   if (!account) return null;
 
