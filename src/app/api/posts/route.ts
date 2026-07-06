@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { createGooglePost, getValidAccessToken } from "@/lib/google-service";
 import { aiGeneratePost } from "@/lib/ai";
 import type { PostWithLocation } from "@/lib/types";
 
@@ -73,17 +74,42 @@ export async function POST(req: NextRequest) {
   const scoped = scopeLocationIds(user, locationId);
   if (scoped && !scoped.includes(locationId)) return forbidden("Location out of scope");
 
+  // ─── If publishing: push to REAL Google Business Profile ───────────────
+  let googlePostId: string | null = null;
+  if (status === "published") {
+    const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
+    if (gbp) {
+      const accessToken = await getValidAccessToken();
+      if (accessToken) {
+        try {
+          const gPost = await createGooglePost(accessToken, gbp.googleLocationId, {
+            languageCode: "en",
+            summary: content,
+            topicType: type === "offer" ? "OFFER" : type === "event" ? "EVENT" : "STANDARD",
+            callToAction: ctaType ? { actionType: ctaType.toUpperCase(), url: ctaUrl || undefined } : undefined,
+            ...(title ? { title } : {}),
+          });
+          googlePostId = gPost.name || null;
+        } catch (e: any) {
+          await logAudit({ userId: user.id, userName: user.name, action: "post.google_failed", entity: "post", newValue: { locationId, error: e.message }, ip: req.headers.get("x-forwarded-for") ?? undefined });
+          return fail(`Failed to publish to Google: ${e.message}`, 500);
+        }
+      }
+    }
+  }
+
   const post = await db.post.create({
     data: {
       locationId, type, title, content, ctaType, ctaUrl,
       status,
       source: body.source === "ai" ? "ai" : "manual",
       authorId: user.id,
+      googlePostId,
       scheduledAt: scheduledAt ? new Date(scheduledAt) : (status === "scheduled" ? new Date(Date.now() + 86400000) : null),
       publishedAt: status === "published" ? new Date() : null,
     },
   });
 
-  await logAudit({ userId: user.id, userName: user.name, action: "post.create", entity: "post", entityId: post.id, newValue: { locationId, type, title, status }, ip: req.headers.get("x-forwarded-for") ?? undefined });
-  return ok({ id: post.id, status: post.status }, status === "published" ? "Post published to Google Business Profile" : "Post saved");
+  await logAudit({ userId: user.id, userName: user.name, action: "post.create", entity: "post", entityId: post.id, newValue: { locationId, type, title, status, googlePostId }, ip: req.headers.get("x-forwarded-for") ?? undefined });
+  return ok({ id: post.id, status: post.status, googlePostId }, status === "published" ? "Post published to Google Business Profile" : "Post saved");
 }

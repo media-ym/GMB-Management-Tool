@@ -1692,3 +1692,28 @@ Work Log:
 Stage Summary:
 - Login illustration replaced with car repair scene: mechanic in green overalls fixing a car with open hood, spinning wheels, toolbox, oil pan, sparkles.
 - All other content unchanged (form, demo accounts, register page).
+
+---
+Task ID: 28-real-google-posts
+Agent: main (orchestrator)
+Task: Fix Google Posts to publish to REAL selected GMB profile.
+
+Work Log:
+- Updated POST /api/posts (create route):
+  * When status === "published": finds the GoogleBusinessProfile linked to selected locationId
+  * Gets valid access token from Google OAuth
+  * Calls createGooglePost() to push post to REAL Google Business Profile API
+  * Stores returned googlePostId in DB
+  * If Google API fails: returns error, post not created
+  * Post data sent to Google: languageCode, summary (content), topicType (OFFER/EVENT/STANDARD), callToAction (actionType + url), title
+- Updated PATCH /api/posts/[id] (publish route):
+  * When changing status to "published" from draft/scheduled: same real Google API call
+  * Includes location + googleProfiles relation in query
+  * Stores googlePostId on successful publish
+- Both routes import createGooglePost + getValidAccessToken from google-service.ts
+- Lint: 0 errors, 0 warnings.
+
+Stage Summary:
+- When user creates a post and selects "Publish Now" → post goes to the REAL selected GMB profile via Google Business Profile API.
+- When user changes a draft to "Published" → same real publish to Google.
+- Flow: Select location → Create post → Publish → REAL Google Business Profile API call → post appears on Google.

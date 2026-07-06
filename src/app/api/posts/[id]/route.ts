@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { createGooglePost, getValidAccessToken } from "@/lib/google-service";
 
 export const dynamic = "force-dynamic";
 
@@ -14,15 +15,36 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
-  const post = await db.post.findUnique({ where: { id } });
+  const post = await db.post.findUnique({ where: { id }, include: { location: { include: { googleProfiles: true } } } });
   if (!post) return notFound("Post not found");
 
   const data: any = {};
-  if (body.status) {
-    data.status = body.status;
-    if (body.status === "published") data.publishedAt = new Date();
-    if (body.status === "scheduled" && body.scheduledAt) data.scheduledAt = new Date(body.scheduledAt);
+
+  // ─── If publishing: push to REAL Google Business Profile ───────────────
+  if (body.status === "published" && post.status !== "published") {
+    const gbp = post.location?.googleProfiles?.[0];
+    if (gbp) {
+      const accessToken = await getValidAccessToken();
+      if (accessToken) {
+        try {
+          const gPost = await createGooglePost(accessToken, gbp.googleLocationId, {
+            languageCode: "en",
+            summary: post.content,
+            topicType: post.type === "offer" ? "OFFER" : post.type === "event" ? "EVENT" : "STANDARD",
+            callToAction: post.ctaType ? { actionType: post.ctaType.toUpperCase(), url: post.ctaUrl || undefined } : undefined,
+            ...(post.title ? { title: post.title } : {}),
+          });
+          data.googlePostId = gPost.name || null;
+        } catch (e: any) {
+          return fail(`Failed to publish to Google: ${e.message}`, 500);
+        }
+      }
+    }
+    data.publishedAt = new Date();
   }
+
+  if (body.status) data.status = body.status;
+  if (body.status === "scheduled" && body.scheduledAt) data.scheduledAt = new Date(body.scheduledAt);
   if (body.title) data.title = body.title;
   if (body.content) data.content = body.content;
   if (body.ctaType) data.ctaType = body.ctaType;
@@ -30,7 +52,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const updated = await db.post.update({ where: { id }, data });
   await logAudit({ userId: user.id, userName: user.name, action: `post.${body.status ?? "update"}`, entity: "post", entityId: id, newValue: data, ip: req.headers.get("x-forwarded-for") ?? undefined });
-  return ok({ id: updated.id, status: updated.status }, `Post ${body.status ?? "updated"}`);
+  return ok({ id: updated.id, status: updated.status, googlePostId: updated.googlePostId }, `Post ${body.status ?? "updated"}`);
 }
 
 // DELETE /api/posts/[id]
