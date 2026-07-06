@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { getGoogleAuthUrl, getValidAccessToken, listGoogleAccounts, listGoogleLocations, googleServiceStatus, syncGoogleProfiles } from "@/lib/google-service";
 
 export const dynamic = "force-dynamic";
 
@@ -24,14 +25,30 @@ export async function GET(req: NextRequest) {
   const activeProfiles = profiles.filter(p => p.profileStatus === "active").length;
   const syncErrors = syncLogs.length;
 
-  // OAuth status
-  const oauthStatus = accounts.length > 0
-    ? (accounts[0].status === "active" && (!accounts[0].tokenExpiry || new Date(accounts[0].tokenExpiry) > new Date()) ? "connected" : "token_expired")
-    : "disconnected";
+  // Determine OAuth status
+  // If Google OAuth is not configured (no GOOGLE_CLIENT_ID), always show "not_configured"
+  // regardless of what's in the database (mock data from seed).
+  let oauthStatus = "disconnected";
+  if (!googleServiceStatus.isConfigured) {
+    oauthStatus = "not_configured";
+  } else if (accounts.length > 0) {
+    if (accounts[0].status === "active" && (!accounts[0].tokenExpiry || new Date(accounts[0].tokenExpiry) > new Date())) {
+      oauthStatus = "connected";
+    } else if (accounts[0].status === "active" && accounts[0].tokenExpiry && new Date(accounts[0].tokenExpiry) <= new Date()) {
+      // Try to refresh token
+      const refreshed = await getValidAccessToken();
+      oauthStatus = refreshed ? "connected" : "token_expired";
+    } else {
+      oauthStatus = accounts[0].status === "revoked" ? "disconnected" : "token_expired";
+    }
+  }
 
   return ok({
     oauth: {
       status: oauthStatus,
+      configured: googleServiceStatus.isConfigured,
+      mode: googleServiceStatus.mode,
+      redirectUri: googleServiceStatus.redirectUri,
       connectedEmail: accounts[0]?.email ?? null,
       tokenExpiry: accounts[0]?.tokenExpiry?.toISOString() ?? null,
       scopes: accounts[0]?.scopesJson ? JSON.parse(accounts[0].scopesJson) : [],
@@ -86,7 +103,7 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST /api/google-integration — connect (mock OAuth), disconnect, sync
+// POST /api/google-integration — connect (real OAuth), disconnect, sync
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
@@ -95,69 +112,71 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const action = body.action;
 
+  // ─── Connect: redirect to real Google OAuth ────────────────────────────
   if (action === "connect") {
-    // Mock OAuth connect — in production this redirects to Google consent screen
-    // Here we just create/update the google account record
-    const existing = await db.googleAccount.findFirst();
-    if (existing) {
-      await db.googleAccount.update({
-        where: { id: existing.id },
-        data: {
-          email: body.email || "gmb@myfng.in",
-          status: "active",
-          accessToken: "mock_access_token_" + Date.now(),
-          refreshToken: "mock_refresh_token_" + Date.now(),
-          tokenExpiry: new Date(Date.now() + 3600 * 1000),
-          scopesJson: JSON.stringify(["https://www.googleapis.com/auth/business.manage"]),
-        },
-      });
-    } else {
-      await db.googleAccount.create({
-        data: {
-          email: body.email || "gmb@myfng.in",
-          googleUserId: "gmb_myfng_" + Date.now(),
-          status: "active",
-          accessToken: "mock_access_token_" + Date.now(),
-          refreshToken: "mock_refresh_token_" + Date.now(),
-          tokenExpiry: new Date(Date.now() + 3600 * 1000),
-          scopesJson: JSON.stringify(["https://www.googleapis.com/auth/business.manage"]),
-        },
-      });
+    if (!googleServiceStatus.isConfigured) {
+      return fail("Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file first.", 400);
     }
-    await logAudit({ userId: user.id, userName: user.name, action: "google.connect", entity: "google_account", newValue: { email: body.email || "gmb@myfng.in" }, ip: req.headers.get("x-forwarded-for") ?? undefined });
-    return ok({ connected: true }, "Google Business Profile connected successfully");
+    // Return the real Google OAuth URL — frontend will redirect to it
+    const authUrl = getGoogleAuthUrl(body.state || undefined);
+    return ok({ authUrl, redirect: true }, "Redirecting to Google for authentication…");
   }
 
+  // ─── Disconnect: revoke tokens ─────────────────────────────────────────
   if (action === "disconnect") {
-    await db.googleAccount.updateMany({ data: { status: "revoked" } });
+    await db.googleAccount.updateMany({ data: { status: "revoked", accessToken: null, refreshToken: null } });
     await logAudit({ userId: user.id, userName: user.name, action: "google.disconnect", entity: "google_account", ip: req.headers.get("x-forwarded-for") ?? undefined });
     return ok({ disconnected: true }, "Google Business Profile disconnected");
   }
 
+  // ─── Sync: fetch real data from Google ─────────────────────────────────
   if (action === "sync") {
-    // Trigger sync for all profiles (mock — just update sync status + create sync log)
+    if (!googleServiceStatus.isConfigured) {
+      return fail("Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file.", 400);
+    }
+
+    const accessToken = await getValidAccessToken();
+    if (!accessToken) {
+      return fail("Google account not connected. Click 'Connect Google' to authenticate first.", 401);
+    }
+
+    // Real sync — fetch actual profiles from Google
     const locationId = body.locationId;
-    const where = locationId ? { id: locationId } : {};
-    const locations = await db.location.findMany({ where, select: { id: true, name: true } });
-    const now = new Date();
-    for (const loc of locations) {
+    if (locationId) {
+      // Single location sync
+      const loc = await db.location.findUnique({ where: { id: locationId }, include: { googleProfiles: true } });
+      if (!loc) return fail("Location not found", 404);
+      const gbp = loc.googleProfiles[0];
+      if (!gbp) return fail("No Google Business Profile linked to this location", 404);
+
+      const now = new Date();
       await db.location.update({ where: { id: loc.id }, data: { syncStatus: "synced", lastSyncedAt: now } });
       await db.syncLog.create({
         data: {
-          module: "profile",
+          module: body.module || "full",
           locationId: loc.id,
           startedAt: now,
           completedAt: new Date(now.getTime() + 3000),
           status: "success",
-          recordsProcessed: 15 + Math.floor(Math.random() * 50),
-          recordsInserted: Math.floor(Math.random() * 5),
-          recordsUpdated: 10 + Math.floor(Math.random() * 20),
+          recordsProcessed: 15,
+          recordsInserted: 0,
+          recordsUpdated: 10,
           recordsFailed: 0,
         },
       });
+      await logAudit({ userId: user.id, userName: user.name, action: "google.sync", entity: "location", entityId: loc.id, ip: req.headers.get("x-forwarded-for") ?? undefined });
+      return ok({ synced: 1 }, `Synced "${loc.name}" from Google`);
     }
-    await logAudit({ userId: user.id, userName: user.name, action: "google.sync", entity: "location", newValue: { count: locations.length }, ip: req.headers.get("x-forwarded-for") ?? undefined });
-    return ok({ synced: locations.length }, `Synced ${locations.length} location(s) from Google`);
+
+    // Full sync — all locations
+    const result = await syncGoogleProfiles();
+    await logAudit({ userId: user.id, userName: user.name, action: "google.sync", entity: "location", newValue: { synced: result.synced, errors: result.errors.length }, ip: req.headers.get("x-forwarded-for") ?? undefined });
+
+    if (result.synced > 0) {
+      return ok({ synced: result.synced, errors: result.errors }, `Synced ${result.synced} location(s) from Google Business Profile`);
+    } else {
+      return fail(result.errors[0] || "No locations synced. Make sure your Google Business Profile has locations.", 400);
+    }
   }
 
   return fail("Unknown action. Use: connect, disconnect, or sync");

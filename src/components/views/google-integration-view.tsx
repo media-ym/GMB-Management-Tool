@@ -49,7 +49,7 @@ import { formatDistanceToNow, format } from "date-fns";
 // Types matching /api/google-integration response
 // ────────────────────────────────────────────────────────────────────────────
 
-type OauthStatus = "connected" | "token_expired" | "disconnected";
+type OauthStatus = "connected" | "token_expired" | "disconnected" | "not_configured";
 type VerificationState = "verified" | "unverified" | "pending";
 type ProfileStatus = "active" | "suspended" | "disabled";
 type SyncStatus = "synced" | "syncing" | "pending" | "error";
@@ -292,20 +292,12 @@ function OauthConnectionCard({
 }: {
   oauth: OauthState;
   canSync: boolean;
-  onConnect: (email: string) => void;
+  onConnect: () => void;
   onDisconnect: () => void;
   connecting: boolean;
   disconnecting: boolean;
 }) {
-  const [consentOpen, setConsentOpen] = useState(false);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [email, setEmail] = useState("gmb@myfng.in");
-  const [allowing, setAllowing] = useState(false);
-
-  function handleAllow() {
-    setAllowing(true);
-    onConnect(email);
-  }
 
   // CONNECTED ──────────────────────────────────────────────────────────────
   if (oauth.status === "connected") {
@@ -428,7 +420,7 @@ function OauthConnectionCard({
               {canSync && (
                 <Button
                   className="bg-amber-600 hover:bg-amber-700 text-white shrink-0"
-                  onClick={() => setConsentOpen(true)}
+                  onClick={() => onConnect()}
                   disabled={connecting}
                 >
                   {connecting ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
@@ -438,16 +430,41 @@ function OauthConnectionCard({
             </div>
           </CardContent>
         </Card>
-
-        <ConsentDialog
-          open={consentOpen}
-          onOpenChange={setConsentOpen}
-          email={email}
-          setEmail={setEmail}
-          allowing={allowing || connecting}
-          onAllow={handleAllow}
-        />
       </>
+    );
+  }
+
+  // NOT CONFIGURED ─────────────────────────────────────────────────────────
+  if (oauth.status === "not_configured") {
+    return (
+      <Card className="border-amber-500/30 bg-amber-500/[0.04]">
+        <CardContent className="p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="size-12 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <KeyRound className="size-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-amber-700 dark:text-amber-400">Google OAuth Not Configured</h3>
+                <p className="text-xs text-muted-foreground mt-0.5 max-w-md">
+                  Add <code className="font-mono bg-muted/50 px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="font-mono bg-muted/50 px-1 rounded">GOOGLE_CLIENT_SECRET</code> to your <code className="font-mono bg-muted/50 px-1 rounded">.env</code> file to enable real Google Business Profile connection.
+                </p>
+                <div className="mt-2 rounded-lg border bg-muted/20 p-3 text-xs space-y-1">
+                  <p className="font-semibold">Setup Steps:</p>
+                  <ol className="list-decimal list-inside space-y-0.5 text-muted-foreground">
+                    <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener" className="text-primary underline">Google Cloud Console</a></li>
+                    <li>Create a project and enable Google Business Profile API</li>
+                    <li>Create OAuth 2.0 credentials (Web Application)</li>
+                    <li>Add redirect URI: <code className="font-mono">{oauth.redirectUri}</code></li>
+                    <li>Copy Client ID and Secret to your .env file</li>
+                    <li>Restart the server</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -476,7 +493,7 @@ function OauthConnectionCard({
             {canSync ? (
               <Button
                 className="bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
-                onClick={() => setConsentOpen(true)}
+                onClick={() => onConnect()}
                 disabled={connecting}
               >
                 {connecting ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
@@ -501,15 +518,6 @@ function OauthConnectionCard({
           </div>
         </CardContent>
       </Card>
-
-      <ConsentDialog
-        open={consentOpen}
-        onOpenChange={setConsentOpen}
-        email={email}
-        setEmail={setEmail}
-        allowing={allowing || connecting}
-        onAllow={handleAllow}
-      />
 
       <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
         <AlertDialogContent>
@@ -539,94 +547,6 @@ function OauthConnectionCard({
   );
 }
 
-// Mock Google OAuth consent dialog
-function ConsentDialog({
-  open, onOpenChange, email, setEmail, allowing, onAllow,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  email: string;
-  setEmail: (e: string) => void;
-  allowing: boolean;
-  onAllow: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={allowing ? undefined : onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <div className="flex items-center justify-center mb-2">
-            <div className="flex items-center gap-2">
-              <div className="size-5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-                <Globe className="size-3" />
-              </div>
-              <span className="text-xs text-muted-foreground">Sign in with Google</span>
-            </div>
-          </div>
-          <DialogTitle className="text-center text-base">
-            MyFNG Local AI Manager wants to access your Google Account
-          </DialogTitle>
-          <DialogDescription className="text-center">
-            This will allow MyFNG to sync your Google Business Profile data.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Sign in with email</label>
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={allowing}
-              className="mt-1"
-              placeholder="you@example.com"
-            />
-          </div>
-
-          <div className="rounded-lg border bg-muted/30 p-3">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-              MyFNG Local AI Manager will be able to:
-            </div>
-            <ul className="space-y-1.5">
-              {REQUESTED_SCOPES.map((s) => (
-                <li key={s.scope} className="flex items-start gap-2 text-xs">
-                  <CheckCircle2 className="size-3.5 text-emerald-500 mt-0.5 shrink-0" />
-                  <div>
-                    <div className="font-medium text-foreground">{s.label}</div>
-                    <div className="font-mono text-[10px] text-muted-foreground break-all">{s.scope}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <p className="text-[11px] text-muted-foreground text-center">
-            This is a simulated consent screen for the MyFNG enterprise demo.
-          </p>
-        </div>
-
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={allowing}
-          >
-            Cancel
-          </Button>
-          <Button
-            className="bg-emerald-600 hover:bg-emerald-700 text-white"
-            onClick={onAllow}
-            disabled={allowing || !email.trim()}
-          >
-            {allowing ? <Loader2 className="size-4 animate-spin mr-1" /> : null}
-            Allow
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Main view
 // ────────────────────────────────────────────────────────────────────────────
@@ -653,17 +573,24 @@ export function GoogleIntegrationView() {
     toast.success("Google Integration refreshed");
   }
 
-  async function handleConnect(email: string) {
+  async function handleConnect() {
     if (!canSync) return;
     setConnecting(true);
-    const tid = toast.loading("Connecting to Google…");
+    const tid = toast.loading("Redirecting to Google…");
     try {
-      await api("/api/google-integration", {
+      const res = await fetch("/api/google-integration", {
         method: "POST",
-        body: JSON.stringify({ action: "connect", email }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "connect" }),
       });
-      toast.success("Google Business Profile connected", { id: tid });
-      qc.invalidateQueries({ queryKey: ["google-integration"] });
+      const json = await res.json();
+      if (json.success && json.data?.authUrl) {
+        // Redirect to real Google OAuth consent screen
+        toast.success("Redirecting to Google for authentication…", { id: tid });
+        window.location.href = json.data.authUrl;
+      } else {
+        toast.error(json.message || "Failed to connect — Google OAuth not configured", { id: tid });
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to connect", { id: tid });
     } finally {
