@@ -1,0 +1,440 @@
+# ==========================================================
+# 22_OpenAPI_Specification.yaml
+# MyFNG Local AI Manager
+# OpenAPI 3.1 Specification
+# Part 2
+# ==========================================================
+
+paths:
+
+# =====================================================
+# GOOGLE BUSINESS PROFILE
+# =====================================================
+
+  /google/connect:
+
+    post:
+
+      tags:
+        - Google Business Profile
+
+      summary: Connect Google Business Profile Account
+
+      description: >
+        Starts Google OAuth flow and connects the selected
+        Google account with MyFNG Local AI Manager.
+
+      responses:
+
+        "200":
+          description: OAuth URL Generated
+
+        "401":
+          description: Unauthorized
+
+  /google/callback:
+
+    get:
+
+      tags:
+        - Google Business Profile
+
+      summary: Google OAuth Callback
+
+      responses:
+
+        "200":
+          description: Google Account Connected
+
+  /google/accounts:
+
+    get:
+
+      tags:
+        - Google Business Profile
+
+      summary: List Connected Google Accounts
+
+      responses:
+
+        "200":
+          description: Connected Accounts
+
+  /google/profiles:
+
+    get:
+
+      tags:
+        - Google Business Profile
+
+      summary: Get Google Business Profiles
+
+      responses:
+
+        "200":
+          description: Business Profiles
+
+  /google/profiles/sync:
+
+    post:
+
+      tags:
+        - Google Business Profile
+
+      summary: Synchronize Google Business Profiles
+
+      responses:
+
+        "200":
+          description: Sync Started
+
+# =====================================================
+# REVIEWS
+# =====================================================
+
+  /reviews:
+
+    get:
+
+      tags:
+        - Reviews
+
+      summary: List Reviews
+
+      parameters:
+
+        - name: page
+          in: query
+          schema:
+            type: integer
+
+        - name: limit
+          in: query
+          schema:
+            type: integer
+
+        - name: rating
+          in: query
+          schema:
+            type: integer
+
+        - name: location_id
+          in: query
+          schema:
+            type: string
+
+        - name: sentiment
+          in: query
+          schema:
+            type: string
+
+        - name: status
+          in: query
+          schema:
+            type: string
+
+      responses:
+
+        "200":
+          description: Reviews Retrieved
+
+  /reviews/{reviewId}:
+
+    get:
+
+      tags:
+        - Reviews
+
+      summary: Review Details
+
+      parameters:
+
+        - name: reviewId
+          in: path
+          required: true
+
+          schema:
+            type: string
+
+      responses:
+
+        "200":
+          description: Review Details
+
+  /reviews/{reviewId}/reply:
+
+    post:
+
+      tags:
+        - Reviews
+
+      summary: Publish Review Reply
+
+      requestBody:
+
+        required: true
+
+      responses:
+
+        "200":
+          description: Reply Published
+
+        "400":
+          description: Validation Error
+
+  /reviews/{reviewId}/generate-ai:
+
+    post:
+
+      tags:
+        - AI
+
+      summary: Generate AI Review Reply
+
+      responses:
+
+        "200":
+          description: AI Reply Generated
+
+  /reviews/export:
+
+    get:
+
+      tags:
+        - Reviews
+
+      summary: Export Reviews
+
+      responses:
+
+        "200":
+          description: Export Generated
+
+# =====================================================
+# GOOGLE POSTS
+# =====================================================
+
+  /posts:
+
+    get:
+
+      tags:
+        - Google Posts
+
+      summary: List Google Posts
+
+      responses:
+
+        "200":
+          description: Posts Retrieved
+
+    post:
+
+      tags:
+        - Google Posts
+
+      summary: Create Google Post
+
+      requestBody:
+
+        required: true
+
+      responses:
+
+        "201":
+          description: Post Created
+
+  /posts/{postId}:
+
+    get:
+
+      tags:
+        - Google Posts
+
+      summary: Get Google Post
+
+      parameters:
+
+        - name: postId
+          in: path
+          required: true
+
+          schema:
+            type: string
+
+      responses:
+
+        "200":
+          description: Post Details
+
+    put:
+
+      tags:
+        - Google Posts
+
+      summary: Update Google Post
+
+      responses:
+
+        "200":
+          description: Updated
+
+    delete:
+
+      tags:
+        - Google Posts
+
+      summary: Delete Draft
+
+      responses:
+
+        "204":
+          description: Deleted
+
+  /posts/{postId}/publish:
+
+    post:
+
+      tags:
+        - Google Posts
+
+      summary: Publish Google Post
+
+      responses:
+
+        "200":
+          description: Published
+
+  /posts/{postId}/schedule:
+
+    post:
+
+      tags:
+        - Google Posts
+
+      summary: Schedule Google Post
+
+      responses:
+
+        "200":
+          description: Scheduled
+
+  /posts/{postId}/generate-ai:
+
+    post:
+
+      tags:
+        - AI
+
+      summary: Generate AI Google Post
+
+      responses:
+
+        "200":
+          description: AI Content Generated
+
+# =====================================================
+# ANALYTICS
+# =====================================================
+
+  /analytics:
+
+    get:
+
+      tags:
+        - Analytics
+
+      summary: Analytics Overview
+
+      parameters:
+
+        - name: location_id
+          in: query
+          schema:
+            type: string
+
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+
+      responses:
+
+        "200":
+          description: Analytics Retrieved
+
+  /analytics/dashboard:
+
+    get:
+
+      tags:
+        - Analytics
+
+      summary: Executive Dashboard
+
+      responses:
+
+        "200":
+          description: Dashboard Metrics
+
+  /analytics/location/{locationId}:
+
+    get:
+
+      tags:
+        - Analytics
+
+      summary: Location Analytics
+
+      parameters:
+
+        - name: locationId
+          in: path
+          required: true
+
+          schema:
+            type: string
+
+      responses:
+
+        "200":
+          description: Location Analytics
+
+  /analytics/reviews:
+
+    get:
+
+      tags:
+        - Analytics
+
+      summary: Review Analytics
+
+      responses:
+
+        "200":
+          description: Review Metrics
+
+  /analytics/export:
+
+    get:
+
+      tags:
+        - Analytics
+
+      summary: Export Analytics
+
+      responses:
+
+        "200":
+          description: Analytics Export Generated
+
+# =====================================================
+# END PART 2
+# =====================================================

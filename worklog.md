@@ -1384,3 +1384,32 @@ Stage Summary:
 - Platform UI now EXACTLY matches reference screenshot: solid blue top bar, text-only nav, blue hero section, white cards on light gray bg.
 - Key differences from previous: solid blue (not gradient), text-only nav (no icons), hero section with page title, 12px card radius, exact Ceres colors.
 - 19 nav modules, 56 API routes. Demo password: MyFNG@2025.
+
+---
+Task ID: 17-openapi-spec
+Agent: main (orchestrator)
+Task: Implement doc 22 (OpenAPI Specification) — complete OpenAPI 3.1 reference module.
+
+Work Log:
+- Read all 4 parts of the OpenAPI spec (P1: auth/users/locations, p2: google/reviews/posts/analytics, p3: seo/ai/reports/notifications/admin/system, p4: schemas/parameters/responses/security/project metadata).
+- Created /api/openapi-spec (GET) — merged all 4 parts into a single comprehensive JSON response: 66 endpoints across 13 tags, 11 schemas, 13 parameters, 10 HTTP status codes, security schemes, 3 server URLs, project metadata.
+- Added "OpenAPI" as 20th nav module (label: "OpenAPI"). Updated types.ts, permissions.ts, app-shell.tsx (nav + hero title), view-router.tsx.
+- Created OpenAPI Spec view with 6 tabs:
+  1. Endpoints — 66 endpoints grouped by tag, method-colored badges (GET=emerald, POST=blue, PUT=amber, PATCH=cyan, DELETE=rose), response code pills, search + tag filter, copy-to-clipboard, download YAML
+  2. Schemas — 11 schema definitions (SuccessResponse, ErrorResponse, Pagination, LoginRequest, User, Location, Review, GooglePost, Keyword, Notification, DashboardSummary) with field/type/required tables
+  3. Parameters — 13 reusable parameters (Page, Limit, Search, Sort, Order, LocationId, ReviewId, PostId, UserId, KeywordId, NotificationId, ReportId, JobId) with location/type/required/default
+  4. Security — BearerAuth scheme (http/bearer/JWT) with description
+  5. Status Codes — 10 HTTP status codes (200-500) with color-coded cards
+  6. Info — API info (title, version, OpenAPI version, description) + project stack (backend, database, auth, storage, queue, AI, integrations)
+- Lint: 0 errors, 0 warnings.
+- Agent Browser verification:
+  * OpenAPI Spec heading renders: "66 endpoints · 13 tags · 11 schemas · JWT Bearer auth" ✓
+  * 6 tabs: Endpoints (66), Schemas (11), Parameters (13), Security, Status Codes, Info ✓
+  * Endpoints tab shows grouped endpoints with method badges ✓
+  * Schemas tab shows SuccessResponse etc. ✓
+  * Dev log: no errors ✓
+
+Stage Summary:
+- DOC 22 (OpenAPI Specification) FULLY IMPLEMENTED & VERIFIED.
+- 20 nav modules, 57 API routes, 49 Prisma models. Demo password: MyFNG@2025.
+- Complete documentation set (docs 01-22) now implemented.

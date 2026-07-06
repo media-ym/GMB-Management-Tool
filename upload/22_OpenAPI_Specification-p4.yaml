@@ -1,0 +1,400 @@
+# ==========================================================
+# 22_OpenAPI_Specification.yaml
+# MyFNG Local AI Manager
+# OpenAPI 3.1 Specification
+# Part 4 (Final)
+# ==========================================================
+
+components:
+
+  securitySchemes:
+
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 20
+
+    Search:
+      name: search
+      in: query
+      schema:
+        type: string
+
+    Sort:
+      name: sort
+      in: query
+      schema:
+        type: string
+
+    Order:
+      name: order
+      in: query
+      schema:
+        type: string
+        enum:
+          - asc
+          - desc
+
+    LocationId:
+      name: locationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    ReviewId:
+      name: reviewId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    PostId:
+      name: postId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+
+    Success:
+
+      description: Success
+
+      content:
+
+        application/json:
+
+          schema:
+
+            $ref: '#/components/schemas/SuccessResponse'
+
+    BadRequest:
+
+      description: Invalid Request
+
+    Unauthorized:
+
+      description: Authentication Required
+
+    Forbidden:
+
+      description: Permission Denied
+
+    NotFound:
+
+      description: Resource Not Found
+
+    ValidationError:
+
+      description: Validation Failed
+
+    InternalServerError:
+
+      description: Internal Server Error
+
+  schemas:
+
+    Pagination:
+
+      type: object
+
+      properties:
+
+        page:
+          type: integer
+
+        limit:
+          type: integer
+
+        total:
+          type: integer
+
+        totalPages:
+          type: integer
+
+    SuccessResponse:
+
+      type: object
+
+      properties:
+
+        success:
+          type: boolean
+          example: true
+
+        message:
+          type: string
+
+        data:
+          type: object
+
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    ErrorResponse:
+
+      type: object
+
+      properties:
+
+        success:
+          type: boolean
+          example: false
+
+        message:
+          type: string
+
+        errors:
+
+          type: array
+
+          items:
+
+            type: object
+
+            properties:
+
+              field:
+                type: string
+
+              message:
+                type: string
+
+    DashboardSummary:
+
+      type: object
+
+      properties:
+
+        total_locations:
+          type: integer
+
+        average_rating:
+          type: number
+
+        total_reviews:
+          type: integer
+
+        pending_replies:
+          type: integer
+
+        seo_score:
+          type: number
+
+        health_score:
+          type: number
+
+    Review:
+
+      type: object
+
+      properties:
+
+        id:
+          type: string
+          format: uuid
+
+        reviewer_name:
+          type: string
+
+        rating:
+          type: integer
+
+        review_text:
+          type: string
+
+        sentiment:
+          type: string
+
+        ai_summary:
+          type: string
+
+        replied:
+          type: boolean
+
+    GooglePost:
+
+      type: object
+
+      properties:
+
+        id:
+          type: string
+          format: uuid
+
+        title:
+          type: string
+
+        description:
+          type: string
+
+        status:
+          type: string
+
+        scheduled_at:
+          type: string
+          format: date-time
+
+    Location:
+
+      type: object
+
+      properties:
+
+        id:
+          type: string
+          format: uuid
+
+        name:
+          type: string
+
+        city:
+          type: string
+
+        rating:
+          type: number
+
+        review_count:
+          type: integer
+
+        health_score:
+          type: integer
+
+    Keyword:
+
+      type: object
+
+      properties:
+
+        keyword:
+          type: string
+
+        ranking:
+          type: integer
+
+        previous_ranking:
+          type: integer
+
+        visibility_score:
+          type: number
+
+    Notification:
+
+      type: object
+
+      properties:
+
+        id:
+          type: string
+          format: uuid
+
+        title:
+          type: string
+
+        message:
+          type: string
+
+        priority:
+          type: string
+
+        is_read:
+          type: boolean
+
+    User:
+
+      type: object
+
+      properties:
+
+        id:
+          type: string
+          format: uuid
+
+        full_name:
+          type: string
+
+        email:
+          type: string
+
+        role:
+          type: string
+
+        status:
+          type: string
+
+security:
+
+  - BearerAuth: []
+
+externalDocs:
+
+  description: Internal Technical Documentation
+
+  url: https://localai.myfng.in/docs
+
+x-project:
+
+  project: MyFNG Local AI Manager
+
+  organization: MyFNG
+
+  backend: Next.js 15
+
+  database: Supabase PostgreSQL
+
+  authentication: Supabase Auth
+
+  storage: Supabase Storage
+
+  queue: Upstash Redis
+
+  ai:
+
+    - OpenAI
+
+    - Gemini
+
+    - Claude
+
+  integrations:
+
+    - Google Business Profile API
+
+    - Google Business Information API
+
+    - Google Performance API
+
+  version: 1.0.0
+
+# ==========================================================
+# END OF OPENAPI SPECIFICATION
+# ==========================================================

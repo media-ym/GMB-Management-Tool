@@ -1,0 +1,532 @@
+# ==========================================================
+# 22_OpenAPI_Specification.yaml
+# MyFNG Local AI Manager
+# OpenAPI 3.1 Specification
+# Part 1
+# ==========================================================
+
+openapi: 3.1.0
+
+info:
+  title: MyFNG Local AI Manager API
+  version: 1.0.0
+  description: >
+    Internal API specification for MyFNG Local AI Manager.
+    This API manages Google Business Profiles, Reviews,
+    Google Posts, Analytics, Local SEO, AI Services,
+    Reports and Administration.
+
+servers:
+  - url: https://localai.myfng.in/api/v1
+    description: Production
+
+  - url: https://staging.localai.myfng.in/api/v1
+    description: Staging
+
+  - url: http://localhost:3000/api/v1
+    description: Development
+
+tags:
+
+  - name: Authentication
+
+  - name: Users
+
+  - name: Locations
+
+  - name: Reviews
+
+  - name: Google Posts
+
+  - name: Analytics
+
+  - name: SEO
+
+  - name: AI
+
+  - name: Reports
+
+  - name: Notifications
+
+  - name: Admin
+
+components:
+
+  securitySchemes:
+
+    BearerAuth:
+
+      type: http
+
+      scheme: bearer
+
+      bearerFormat: JWT
+
+  schemas:
+
+    SuccessResponse:
+
+      type: object
+
+      properties:
+
+        success:
+
+          type: boolean
+
+          example: true
+
+        message:
+
+          type: string
+
+        data:
+
+          type: object
+
+    ErrorResponse:
+
+      type: object
+
+      properties:
+
+        success:
+
+          type: boolean
+
+          example: false
+
+        message:
+
+          type: string
+
+        errors:
+
+          type: array
+
+          items:
+
+            type: object
+
+    LoginRequest:
+
+      type: object
+
+      required:
+
+        - email
+        - password
+
+      properties:
+
+        email:
+
+          type: string
+
+          format: email
+
+        password:
+
+          type: string
+
+          format: password
+
+    User:
+
+      type: object
+
+      properties:
+
+        id:
+
+          type: string
+
+          format: uuid
+
+        full_name:
+
+          type: string
+
+        email:
+
+          type: string
+
+        role:
+
+          type: string
+
+        status:
+
+          type: string
+
+        created_at:
+
+          type: string
+
+          format: date-time
+
+    Location:
+
+      type: object
+
+      properties:
+
+        id:
+
+          type: string
+
+          format: uuid
+
+        location_name:
+
+          type: string
+
+        city:
+
+          type: string
+
+        state:
+
+          type: string
+
+        rating:
+
+          type: number
+
+        total_reviews:
+
+          type: integer
+
+        status:
+
+          type: string
+
+    Review:
+
+      type: object
+
+      properties:
+
+        id:
+
+          type: string
+
+          format: uuid
+
+        reviewer_name:
+
+          type: string
+
+        rating:
+
+          type: integer
+
+        review_text:
+
+          type: string
+
+        sentiment:
+
+          type: string
+
+        has_reply:
+
+          type: boolean
+
+    GooglePost:
+
+      type: object
+
+      properties:
+
+        id:
+
+          type: string
+
+          format: uuid
+
+        title:
+
+          type: string
+
+        description:
+
+          type: string
+
+        status:
+
+          type: string
+
+        scheduled_at:
+
+          type: string
+
+          format: date-time
+
+security:
+
+  - BearerAuth: []
+
+paths:
+
+# =====================================================
+# AUTHENTICATION
+# =====================================================
+
+  /auth/login:
+
+    post:
+
+      tags:
+
+        - Authentication
+
+      summary: Login
+
+      requestBody:
+
+        required: true
+
+        content:
+
+          application/json:
+
+            schema:
+
+              $ref: '#/components/schemas/LoginRequest'
+
+      responses:
+
+        "200":
+
+          description: Login Successful
+
+        "401":
+
+          description: Invalid Credentials
+
+  /auth/logout:
+
+    post:
+
+      tags:
+
+        - Authentication
+
+      summary: Logout
+
+      responses:
+
+        "200":
+
+          description: Logged Out
+
+  /auth/me:
+
+    get:
+
+      tags:
+
+        - Authentication
+
+      summary: Current User
+
+      responses:
+
+        "200":
+
+          description: Current User Details
+
+# =====================================================
+# USERS
+# =====================================================
+
+  /users:
+
+    get:
+
+      tags:
+
+        - Users
+
+      summary: List Users
+
+      responses:
+
+        "200":
+
+          description: User List
+
+    post:
+
+      tags:
+
+        - Users
+
+      summary: Create User
+
+      responses:
+
+        "201":
+
+          description: User Created
+
+  /users/{id}:
+
+    get:
+
+      tags:
+
+        - Users
+
+      summary: User Details
+
+      parameters:
+
+        - name: id
+
+          in: path
+
+          required: true
+
+          schema:
+
+            type: string
+
+      responses:
+
+        "200":
+
+          description: User Details
+
+    put:
+
+      tags:
+
+        - Users
+
+      summary: Update User
+
+      responses:
+
+        "200":
+
+          description: Updated
+
+# =====================================================
+# LOCATIONS
+# =====================================================
+
+  /locations:
+
+    get:
+
+      tags:
+
+        - Locations
+
+      summary: List Locations
+
+      parameters:
+
+        - name: page
+
+          in: query
+
+          schema:
+
+            type: integer
+
+        - name: limit
+
+          in: query
+
+          schema:
+
+            type: integer
+
+        - name: city
+
+          in: query
+
+          schema:
+
+            type: string
+
+        - name: status
+
+          in: query
+
+          schema:
+
+            type: string
+
+      responses:
+
+        "200":
+
+          description: Location List
+
+    post:
+
+      tags:
+
+        - Locations
+
+      summary: Create Location
+
+      responses:
+
+        "201":
+
+          description: Created
+
+  /locations/{id}:
+
+    get:
+
+      tags:
+
+        - Locations
+
+      summary: Location Details
+
+      responses:
+
+        "200":
+
+          description: Location Details
+
+    put:
+
+      tags:
+
+        - Locations
+
+      summary: Update Location
+
+      responses:
+
+        "200":
+
+          description: Updated
+
+  /locations/{id}/sync:
+
+    post:
+
+      tags:
+
+        - Locations
+
+      summary: Sync Google Profile
+
+      responses:
+
+        "200":
+
+          description: Sync Started
+
+# =====================================================
+# END PART 1
+# =====================================================

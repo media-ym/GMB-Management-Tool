@@ -1,0 +1,532 @@
+# ==========================================================
+# 22_OpenAPI_Specification.yaml
+# MyFNG Local AI Manager
+# OpenAPI 3.1 Specification
+# Part 3
+# ==========================================================
+
+paths:
+
+# =====================================================
+# SEO
+# =====================================================
+
+  /seo/overview:
+
+    get:
+
+      tags:
+        - SEO
+
+      summary: SEO Dashboard Overview
+
+      responses:
+
+        "200":
+          description: SEO Dashboard Retrieved
+
+  /seo/keywords:
+
+    get:
+
+      tags:
+        - SEO
+
+      summary: List Keywords
+
+      parameters:
+
+        - name: location_id
+          in: query
+          schema:
+            type: string
+
+        - name: page
+          in: query
+          schema:
+            type: integer
+
+      responses:
+
+        "200":
+          description: Keyword List
+
+    post:
+
+      tags:
+        - SEO
+
+      summary: Add Keyword
+
+      requestBody:
+
+        required: true
+
+      responses:
+
+        "201":
+          description: Keyword Created
+
+  /seo/keywords/{keywordId}:
+
+    put:
+
+      tags:
+        - SEO
+
+      summary: Update Keyword
+
+      parameters:
+
+        - name: keywordId
+          in: path
+          required: true
+
+          schema:
+            type: string
+
+      responses:
+
+        "200":
+          description: Keyword Updated
+
+    delete:
+
+      tags:
+        - SEO
+
+      summary: Delete Keyword
+
+      responses:
+
+        "204":
+          description: Deleted
+
+  /seo/rankings:
+
+    get:
+
+      tags:
+        - SEO
+
+      summary: Keyword Rankings
+
+      responses:
+
+        "200":
+          description: Ranking Data
+
+  /seo/geo-grid:
+
+    get:
+
+      tags:
+        - SEO
+
+      summary: Geo Grid Ranking
+
+      responses:
+
+        "200":
+          description: Geo Grid Data
+
+  /seo/competitors:
+
+    get:
+
+      tags:
+        - SEO
+
+      summary: Competitor Analysis
+
+      responses:
+
+        "200":
+          description: Competitor Data
+
+  /seo/audit:
+
+    get:
+
+      tags:
+        - SEO
+
+      summary: Profile SEO Audit
+
+      responses:
+
+        "200":
+          description: Audit Completed
+
+# =====================================================
+# AI
+# =====================================================
+
+  /ai/review:
+
+    post:
+
+      tags:
+        - AI
+
+      summary: Generate Review Reply
+
+      responses:
+
+        "200":
+          description: AI Reply Generated
+
+  /ai/post:
+
+    post:
+
+      tags:
+        - AI
+
+      summary: Generate Google Post
+
+      responses:
+
+        "200":
+          description: AI Post Generated
+
+  /ai/business-description:
+
+    post:
+
+      tags:
+        - AI
+
+      summary: Generate Business Description
+
+      responses:
+
+        "200":
+          description: Description Generated
+
+  /ai/seo:
+
+    post:
+
+      tags:
+        - AI
+
+      summary: Generate SEO Recommendations
+
+      responses:
+
+        "200":
+          description: SEO Suggestions Generated
+
+  /ai/reports:
+
+    post:
+
+      tags:
+        - AI
+
+      summary: Generate Monthly AI Report
+
+      responses:
+
+        "200":
+          description: Report Generated
+
+  /ai/history:
+
+    get:
+
+      tags:
+        - AI
+
+      summary: AI Generation History
+
+      responses:
+
+        "200":
+          description: History Retrieved
+
+# =====================================================
+# REPORTS
+# =====================================================
+
+  /reports:
+
+    get:
+
+      tags:
+        - Reports
+
+      summary: List Reports
+
+      responses:
+
+        "200":
+          description: Reports Retrieved
+
+    post:
+
+      tags:
+        - Reports
+
+      summary: Generate Report
+
+      requestBody:
+
+        required: true
+
+      responses:
+
+        "201":
+          description: Report Generation Started
+
+  /reports/{reportId}:
+
+    get:
+
+      tags:
+        - Reports
+
+      summary: Report Details
+
+      parameters:
+
+        - name: reportId
+          in: path
+          required: true
+
+          schema:
+            type: string
+
+      responses:
+
+        "200":
+          description: Report Details
+
+  /reports/{reportId}/download:
+
+    get:
+
+      tags:
+        - Reports
+
+      summary: Download Report
+
+      responses:
+
+        "200":
+          description: File Download
+
+# =====================================================
+# NOTIFICATIONS
+# =====================================================
+
+  /notifications:
+
+    get:
+
+      tags:
+        - Notifications
+
+      summary: Notification List
+
+      responses:
+
+        "200":
+          description: Notifications Retrieved
+
+  /notifications/{notificationId}/read:
+
+    patch:
+
+      tags:
+        - Notifications
+
+      summary: Mark Notification Read
+
+      parameters:
+
+        - name: notificationId
+          in: path
+          required: true
+
+          schema:
+            type: string
+
+      responses:
+
+        "200":
+          description: Notification Updated
+
+  /notifications/read-all:
+
+    patch:
+
+      tags:
+        - Notifications
+
+      summary: Mark All Notifications Read
+
+      responses:
+
+        "200":
+          description: Success
+
+# =====================================================
+# ADMIN
+# =====================================================
+
+  /admin/users:
+
+    get:
+
+      tags:
+        - Admin
+
+      summary: List Users
+
+      responses:
+
+        "200":
+          description: User List
+
+  /admin/settings:
+
+    get:
+
+      tags:
+        - Admin
+
+      summary: System Settings
+
+      responses:
+
+        "200":
+          description: Settings Retrieved
+
+    put:
+
+      tags:
+        - Admin
+
+      summary: Update Settings
+
+      responses:
+
+        "200":
+          description: Settings Updated
+
+  /admin/audit-logs:
+
+    get:
+
+      tags:
+        - Admin
+
+      summary: Audit Logs
+
+      responses:
+
+        "200":
+          description: Audit Log List
+
+  /admin/activity-logs:
+
+    get:
+
+      tags:
+        - Admin
+
+      summary: Activity Logs
+
+      responses:
+
+        "200":
+          description: Activity Log List
+
+  /admin/jobs:
+
+    get:
+
+      tags:
+        - Admin
+
+      summary: Background Jobs
+
+      responses:
+
+        "200":
+          description: Job Status
+
+  /admin/jobs/{jobId}/retry:
+
+    post:
+
+      tags:
+        - Admin
+
+      summary: Retry Failed Job
+
+      parameters:
+
+        - name: jobId
+          in: path
+          required: true
+
+          schema:
+            type: string
+
+      responses:
+
+        "200":
+          description: Retry Started
+
+# =====================================================
+# SYSTEM
+# =====================================================
+
+  /system/health:
+
+    get:
+
+      tags:
+        - Admin
+
+      summary: System Health
+
+      responses:
+
+        "200":
+          description: System Healthy
+
+  /system/status:
+
+    get:
+
+      tags:
+        - Admin
+
+      summary: Application Status
+
+      responses:
+
+        "200":
+          description: Status Retrieved
+
+  /system/version:
+
+    get:
+
+      tags:
+        - Admin
+
+      summary: Application Version
+
+      responses:
+
+        "200":
+          description: Version Details
+
+# =====================================================
+# END PART 3
+# =====================================================

@@ -12,7 +12,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Building2, Menu, LogOut, RefreshCw, Sun, Moon, ChevronDown, Command,
-  Bell, Search as SearchIcon, MoreHorizontal, Settings, ScrollText, Sparkles,
+  Bell, Search as SearchIcon, MoreHorizontal, Settings, ScrollText, Sparkles, FileJson,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
@@ -46,6 +46,7 @@ const NAV: NavItem[] = [
   { key: "audit", label: "Audit Logs" },
   { key: "system", label: "System" },
   { key: "api-docs", label: "API Docs" },
+  { key: "openapi-spec", label: "OpenAPI" },
   { key: "google-api-mapping", label: "API Map" },
   { key: "roadmap", label: "Roadmap" },
   { key: "design-system", label: "Design" },
@@ -72,6 +73,7 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   audit: { title: "Audit Logs", subtitle: "Immutable action history" },
   system: { title: "System", subtitle: "Database, jobs & integrations" },
   "api-docs": { title: "API Documentation", subtitle: "REST API specification" },
+  "openapi-spec": { title: "OpenAPI Specification", subtitle: "OpenAPI 3.1 specification · 60+ endpoints" },
   "google-api-mapping": { title: "Google API Mapping", subtitle: "API → DB field mapping" },
   roadmap: { title: "Project Roadmap", subtitle: "Phases & progress" },
   "design-system": { title: "Design System", subtitle: "Colors, typography & components" },
