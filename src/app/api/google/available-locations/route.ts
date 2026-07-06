@@ -7,36 +7,46 @@ import { getValidAccessToken, listGoogleAccounts, listGoogleLocations, googleSer
 
 export const dynamic = "force-dynamic";
 
-// GET /api/google/available-locations — fetch real GMB locations from Google,
-// filter out ones already imported into our DB
+// GET /api/google/available-locations — fetch REAL GMB locations from Google API
+// Returns 3 states:
+//   1. Google OAuth not configured (no GOOGLE_CLIENT_ID) → status: "not_configured"
+//   2. Google OAuth configured but account not connected → status: "not_connected"
+//   3. Connected → fetches real GMB locations, filters out already-imported → status: "connected"
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
   if (!can(user.role, "locations.manage")) return forbidden();
 
-  // Check if Google OAuth is configured
+  // ─── State 1: Google OAuth not configured ──────────────────────────────
   if (!googleServiceStatus.isConfigured) {
     return ok({
-      mode: "mock",
-      connected: true, // mock mode shows demo locations
-      locations: getMockAvailableLocations(),
-      message: "Google OAuth not configured. Showing demo locations. Set GOOGLE_CLIENT_ID in .env to fetch real GMB profiles.",
+      status: "not_configured",
+      connected: false,
+      locations: [],
+      message: "Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file, then restart the server.",
+      setupSteps: [
+        "Go to Google Cloud Console (console.cloud.google.com)",
+        "Create a project and enable Google Business Profile API",
+        "Create OAuth 2.0 credentials (Web Application)",
+        "Add redirect URI: " + googleServiceStatus.redirectUri,
+        "Copy Client ID and Client Secret to your .env file",
+      ],
     });
   }
 
-  // Real mode — fetch from Google API
+  // ─── State 2: Configured but not connected ─────────────────────────────
   const accessToken = await getValidAccessToken();
   if (!accessToken) {
     return ok({
-      mode: "production",
+      status: "not_connected",
       connected: false,
       locations: [],
-      message: "Google account not connected. Click 'Connect Google' to authorize and fetch your GMB locations.",
+      message: "Google account is not connected. Click 'Connect Google' to authenticate with your Google Business Profile account.",
     });
   }
 
+  // ─── State 3: Connected — fetch real GMB locations ─────────────────────
   try {
-    // Get all Google accounts
     const accounts = await listGoogleAccounts(accessToken);
     const allGmbLocations: any[] = [];
 
@@ -59,7 +69,7 @@ export async function GET(req: NextRequest) {
     const available = allGmbLocations
       .filter((loc) => !existingIds.has(loc.name))
       .map((loc) => ({
-        googleLocationId: loc.name, // e.g. "locations/12345"
+        googleLocationId: loc.name,
         name: loc.title || "Unknown",
         storeCode: loc.storeCode || null,
         address: formatAddress(loc.address),
@@ -79,9 +89,9 @@ export async function GET(req: NextRequest) {
       }));
 
     return ok({
-      mode: "production",
+      status: "connected",
       connected: true,
-      total: allGmbLocations.length,
+      totalFound: allGmbLocations.length,
       available: available.length,
       alreadyImported: allGmbLocations.length - available.length,
       locations: available,
@@ -103,67 +113,4 @@ function formatAddress(addr: any): string {
     addr.postalCode,
   ].filter(Boolean);
   return parts.join(", ");
-}
-
-// Mock locations for demo mode (when Google OAuth is not configured)
-function getMockAvailableLocations() {
-  return [
-    {
-      googleLocationId: "locations/mock_nagpur_001",
-      name: "MyFNG Nagpur",
-      storeCode: "MYFNG-NGP",
-      address: "Sitabuldi Road, Nagpur, Maharashtra 440001",
-      city: "Nagpur",
-      state: "Maharashtra",
-      pincode: "440001",
-      phone: "+91 712 4000 1016",
-      website: "https://myfng.in",
-      latitude: 21.1458,
-      longitude: 79.0882,
-      primaryCategory: "Interior Designer",
-      additionalCategories: ["Home Improvement Store", "Furniture Store"],
-      averageRating: 4.3,
-      totalReviews: 67,
-      verificationState: "verified",
-      openInfo: "OPEN",
-    },
-    {
-      googleLocationId: "locations/mock_aurangabad_001",
-      name: "MyFNG Aurangabad",
-      storeCode: "MYFNG-AUR",
-      address: "Station Road, Aurangabad, Maharashtra 431001",
-      city: "Aurangabad",
-      state: "Maharashtra",
-      pincode: "431001",
-      phone: "+91 240 4000 1017",
-      website: "https://myfng.in",
-      latitude: 19.8762,
-      longitude: 75.3433,
-      primaryCategory: "Interior Designer",
-      additionalCategories: ["Kitchen Furniture Store"],
-      averageRating: 4.1,
-      totalReviews: 34,
-      verificationState: "verified",
-      openInfo: "OPEN",
-    },
-    {
-      googleLocationId: "locations/mock_kolhapur_001",
-      name: "MyFNG Kolhapur",
-      storeCode: "MYFNG-KOL",
-      address: "Rajarampuri, Kolhapur, Maharashtra 416008",
-      city: "Kolhapur",
-      state: "Maharashtra",
-      pincode: "416008",
-      phone: "+91 231 4000 1018",
-      website: "https://myfng.in",
-      latitude: 16.7050,
-      longitude: 74.2433,
-      primaryCategory: "Interior Designer",
-      additionalCategories: ["Home Improvement Store"],
-      averageRating: 4.5,
-      totalReviews: 52,
-      verificationState: "unverified",
-      openInfo: "OPEN",
-    },
-  ];
 }

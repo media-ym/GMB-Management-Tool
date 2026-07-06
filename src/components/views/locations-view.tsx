@@ -2370,15 +2370,16 @@ function DetailRow({
   );
 }
 
-// ═══ Import from Google Dialog ═══════════════════════════════════════════
+// ═══ Import from Google Dialog — Production Only (no demo data) ═════════════
 function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const qc = useQueryClient();
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [gmbLocations, setGmbLocations] = useState<any[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [connected, setConnected] = useState(true);
-  const [mode, setMode] = useState<string>("mock");
+  const [status, setStatus] = useState<string>(""); // not_configured | not_connected | connected
+  const [message, setMessage] = useState<string>("");
+  const [setupSteps, setSetupSteps] = useState<string[]>([]);
   const [fetched, setFetched] = useState(false);
 
   // Fetch available GMB locations when dialog opens
@@ -2387,22 +2388,23 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     setLoading(true);
     setFetched(false);
     setSelected(new Set());
+    setGmbLocations([]);
     fetch("/api/google/available-locations")
       .then((r) => r.json())
       .then((json) => {
         if (json.success) {
           setGmbLocations(json.data.locations || []);
-          setConnected(json.data.connected);
-          setMode(json.data.mode || "mock");
+          setStatus(json.data.status || "");
+          setMessage(json.data.message || "");
+          setSetupSteps(json.data.setupSteps || []);
         } else {
           toast.error(json.message || "Failed to fetch GMB locations");
-          setGmbLocations([]);
-          setConnected(false);
+          setStatus("not_connected");
         }
       })
-      .catch((e) => {
+      .catch(() => {
         toast.error("Failed to fetch GMB locations");
-        setConnected(false);
+        setStatus("not_connected");
       })
       .finally(() => {
         setLoading(false);
@@ -2454,41 +2456,6 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     }
   }
 
-  // ─── Not connected state ────────────────────────────────────────────────
-  if (fetched && !connected) {
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Building2 className="size-5 text-primary" /> Connect Google Business Profile
-            </DialogTitle>
-            <DialogDescription>
-              To add locations, you need to connect your Google Business Profile account first.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-6 text-center space-y-4">
-            <div className="size-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
-              <Building2 className="size-8 text-primary" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Google account not connected</p>
-              <p className="text-xs text-muted-foreground">
-                Click the button below to authenticate with Google and import your Business Profile locations.
-              </p>
-            </div>
-            <Button onClick={() => { onOpenChange(false); window.location.href = "/api/google/callback?mock=true"; }}>
-              <Building2 className="size-4 mr-1.5" /> Connect Google Business Profile
-            </Button>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto scroll-area">
@@ -2497,9 +2464,7 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
             <Building2 className="size-5 text-primary" /> Import Locations from Google
           </DialogTitle>
           <DialogDescription>
-            {mode === "mock"
-              ? "Demo mode — showing sample GMB locations. Configure GOOGLE_CLIENT_ID in .env to fetch real profiles."
-              : "Select Google Business Profile locations to import into MyFNG Local AI Manager."}
+            Connect your Google Business Profile to import and manage your real locations.
           </DialogDescription>
         </DialogHeader>
 
@@ -2511,8 +2476,50 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           </div>
         )}
 
-        {/* Locations list */}
-        {!loading && fetched && gmbLocations.length > 0 && (
+        {/* ─── State: Google OAuth not configured ─────────────────────────── */}
+        {!loading && fetched && status === "not_configured" && (
+          <div className="py-6 space-y-4">
+            <div className="text-center space-y-3">
+              <div className="size-14 mx-auto rounded-full bg-amber-500/10 flex items-center justify-center">
+                <Building2 className="size-7 text-amber-500" />
+              </div>
+              <p className="text-sm font-medium">Google OAuth Not Configured</p>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto">{message}</p>
+            </div>
+            {setupSteps.length > 0 && (
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <p className="text-xs font-semibold mb-2">Setup Steps:</p>
+                <ol className="space-y-1.5">
+                  {setupSteps.map((step, i) => (
+                    <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
+                      <span className="size-4 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                      <span>{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── State: Not connected ───────────────────────────────────────── */}
+        {!loading && fetched && status === "not_connected" && (
+          <div className="py-6 text-center space-y-4">
+            <div className="size-16 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
+              <Building2 className="size-8 text-primary" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Google account not connected</p>
+              <p className="text-xs text-muted-foreground max-w-sm mx-auto">{message}</p>
+            </div>
+            <Button onClick={() => { onOpenChange(false); window.location.href = "/api/google-integration"; }}>
+              <Building2 className="size-4 mr-1.5" /> Go to Google Integration
+            </Button>
+          </div>
+        )}
+
+        {/* ─── State: Connected — show locations list ─────────────────────── */}
+        {!loading && fetched && status === "connected" && gmbLocations.length > 0 && (
           <>
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-muted-foreground">
@@ -2562,8 +2569,8 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           </>
         )}
 
-        {/* Empty state — all already imported */}
-        {!loading && fetched && gmbLocations.length === 0 && connected && (
+        {/* ─── State: Connected but all already imported ──────────────────── */}
+        {!loading && fetched && status === "connected" && gmbLocations.length === 0 && (
           <div className="py-12 text-center space-y-3">
             <div className="size-14 mx-auto rounded-full bg-emerald-500/10 flex items-center justify-center">
               <Check className="size-7 text-emerald-500" />
@@ -2578,7 +2585,7 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={importing}>Cancel</Button>
-          {gmbLocations.length > 0 && (
+          {status === "connected" && gmbLocations.length > 0 && (
             <Button onClick={handleImport} disabled={importing || selected.size === 0}>
               {importing
                 ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> Importing…</>

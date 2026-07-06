@@ -1514,3 +1514,25 @@ Stage Summary:
 - In production (with GOOGLE_CLIENT_ID set), this will fetch the user's ACTUAL Google Business Profile locations.
 - In demo mode (no keys), shows 3 sample locations for testing.
 - 20 nav modules, 61 API routes. Demo password: MyFNG@2025.
+
+---
+Task ID: 21-remove-demo-locations
+Agent: main (orchestrator)
+Task: Remove demo/mock GMB locations — production-only real GMB connection.
+
+Work Log:
+- Removed getMockAvailableLocations() function entirely from /api/google/available-locations.
+- Updated API to return 3 clear states: "not_configured" (no GOOGLE_CLIENT_ID), "not_connected" (configured but no token), "connected" (real GMB locations fetched).
+- Updated AddLocationDialog to handle all 3 states:
+  1. not_configured → shows "Google OAuth Not Configured" with setup steps (Google Cloud Console, enable APIs, create credentials, add redirect URI)
+  2. not_connected → shows "Google account not connected" with "Go to Google Integration" button
+  3. connected → shows real GMB locations list with checkboxes for import
+- No demo/sample/mock locations anywhere in the code.
+- Lint: 0 errors, 0 warnings.
+- Agent Browser verification: dialog shows "Google OAuth Not Configured" + setup steps (no demo locations) ✓
+
+Stage Summary:
+- Platform is 100% production-only. No demo/mock GMB data.
+- When deployed on Hostinger with real GOOGLE_CLIENT_ID: user clicks "Add Location" → real Google OAuth → real GMB locations fetched → select → import with real data.
+- Until configured: shows clear setup instructions.
+- Demo password: MyFNG@2025.
