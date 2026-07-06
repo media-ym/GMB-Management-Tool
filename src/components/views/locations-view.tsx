@@ -306,6 +306,7 @@ export function LocationsView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [bulkRunning, setBulkRunning] = useState<"sync" | "archive" | "activate" | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const { data: locations, isLoading } = useQuery<LocationWithStats[]>({
     queryKey: ["locations"],
@@ -473,11 +474,18 @@ export function LocationsView() {
         description="Manage all MyFNG Google Business Profiles across cities"
         icon={MapPin}
         actions={
-          canSync ? (
-            <Button size="sm" onClick={handleSyncAll} disabled={isLoading}>
-              <RefreshCw className="size-3.5 mr-1.5" /> Sync all
-            </Button>
-          ) : null
+          <>
+            {canManage && (
+              <Button size="sm" onClick={() => setAddOpen(true)}>
+                <Plus className="size-3.5 mr-1.5" /> Add Location
+              </Button>
+            )}
+            {canSync ? (
+              <Button size="sm" variant="outline" onClick={handleSyncAll} disabled={isLoading}>
+                <RefreshCw className="size-3.5 mr-1.5" /> Sync all
+              </Button>
+            ) : null}
+          </>
         }
       />
 
@@ -693,6 +701,9 @@ export function LocationsView() {
           ))}
         </div>
       )}
+
+      {/* Add Location Dialog */}
+      <AddLocationDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );
 }
@@ -2356,6 +2367,130 @@ function DetailRow({
         <div className="text-sm mt-0.5 break-words">{value}</div>
       </div>
     </div>
+  );
+}
+
+// ═══ Add Location Dialog ═══════════════════════════════════════════════════
+function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const qc = useQueryClient();
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [form, setForm] = useState({
+    name: "", locationCode: "", city: "", address: "", phone: "", email: "", website: "", pincode: "", latitude: "", longitude: "",
+  });
+
+  function set<K extends keyof typeof form>(key: K, value: string) {
+    setForm((f) => ({ ...f, [key]: value }));
+    setErrors((e) => ({ ...e, [key]: "" }));
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const errs: Record<string, string> = {};
+    if (!form.name.trim()) errs.name = "Location name is required";
+    if (!form.city.trim()) errs.city = "City is required";
+    if (!form.address.trim()) errs.address = "Address is required";
+    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/locations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        toast.error(json.message || "Failed to create location");
+        return;
+      }
+      toast.success(json.message || `Location "${form.name}" created successfully`);
+      qc.invalidateQueries({ queryKey: ["locations"] });
+      setForm({ name: "", locationCode: "", city: "", address: "", phone: "", email: "", website: "", pincode: "", latitude: "", longitude: "" });
+      onOpenChange(false);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create location");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto scroll-area">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <MapPin className="size-5 text-primary" /> Add New Location
+          </DialogTitle>
+          <DialogDescription>
+            Create a new MyFNG location. Default business hours, categories, services, and attributes will be added automatically.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="loc-name" className="text-xs font-medium">Location Name *</Label>
+              <Input id="loc-name" placeholder="e.g. MyFNG Nagpur" value={form.name} onChange={(e) => set("name", e.target.value)} />
+              {errors.name && <p className="text-xs text-rose-500">{errors.name}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="loc-code" className="text-xs font-medium">Location Code</Label>
+              <Input id="loc-code" placeholder="e.g. MYFNG-NGP" value={form.locationCode} onChange={(e) => set("locationCode", e.target.value)} />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="loc-city" className="text-xs font-medium">City *</Label>
+              <Input id="loc-city" placeholder="e.g. Nagpur" value={form.city} onChange={(e) => set("city", e.target.value)} />
+              {errors.city && <p className="text-xs text-rose-500">{errors.city}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="loc-pincode" className="text-xs font-medium">Pincode</Label>
+              <Input id="loc-pincode" placeholder="e.g. 440001" value={form.pincode} onChange={(e) => set("pincode", e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="loc-address" className="text-xs font-medium">Address *</Label>
+            <Textarea id="loc-address" placeholder="Full address of the location" value={form.address} onChange={(e) => set("address", e.target.value)} rows={2} />
+            {errors.address && <p className="text-xs text-rose-500">{errors.address}</p>}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="loc-phone" className="text-xs font-medium">Phone</Label>
+              <Input id="loc-phone" placeholder="+91 XXXXX XXXXX" value={form.phone} onChange={(e) => set("phone", e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="loc-email" className="text-xs font-medium">Email</Label>
+              <Input id="loc-email" type="email" placeholder="city@myfng.in" value={form.email} onChange={(e) => set("email", e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="loc-website" className="text-xs font-medium">Website</Label>
+            <Input id="loc-website" placeholder="https://myfng.in" value={form.website} onChange={(e) => set("website", e.target.value)} />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="loc-lat" className="text-xs font-medium">Latitude</Label>
+              <Input id="loc-lat" placeholder="e.g. 21.1458" value={form.latitude} onChange={(e) => set("latitude", e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="loc-lng" className="text-xs font-medium">Longitude</Label>
+              <Input id="loc-lng" placeholder="e.g. 79.0882" value={form.longitude} onChange={(e) => set("longitude", e.target.value)} />
+            </div>
+          </div>
+          <div className="rounded-lg bg-primary/5 border border-primary/15 p-3 text-xs text-muted-foreground flex items-start gap-2">
+            <MapPin className="size-4 text-primary shrink-0 mt-0.5" />
+            <span>After creation, this location will have default business hours (Mon–Sat 10 AM–8 PM, Sun 11 AM–6 PM), 3 categories, 4 services, and 4 attributes. You can edit these from the location detail page.</span>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> Creating…</> : <><Plus className="size-4 mr-1.5" /> Create Location</>}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

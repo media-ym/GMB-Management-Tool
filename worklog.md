@@ -1462,3 +1462,26 @@ Stage Summary:
 - Deployment: Dockerfile, PM2 config, .env.example, and step-by-step guide all created
 - 20 nav modules, 59 API routes, 49 Prisma models.
 - Demo password: MyFNG@2025.
+
+---
+Task ID: 19-add-location
+Agent: main (orchestrator)
+Task: Add "Add Location" feature — POST /api/locations + dialog form in Locations view.
+
+Work Log:
+- Added POST handler to /api/locations route: validates required fields (name, city, address), checks duplicate location code, creates Location record with all fields, then auto-creates default business hours (7 days), 3 categories, 4 services, and 4 attributes. Logs to audit_logs.
+- Added "Add Location" button in Locations view PageHeader (only visible if canManage = locations.manage permission).
+- Created AddLocationDialog component: full form with Location Name*, Location Code, City*, Pincode, Address*, Phone, Email, Website, Latitude, Longitude. Field validation, loading state, success toast, auto-refreshes location list. Info card explaining default data will be added.
+- Lint: 0 errors, 0 warnings.
+- Agent Browser verification:
+  * "Add Location" button visible in Locations header ✓
+  * Dialog opens with all form fields ✓
+  * Filled form (MyFNG Nagpur, Nagpur, Sitabuldi Road address) ✓
+  * POST /api/locations 200 — location created successfully ✓
+  * Total Locations updated from 15 → 16 ✓
+  * "MyFNG Nagpur" appears in location grid ✓
+
+Stage Summary:
+- Add Location feature complete — users can now add new MyFNG locations from the UI.
+- New locations get default business hours, categories, services, and attributes automatically.
+- Audit logged. Demo password: MyFNG@2025.
