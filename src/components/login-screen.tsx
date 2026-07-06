@@ -84,71 +84,206 @@ export function LoginScreen() {
           transition={{ duration: 0.5 }}
           className="flex-1 flex flex-col justify-center"
         >
-          {/* 3D Illustration placeholder area */}
+          {/* 3D Illustration — Mechanic repairing a car */}
           <motion.div
-            animate={{ y: [0, -10, 0] }}
+            animate={{ y: [0, -8, 0] }}
             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
             className="relative mb-10"
           >
             {/* Scene container */}
-            <div className="relative w-full max-w-sm mx-auto" style={{ height: "280px" }}>
+            <div className="relative w-full max-w-md mx-auto" style={{ height: "300px" }}>
+
               {/* Wall clock */}
-              <div className="absolute top-0 right-8 size-16 rounded-full bg-white shadow-md flex items-center justify-center border-2 border-gray-100">
-                <div className="absolute top-1/2 left-1/2 w-0.5 h-5 bg-gray-700 origin-bottom" style={{ transform: "translate(-50%, -100%) rotate(30deg)" }} />
-                <div className="absolute top-1/2 left-1/2 w-0.5 h-3.5 bg-gray-700 origin-bottom" style={{ transform: "translate(-50%, -100%) rotate(150deg)" }} />
+              <div className="absolute top-0 right-4 size-14 rounded-full bg-white shadow-md flex items-center justify-center border-2 border-gray-100 z-10">
+                <div className="absolute top-1/2 left-1/2 w-0.5 h-4 bg-gray-700 origin-bottom" style={{ transform: "translate(-50%, -100%) rotate(30deg)" }} />
+                <div className="absolute top-1/2 left-1/2 w-0.5 h-3 bg-gray-700 origin-bottom" style={{ transform: "translate(-50%, -100%) rotate(150deg)" }} />
                 <div className="size-1.5 rounded-full bg-gray-700 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
               </div>
 
-              {/* Plant left */}
-              <div className="absolute bottom-0 left-0 w-20 h-32">
-                <div className="absolute bottom-0 left-4 w-12 h-16 rounded-t-lg bg-white shadow-sm" />
-                <motion.div animate={{ rotate: [0, 3, 0] }} transition={{ duration: 3, repeat: Infinity }} className="absolute bottom-12 left-2 w-8 h-20 rounded-full" style={{ background: "#4FAE25", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
-                <motion.div animate={{ rotate: [0, -3, 0] }} transition={{ duration: 3.5, repeat: Infinity }} className="absolute bottom-14 left-6 w-7 h-16 rounded-full" style={{ background: "#72D44C", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
+              {/* Plant right */}
+              <div className="absolute bottom-2 right-0 w-16 h-24">
+                <div className="absolute bottom-0 left-3 w-10 h-12 rounded-t-lg bg-white shadow-sm" />
+                <motion.div animate={{ rotate: [0, 4, 0] }} transition={{ duration: 3, repeat: Infinity }} className="absolute bottom-10 left-1 w-6 h-16 rounded-full" style={{ background: "#4FAE25", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
+                <motion.div animate={{ rotate: [0, -4, 0] }} transition={{ duration: 3.5, repeat: Infinity }} className="absolute bottom-12 left-5 w-5 h-12 rounded-full" style={{ background: "#72D44C", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
               </div>
 
-              {/* Desk + Laptop */}
-              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-64">
-                {/* Desk */}
-                <div className="w-full h-3 rounded-sm" style={{ background: "#4FAE25" }} />
-                <div className="flex justify-center -mt-16">
-                  {/* Laptop */}
-                  <div className="relative">
-                    <div className="w-32 h-20 rounded-lg bg-gray-200 border-2 border-gray-300 shadow-lg flex items-center justify-center">
-                      <div className="w-28 h-16 rounded bg-gradient-to-br from-green-100 to-green-50 flex items-center justify-center">
-                        <Building2 className="size-6" style={{ color: GREENS.primaryDark }} />
-                      </div>
-                    </div>
-                    <div className="w-36 h-1.5 rounded-b-lg bg-gray-300 mx-auto" />
+              {/* ═══ CAR ═══════════════════════════════════════════════════ */}
+              {/* Car body */}
+              <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-72 h-20 z-20">
+                {/* Car roof/cabin */}
+                <div className="absolute top-0 left-12 w-48 h-14 rounded-t-[28px] shadow-lg" style={{ background: "#E53935" }} />
+                {/* Windshield */}
+                <div className="absolute top-1.5 left-16 w-20 h-10 rounded-t-2xl" style={{ background: "rgba(100,200,255,0.7)" }} />
+                <div className="absolute top-1.5 right-16 w-20 h-10 rounded-t-2xl" style={{ background: "rgba(100,200,255,0.7)" }} />
+                {/* Roof line */}
+                <div className="absolute top-0 left-12 w-48 h-2 rounded-t-[28px]" style={{ background: "#C62828" }} />
+
+                {/* Car main body */}
+                <div className="absolute top-12 left-0 w-full h-12 rounded-[12px] shadow-xl" style={{ background: "#E53935" }} />
+                {/* Side stripe */}
+                <div className="absolute top-16 left-2 w-[calc(100%-16px)] h-1.5 rounded-full" style={{ background: "#C62828" }} />
+
+                {/* Door line */}
+                <div className="absolute top-12 left-1/2 w-0.5 h-12" style={{ background: "#C62828" }} />
+
+                {/* Door handle */}
+                <div className="absolute top-15 left-[42%] w-5 h-1 rounded-full bg-gray-400/50" />
+
+                {/* Headlight */}
+                <div className="absolute top-15 right-1 w-4 h-4 rounded-full" style={{ background: "#FFF59D", boxShadow: "0 0 8px #FFF59D" }} />
+                {/* Taillight */}
+                <div className="absolute top-15 left-1 w-3 h-4 rounded-l-full" style={{ background: "#B71C1C" }} />
+
+                {/* ═══ CAR HOOD OPEN (repair scene) ════════════════════════ */}
+                {/* Hood propped open */}
+                <div className="absolute -top-8 left-0 w-24 h-3 rounded-t-lg shadow-md origin-bottom transform rotate-[-25deg]" style={{ background: "#D32F2F" }}>
+                  {/* Hood support rod */}
+                  <div className="absolute top-3 right-0 w-0.5 h-8 bg-gray-400 origin-top transform rotate-[25deg]" />
+                </div>
+
+                {/* Engine bay (dark area under hood) */}
+                <div className="absolute top-10 left-0 w-24 h-6 rounded-t-md" style={{ background: "#1a1a1a" }}>
+                  {/* Engine block */}
+                  <div className="absolute top-1 left-3 w-8 h-4 rounded" style={{ background: "#555" }} />
+                  <div className="absolute top-1.5 left-4 w-6 h-3 rounded" style={{ background: "#666" }} />
+                  {/* Spark plug wires */}
+                  <div className="absolute top-0 left-6 w-0.5 h-2" style={{ background: "#FF6F00" }} />
+                  <div className="absolute top-0 left-9 w-0.5 h-2" style={{ background: "#2196F3" }} />
+                  <div className="absolute top-0 left-12 w-0.5 h-2" style={{ background: "#4CAF50" }} />
+                  {/* Dipstick */}
+                  <div className="absolute top-1 right-2 w-0.5 h-3 rounded-full bg-yellow-600" />
+                </div>
+              </div>
+
+              {/* ═══ CAR WHEELS ════════════════════════════════════════════ */}
+              {/* Front wheel (right) */}
+              <motion.div
+                animate={{ rotate: [0, 360] }}
+                transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+                className="absolute bottom-4 right-[20%] z-30"
+              >
+                <div className="size-12 rounded-full border-4 border-gray-800 bg-gray-900 flex items-center justify-center shadow-lg">
+                  <div className="size-6 rounded-full bg-gray-500 flex items-center justify-center">
+                    {/* Spokes */}
+                    {[0, 60, 120, 180, 240, 300].map((deg) => (
+                      <div key={deg} className="absolute w-0.5 h-4 bg-gray-400 origin-center" style={{ transform: `rotate(${deg}deg) translateY(-4px)` }} />
+                    ))}
+                    <div className="size-2 rounded-full bg-gray-600" />
                   </div>
                 </div>
-              </div>
+              </motion.div>
 
-              {/* Coffee mug */}
-              <div className="absolute bottom-10 right-6 w-8 h-10 rounded-b-lg rounded-t-md shadow-sm" style={{ background: "#42A5F5" }}>
-                <div className="absolute top-1 left-1 right-1 h-2 rounded-full bg-white/30" />
-                <div className="absolute -right-2 top-3 w-3 h-4 rounded-r-full border-2 border-blue-400" />
-              </div>
-
-              {/* Character */}
-              <div className="absolute bottom-6 right-10 w-12 h-24">
-                {/* Head */}
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 size-8 rounded-full" style={{ background: "#E8C39E" }}>
-                  <div className="absolute top-1 left-1/2 -translate-x-1/2 w-6 h-3 rounded-t-full" style={{ background: "#5D4037" }} />
-                  <div className="absolute bottom-1 left-1.5 size-1 rounded-full bg-gray-700" />
-                  <div className="absolute bottom-1 right-1.5 size-1 rounded-full bg-gray-700" />
-                  <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-2 h-1 rounded-full bg-gray-700" />
+              {/* Rear wheel (left) */}
+              <motion.div
+                animate={{ rotate: [0, 360] }}
+                transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+                className="absolute bottom-4 left-[18%] z-30"
+              >
+                <div className="size-12 rounded-full border-4 border-gray-800 bg-gray-900 flex items-center justify-center shadow-lg">
+                  <div className="size-6 rounded-full bg-gray-500 flex items-center justify-center">
+                    {[0, 60, 120, 180, 240, 300].map((deg) => (
+                      <div key={deg} className="absolute w-0.5 h-4 bg-gray-400 origin-center" style={{ transform: `rotate(${deg}deg) translateY(-4px)` }} />
+                    ))}
+                    <div className="size-2 rounded-full bg-gray-600" />
+                  </div>
                 </div>
-                {/* Body — green sweater */}
-                <div className="absolute top-7 left-1/2 -translate-x-1/2 w-10 h-10 rounded-t-lg" style={{ background: GREENS.primary }} />
-                {/* Arms */}
-                <div className="absolute top-8 left-0 w-3 h-7 rounded-full" style={{ background: GREENS.primary }} />
-                <div className="absolute top-8 right-0 w-3 h-7 rounded-full" style={{ background: GREENS.primary }} />
-                {/* Jeans */}
-                <div className="absolute top-16 left-1/2 -translate-x-1/2 w-10 h-8 rounded-b-md" style={{ background: "#2196F3" }} />
+              </motion.div>
+
+              {/* ═══ MECHANIC CHARACTER ════════════════════════════════════ */}
+              <div className="absolute bottom-4 left-4 w-16 h-32 z-30">
+                {/* Head */}
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 size-10 rounded-full" style={{ background: "#E8C39E" }}>
+                  {/* Hair */}
+                  <div className="absolute -top-0.5 left-0 w-full h-4 rounded-t-full" style={{ background: "#3E2723" }} />
+                  {/* Cap beak */}
+                  <div className="absolute top-2 -right-3 w-5 h-2.5 rounded-r-full" style={{ background: "#4FAE25" }} />
+                  {/* Cap body */}
+                  <div className="absolute -top-1 left-1 w-8 h-3 rounded-t-full" style={{ background: "#4FAE25" }} />
+                  {/* Eyes */}
+                  <div className="absolute bottom-3 left-2 size-1.5 rounded-full bg-gray-800" />
+                  <div className="absolute bottom-3 right-2 size-1.5 rounded-full bg-gray-800" />
+                  {/* Smile */}
+                  <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-1.5 rounded-b-full border-b-2 border-gray-700" />
+                </div>
+
+                {/* Neck */}
+                <div className="absolute top-9 left-1/2 -translate-x-1/2 w-3 h-2" style={{ background: "#E8C39E" }} />
+
+                {/* Body — green overalls/work shirt */}
+                <div className="absolute top-10 left-1/2 -translate-x-1/2 w-14 h-14 rounded-t-xl" style={{ background: GREENS.primary }}>
+                  {/* Overall straps */}
+                  <div className="absolute top-0 left-2 w-2 h-5 rounded-full" style={{ background: "#4FAE25" }} />
+                  <div className="absolute top-0 right-2 w-2 h-5 rounded-full" style={{ background: "#4FAE25" }} />
+                  {/* Name badge */}
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 w-6 h-2 rounded bg-white/60" />
+                  {/* Center seam */}
+                  <div className="absolute top-5 left-1/2 -translate-x-1/2 w-0.5 h-9" style={{ background: "#4FAE25" }} />
+                </div>
+
+                {/* Left arm reaching toward engine */}
+                <div className="absolute top-11 left-0 w-4 h-10 origin-top transform rotate-[30deg]">
+                  <div className="w-full h-full rounded-full" style={{ background: GREENS.primary }} />
+                  {/* Hand */}
+                  <div className="absolute bottom-0 left-0 size-3.5 rounded-full" style={{ background: "#E8C39E" }} />
+                </div>
+
+                {/* Right arm holding wrench */}
+                <div className="absolute top-12 right-0 w-3.5 h-9 origin-top transform rotate-[-15deg]">
+                  <div className="w-full h-full rounded-full" style={{ background: GREENS.primary }} />
+                  {/* Hand holding wrench */}
+                  <div className="absolute bottom-0 left-0 size-3 rounded-full" style={{ background: "#E8C39E" }} />
+                  {/* Wrench */}
+                  <div className="absolute bottom-0 left-1 w-1.5 h-7 origin-bottom transform rotate-[-45deg] rounded-sm bg-gray-500 shadow-sm">
+                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-2.5 rounded border-2 border-gray-600 bg-gray-400" />
+                  </div>
+                </div>
+
+                {/* Legs — dark pants */}
+                <div className="absolute top-22 left-1/2 -translate-x-1/2 flex gap-1">
+                  <div className="w-4 h-8 rounded-b-md" style={{ background: "#37474F" }} />
+                  <div className="w-4 h-8 rounded-b-md" style={{ background: "#37474F" }} />
+                </div>
+
+                {/* Boots */}
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex gap-1">
+                  <div className="w-5 h-3 rounded-md rounded-bl-none" style={{ background: "#263238" }} />
+                  <div className="w-5 h-3 rounded-md rounded-br-none" style={{ background: "#263238" }} />
+                </div>
               </div>
 
-              {/* Floor shadow */}
-              <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-48 h-3 rounded-full bg-black/5 blur-md" />
+              {/* ═══ TOOLBOX ════════════════════════════════════════════════ */}
+              <div className="absolute bottom-4 right-4 w-14 h-10 z-25">
+                <div className="absolute bottom-0 w-full h-8 rounded-lg shadow-md" style={{ background: "#37474F" }}>
+                  {/* Tray */}
+                  <div className="absolute top-0 left-0 w-full h-2 rounded-t-lg bg-gray-600" />
+                  {/* Tool slots */}
+                  <div className="absolute top-2.5 left-1.5 w-1.5 h-5 rounded-full" style={{ background: "#FF6F00" }} />
+                  <div className="absolute top-2.5 left-4 w-1.5 h-5 rounded-full" style={{ background: "#2196F3" }} />
+                  <div className="absolute top-2.5 left-7 w-1.5 h-5 rounded-full bg-gray-400" />
+                  <div className="absolute top-2.5 left-10 w-1.5 h-5 rounded-full bg-gray-500" />
+                </div>
+                {/* Handle */}
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-6 h-2 rounded-full border-2 border-gray-600" />
+              </div>
+
+              {/* ═══ OIL DRAIN PAN ══════════════════════════════════════════ */}
+              <div className="absolute bottom-2 left-[42%] w-12 h-3 z-25">
+                <div className="w-full h-full rounded-full" style={{ background: "#212121" }}>
+                  <div className="absolute top-0 left-0 w-full h-1 rounded-full" style={{ background: "#424242" }} />
+                </div>
+              </div>
+
+              {/* ═══ FLOOR SHADOW ═══════════════════════════════════════════ */}
+              <div className="absolute bottom-1 left-1/2 -translate-x-1/2 w-80 h-4 rounded-full bg-black/8 blur-md" />
+
+              {/* ═══ SPARK / SPARKLE near engine ════════════════════════════ */}
+              <motion.div
+                animate={{ opacity: [0, 1, 0], scale: [0.5, 1.2, 0.5] }}
+                transition={{ duration: 1.5, repeat: Infinity, delay: 0.5 }}
+                className="absolute top-[42%] left-[32%] z-35"
+              >
+                <Sparkles className="size-4 text-yellow-400" />
+              </motion.div>
             </div>
           </motion.div>
 

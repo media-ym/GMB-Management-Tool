@@ -1667,3 +1667,28 @@ Work Log:
 Stage Summary:
 - Premium login + register page complete with soft green theme, glassmorphism, framer-motion animations, 3D illustration scene, and all spec requirements.
 - Content unchanged — same MyFNG branding, same demo accounts, same password.
+
+---
+Task ID: 27-mechanic-car-illustration
+Agent: main (orchestrator)
+Task: Replace office illustration with car repair scene — mechanic character repairing a car with open hood.
+
+Work Log:
+- Replaced the entire 3D illustration scene in login-screen.tsx with a car repair scene:
+  * CAR: Red car body (#E53935) with roof/cabin, windshields, side stripe, door line, door handle, headlight (glowing yellow), taillight
+  * HOOD OPEN: Hood propped open at angle with support rod, dark engine bay visible underneath with engine block, spark plug wires (orange/blue/green), dipstick
+  * WHEELS: Two wheels (front + rear) with rotating animation, tire (dark), rim (gray), 6 spokes each, spinning continuously
+  * MECHANIC CHARACTER: Head with skin tone, dark hair, green cap (#4FAE25) with beak, smile, green work shirt/overalls (#72D44C) with straps and name badge, left arm reaching toward engine, right arm holding wrench (gray tool), dark pants, black boots
+  * TOOLBOX: Dark gray box with handle, tool slots with colored tools (orange, blue, gray)
+  * OIL DRAIN PAN: Black pan under car
+  * WALL CLOCK: White round clock with hands
+  * PLANT: Green plant in white pot (right side)
+  * SPARKLE ANIMATION: Yellow sparkles near engine bay (infinite pulse)
+  * FLOOR SHADOW: Blurred ellipse under scene
+  * FLOATING: Entire scene floats up/down (4s infinite)
+- Lint: 0 errors, 0 warnings.
+- Agent Browser verification: login screen renders with car repair illustration ✓
+
+Stage Summary:
+- Login illustration replaced with car repair scene: mechanic in green overalls fixing a car with open hood, spinning wheels, toolbox, oil pan, sparkles.
+- All other content unchanged (form, demo accounts, register page).
