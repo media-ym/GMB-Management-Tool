@@ -1,14 +1,18 @@
-// MyFNG Local AI Manager — Prisma Schema (Expanded)
-// Adapted from Supabase PostgreSQL spec (03_Supabase_Database parts 1-3) to Prisma + SQLite.
-// ~48 models covering: Auth/RBAC, Locations, Google Integration, Reviews & Posts,
-// Analytics & SEO, AI, Media, Reports, Notifications & Logs, Settings & Operations.
-// SQLite limitations: enums→String, JSONB→String(JSON), DECIMAL→Float, TIME→String, arrays→CSV/JSON.
+// MyFNG Local AI Manager — Prisma Schema (Production-Ready)
+// Supports BOTH SQLite (development) and PostgreSQL (production on Hostinger).
+// For production: change provider to "postgresql" and set DATABASE_URL to your PostgreSQL connection string.
+// For development: keep provider as "sqlite" and use file: path in DATABASE_URL.
+// SQLite limitations: enums→String, JSONB→String(JSON), DECIMAL→Float, TIME→String.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
+  // For production on Hostinger with PostgreSQL, change to:
+  //   provider = "postgresql"
+  //   url      = env("DATABASE_URL")
+  // And set DATABASE_URL=postgresql://user:pass@host:5432/dbname
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }

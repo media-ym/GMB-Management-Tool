@@ -1,0 +1,24 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# MyFNG Local AI Manager — Prisma Schema for PostgreSQL (Production)
+# Copy this to prisma/schema.prisma when deploying to Hostinger with PostgreSQL.
+# ═══════════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+# ─── Then run: ────────────────────────────────────────────────────────────
+# 1. bun run db:generate    — regenerate Prisma client for PostgreSQL
+# 2. bun run db:push        — create all tables in PostgreSQL
+# 3. bunx tsx prisma/seed.ts — seed initial data (users, roles, locations, etc.)
+# ──────────────────────────────────────────────────────────────────────────
+
+# The rest of the schema (all 49 models) is identical to the SQLite version.
+# Simply copy all model definitions from prisma/schema.prisma below this point.
+# PostgreSQL supports JSONB natively, so you can optionally change String? JSON
+# fields to Json? type for better querying. But String works fine too.
