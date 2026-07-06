@@ -1623,3 +1623,23 @@ Stage Summary:
 - When user clicks "Sync" on a location → REAL Google Business Profile API is called → real reviews, real ratings, real business hours, real services, real photos, real categories all fetched and stored.
 - Location detail page ("View Details") shows this real synced data: Reviews, Avg Rating, Response Rate, Business Information, Business Hours, Services, Business Photos.
 - Flow: Connect Google → Import locations → Click Sync → View Details → See REAL GMB data.
+
+---
+Task ID: 25-login-redesign
+Agent: main (orchestrator)
+Task: Redesign login screen to match reference image — mint gradient left panel, white form right panel.
+
+Work Log:
+- Analyzed reference image via VLM: split-screen (60/40), mint green gradient left panel (#C8E6C9 → #81C784), white form panel right, mint green (#81C784) primary button, social login buttons (Google/GitHub/Apple), terms text, 8px rounded corners.
+- Rewrote login-screen.tsx:
+  * LEFT PANEL (60%): mint gradient background (#C8E6C9 → #81C784), MyFNG logo (white/20 glassmorphism), heading "One dashboard for every MyFNG Google Business Profile.", feature cards (Review Management, Google Posts, Local SEO, MiSA AI), decorative blurred circles
+  * RIGHT PANEL (40%): white background, "Sign in" heading (2xl semibold), email input with mail icon, password input with lock icon + eye toggle, mint green (#81C784) sign-in button, "or sign in with" divider, 3 social login buttons (Google multicolor, GitHub black, Apple black) as 40px circles, Terms/Privacy text with mint links, demo account quick-login buttons
+  * Colors: mint #81C784 primary, #2E7D32 dark green text, gray-200 borders, focus:ring mint
+  * Typography: 2xl semibold heading, sm medium labels, base regular inputs
+  * Rounded: 8px inputs, 8px button, 12px logo badge
+- Lint: 0 errors, 0 warnings.
+- Agent Browser verification: login screen renders with mint gradient + white form + social buttons + terms + demo accounts ✓
+
+Stage Summary:
+- Login screen redesigned to match reference: mint gradient left panel, clean white form right panel, mint green button, social login, terms text.
+- Content unchanged — same MyFNG branding, same demo accounts, same password.
