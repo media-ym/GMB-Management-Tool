@@ -1717,3 +1717,29 @@ Stage Summary:
 - When user creates a post and selects "Publish Now" → post goes to the REAL selected GMB profile via Google Business Profile API.
 - When user changes a draft to "Published" → same real publish to Google.
 - Flow: Select location → Create post → Publish → REAL Google Business Profile API call → post appears on Google.
+
+---
+Task ID: 29-post-type-google-mapping
+Agent: main (orchestrator)
+Task: Fix all 4 post types (What's New, Offer, Event, Update) to map correctly to Google Business Profile API.
+
+Work Log:
+- Fixed POST /api/posts (create + publish):
+  * whats_new → Google topicType "STANDARD" (What's New on GMB)
+  * offer → Google topicType "OFFER" + offer fields (couponCode, redeemUrl, termsAndConditions)
+  * event → Google topicType "EVENT" + event fields (eventTitle, schedule with startDate/endDate)
+  * update → Google topicType "STANDARD" (business update)
+  * All types send: languageCode, summary (content), callToAction (actionType + url), title
+- Fixed PATCH /api/posts/[id] (draft → publish):
+  * Same type-specific mapping for all 4 types
+  * Offer: includes redeemUrl
+  * Event: includes event.title + event.schedule (startDate/endDate from post fields)
+- Lint: 0 errors, 0 warnings.
+
+Stage Summary:
+- All 4 post types now correctly map to Google Business Profile API format:
+  * What's New → STANDARD post (regular update post on GMB)
+  * Offer → OFFER post (with coupon/redeem URL on GMB)
+  * Event → EVENT post (with event title + date schedule on GMB)
+  * Update → STANDARD post (business update on GMB)
+- When user selects a post type and publishes, the correct Google post type is created on the selected GMB profile.

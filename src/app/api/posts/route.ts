@@ -82,13 +82,41 @@ export async function POST(req: NextRequest) {
       const accessToken = await getValidAccessToken();
       if (accessToken) {
         try {
-          const gPost = await createGooglePost(accessToken, gbp.googleLocationId, {
+          // Map our post types to Google's LocalPost topicType
+          // whats_new → STANDARD, offer → OFFER, event → EVENT, update → STANDARD
+          const googleTopicType = type === "offer" ? "OFFER" : type === "event" ? "EVENT" : "STANDARD";
+
+          const googlePostData: any = {
             languageCode: "en",
             summary: content,
-            topicType: type === "offer" ? "OFFER" : type === "event" ? "EVENT" : "STANDARD",
+            topicType: googleTopicType,
             callToAction: ctaType ? { actionType: ctaType.toUpperCase(), url: ctaUrl || undefined } : undefined,
-            ...(title ? { title } : {}),
-          });
+          };
+
+          // Add title for all types
+          if (title) googlePostData.title = title;
+
+          // Offer-specific fields
+          if (type === "offer") {
+            googlePostData.offer = {
+              couponCode: body.couponCode || undefined,
+              redeemUrl: ctaUrl || undefined,
+              termsAndConditions: body.offerTerms || undefined,
+            };
+          }
+
+          // Event-specific fields
+          if (type === "event") {
+            googlePostData.event = {
+              title: title,
+              schedule: {
+                startDate: body.startDate ? { year: new Date(body.startDate).getFullYear(), month: new Date(body.startDate).getMonth() + 1, day: new Date(body.startDate).getDate() } : undefined,
+                endDate: body.endDate ? { year: new Date(body.endDate).getFullYear(), month: new Date(body.endDate).getMonth() + 1, day: new Date(body.endDate).getDate() } : undefined,
+              },
+            };
+          }
+
+          const gPost = await createGooglePost(accessToken, gbp.googleLocationId, googlePostData);
           googlePostId = gPost.name || null;
         } catch (e: any) {
           await logAudit({ userId: user.id, userName: user.name, action: "post.google_failed", entity: "post", newValue: { locationId, error: e.message }, ip: req.headers.get("x-forwarded-for") ?? undefined });

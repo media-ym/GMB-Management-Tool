@@ -27,13 +27,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const accessToken = await getValidAccessToken();
       if (accessToken) {
         try {
-          const gPost = await createGooglePost(accessToken, gbp.googleLocationId, {
+          const googleTopicType = post.type === "offer" ? "OFFER" : post.type === "event" ? "EVENT" : "STANDARD";
+
+          const googlePostData: any = {
             languageCode: "en",
             summary: post.content,
-            topicType: post.type === "offer" ? "OFFER" : post.type === "event" ? "EVENT" : "STANDARD",
+            topicType: googleTopicType,
             callToAction: post.ctaType ? { actionType: post.ctaType.toUpperCase(), url: post.ctaUrl || undefined } : undefined,
-            ...(post.title ? { title: post.title } : {}),
-          });
+          };
+
+          if (post.title) googlePostData.title = post.title;
+
+          if (post.type === "offer") {
+            googlePostData.offer = { redeemUrl: post.ctaUrl || undefined };
+          }
+
+          if (post.type === "event") {
+            googlePostData.event = {
+              title: post.title,
+              schedule: post.startDate ? {
+                startDate: { year: new Date(post.startDate).getFullYear(), month: new Date(post.startDate).getMonth() + 1, day: new Date(post.startDate).getDate() },
+                endDate: post.endDate ? { year: new Date(post.endDate).getFullYear(), month: new Date(post.endDate).getMonth() + 1, day: new Date(post.endDate).getDate() } : undefined,
+              } : undefined,
+            };
+          }
+
+          const gPost = await createGooglePost(accessToken, gbp.googleLocationId, googlePostData);
           data.googlePostId = gPost.name || null;
         } catch (e: any) {
           return fail(`Failed to publish to Google: ${e.message}`, 500);
