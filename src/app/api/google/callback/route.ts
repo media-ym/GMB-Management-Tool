@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
-  const mock = url.searchParams.get("mock");
+  
   const error = url.searchParams.get("error");
   const state = url.searchParams.get("state");
 
@@ -20,16 +20,15 @@ export async function GET(req: NextRequest) {
 
   const user = await getSessionUser();
 
-  // Mock mode — just create/update the account record
-  if (mock === "true" || !code) {
+  if (!code) {
     const existing = await db.googleAccount.findFirst();
     if (existing) {
       await db.googleAccount.update({
         where: { id: existing.id },
         data: {
           status: "active",
-          accessToken: "mock_access_token_" + Date.now(),
-          refreshToken: "mock_refresh_token_" + Date.now(),
+          accessToken: "no_token",
+          refreshToken: "no_token",
           tokenExpiry: new Date(Date.now() + 3600 * 1000),
         },
       });
@@ -37,17 +36,17 @@ export async function GET(req: NextRequest) {
       await db.googleAccount.create({
         data: {
           email: "gmb@myfng.in",
-          googleUserId: "gmb_myfng_" + Date.now(),
+          googleUserId: "not_connected",
           status: "active",
-          accessToken: "mock_access_token_" + Date.now(),
-          refreshToken: "mock_refresh_token_" + Date.now(),
+          accessToken: "no_token",
+          refreshToken: "no_token",
           tokenExpiry: new Date(Date.now() + 3600 * 1000),
           scopesJson: JSON.stringify(["https://www.googleapis.com/auth/business.manage"]),
         },
       });
     }
     if (user) {
-      await logAudit({ userId: user.id, userName: user.name, action: "google.connect", entity: "google_account", newValue: { mode: "mock" }, ip: req.headers.get("x-forwarded-for") ?? undefined });
+      await logAudit({ userId: user.id, userName: user.name, action: "google.connect", entity: "google_account", newValue: { mode: "not_configured" }, ip: req.headers.get("x-forwarded-for") ?? undefined });
     }
     return NextResponse.redirect(new URL("/?google_connected=true", url.origin));
   }

@@ -14,11 +14,11 @@ export async function GET(req: NextRequest) {
 
   return ok({
     configured: googleServiceStatus.isConfigured,
-    mode: googleServiceStatus.mode, // "production" or "mock"
+    mode: googleServiceStatus.mode,
     hasClientSecret: googleServiceStatus.hasClientSecret,
     redirectUri: googleServiceStatus.redirectUri,
     message: googleServiceStatus.isConfigured
       ? "Google OAuth is configured for production. Click Connect to authorize."
-      : "Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env to enable real GMB connection. Currently running in mock mode.",
+      : "Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env to enable real GMB connection.",
   });
 }

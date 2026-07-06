@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     _count: { type: true },
   });
 
-  // Top performing (most recent published — mock engagement)
+  // Top performing (most recent published posts)
   const topPerforming = await db.post.findMany({
     where: { ...where, status: "published" },
     orderBy: { publishedAt: "desc" },

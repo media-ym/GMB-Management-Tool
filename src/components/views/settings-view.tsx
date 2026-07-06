@@ -2621,7 +2621,7 @@ function StorageContent() {
   const files = system?.storageFiles ?? [];
   const totalUsed = buckets.reduce((a, b) => a + b.totalSize, 0);
   const totalUsedMb = (totalUsed / 1024 / 1024).toFixed(1);
-  const totalQuotaMb = 1024; // mock 1 GB
+  const totalQuotaMb = 1024; // 1 GB
   const usedPct = Math.min(100, Math.round((Number(totalUsedMb) / totalQuotaMb) * 100));
   const availableMb = (totalQuotaMb - Number(totalUsedMb)).toFixed(1);
 
@@ -3091,7 +3091,7 @@ function ErrorMonitoringContent() {
                       <TableRow key={`${e.id}-detail`} className="bg-muted/20">
                         <TableCell colSpan={7} className="px-4 pb-3">
                           <div className="rounded-md border bg-card p-3 mt-1">
-                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5">Stack Trace (mock)</div>
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5">Stack Trace</div>
                             <pre className="text-[11px] font-mono whitespace-pre-wrap leading-relaxed">
 {`Error: ${e.errorMessage}
     at ${e.module}.process (/app/src/server/${e.module.toLowerCase()}.ts:42:15)

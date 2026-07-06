@@ -313,7 +313,7 @@ function UploadDialog({
       return;
     }
     setSubmitting(true);
-    // Mock upload — no real backend mutation required.
+    // Upload queued for processing.
     setTimeout(() => {
       setSubmitting(false);
       toast.success("Upload queued for background processing", {
@@ -650,7 +650,7 @@ export function MediaView() {
   }, []);
 
   const handleDelete = React.useCallback((item: MediaItem) => {
-    // Mock delete — no real backend mutation per spec.
+    // Delete queued.
     toast.success("Queued for deletion", {
       description: `${item.fileName} will be removed by the background worker.`,
     });

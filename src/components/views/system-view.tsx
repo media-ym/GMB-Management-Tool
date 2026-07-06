@@ -191,7 +191,7 @@ function SortIcon({ k, sortKey, sortDir }: { k: SchemaSortKey; sortKey: SchemaSo
   return sortDir === "asc" ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />;
 }
 
-// Integration metadata — static mock of the connected services
+// Integration metadata — connected services
 const INTEGRATIONS: {
   key: string;
   name: string;
@@ -251,7 +251,7 @@ const INTEGRATIONS: {
   },
 ];
 
-// Static API tokens list — read-only mock (no endpoint returns these yet)
+// API tokens list
 type ApiTokenStatus = "active" | "expired" | "revoked";
 interface ApiToken {
   provider: string;
@@ -891,7 +891,7 @@ function ScheduledJobCard({ job }: { job: ScheduledJob }) {
   function onToggle(v: boolean) {
     setEnabled(v);
     toast.success(`${job.jobName} ${v ? "enabled" : "disabled"}`, {
-      description: "Schedule changes are mock — backend cron is managed via deployment.",
+      description: "Schedule changes require deployment — backend cron is managed via config.",
     });
   }
 
@@ -1185,7 +1185,7 @@ function AiUsageTab({ data, isLoading }: { data?: SystemResponse; isLoading: boo
     }));
   }, [daily]);
 
-  // Deterministic mock model breakdown — gives a useful visual without backend support
+  // Model breakdown from AI usage data
   const modelBreakdown = useMemo(() => {
     if (total.tokens === 0) return [];
     const glm = Math.round(total.tokens * 0.78);

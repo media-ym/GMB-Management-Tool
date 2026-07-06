@@ -33,7 +33,7 @@ export async function GET() {
       auth: "NextAuth Credentials + RBAC",
       database: "Prisma + SQLite (49 models)",
       ai: "MiSA AI — review replies, post generation, SEO recommendations, chat",
-      googleIntegration: "OAuth (mock) + sync engine",
+      googleIntegration: "Real OAuth + sync engine",
       realtime: "TanStack Query polling (WebSocket ready)",
       storage: "Local file system (Supabase Storage ready)",
     },

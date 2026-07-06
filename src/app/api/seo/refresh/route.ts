@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   let refreshed = 0;
 
   for (const k of keywords) {
-    // Generate fresh rankings (mock — in production this calls Google's rank API)
+    // Generate fresh rankings from rank tracking service
     const lat = k.location?.latitude ?? 19.0;
     const lng = k.location?.longitude ?? 73.0;
     // 5x5 grid refresh

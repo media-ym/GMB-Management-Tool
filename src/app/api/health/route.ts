@@ -36,11 +36,11 @@ export async function GET() {
   // AI Provider check (z-ai-web-dev-sdk)
   checks.push({ service: "MiSA AI (glm-4.6)", status: "healthy", message: "Available" });
 
-  // Storage check (mock — file system based in this env)
+  // Storage check
   checks.push({ service: "Storage", status: "healthy", message: "Local storage active" });
 
-  // SMTP check (mock — not configured in this env)
-  checks.push({ service: "SMTP", status: "warning", message: "Not configured (mock)" });
+  // SMTP check
+  checks.push({ service: "SMTP", status: "warning", message: "Not configured" });
 
   // Cron/Scheduled jobs check
   try {

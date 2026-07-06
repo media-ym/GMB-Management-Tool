@@ -201,18 +201,9 @@ async function main() {
     createdUsers.push(await db.user.create({ data: { ...u, password: pw } }));
   }
 
-  // ── Google Account ────────────────────────────────────────────────
-  const gAccount = await db.googleAccount.create({
-    data: {
-      email: "gmb@myfng.in",
-      googleUserId: "gmb_myfng_001",
-      refreshToken: "encrypted_refresh_token_placeholder",
-      accessToken: "encrypted_access_token_placeholder",
-      tokenExpiry: new Date(Date.now() + 3600 * 1000),
-      scopesJson: JSON.stringify(["https://www.googleapis.com/auth/business.manage"]),
-      status: "active",
-    },
-  });
+  // ── Google Account — NOT created in seed. Real Google OAuth connects via UI. ──
+  // When user deploys and clicks "Connect Google", a real Google account record is created.
+  const gAccount = { id: "seed-placeholder" }; // placeholder for GBP linking below
 
   // ── Locations + GoogleBusinessProfile + BusinessInfo + Hours + Photos + etc ──
   const createdLocations: any[] = [];
@@ -259,7 +250,7 @@ async function main() {
       data: {
         googleLocationId: `myfng-gbp-${L.city.toLowerCase().replace(/\s+/g, "-")}`,
         locationId: loc.id,
-        googleAccountId: gAccount.id,
+        googleAccountId: null, // Will be linked when real Google OAuth connects
         profileName: L.name,
         primaryCategory: "Interior Designer",
         additionalCategoriesJson: JSON.stringify(["Home Improvement Store", "Furniture Store"]),

@@ -58,7 +58,7 @@ export async function GET() {
   }
 
   // SMTP
-  checks.push({ service: "SMTP", status: "warning", message: "Not configured (mock environment)" });
+  checks.push({ service: "SMTP", status: "warning", message: "Not configured" });
 
   // Cron Jobs
   try {

@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
       aiRequests: totalAiRequests,
       aiTokens: totalAiTokens,
       aiCost: Math.round(totalAiCost * 100) / 100,
-      avgResponseTimeMs: 245, // mock — in production tracked by middleware
+      avgResponseTimeMs: 0, // tracked by middleware in production
       rateLimitStatus: "normal", // normal | approaching | exceeded
     },
     daily: Array.from(byDay.values()),

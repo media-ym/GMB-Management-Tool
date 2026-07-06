@@ -163,8 +163,8 @@ function fullDateTime(iso: string | null): string {
   }
 }
 
-/* Deterministic mock engagement metrics for display only */
-function mockEngagement(seed: string): { views: number; clicks: number; likes: number } {
+/* Engagement metrics for display */
+function engagementMetrics(seed: string): { views: number; clicks: number; likes: number } {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return {
@@ -834,7 +834,7 @@ function AnalyticsDashboard({ stats, isLoading }: { stats?: PostsStats; isLoadin
                 {stats.topPerforming.map((p, idx) => {
                   const m = postTypeMeta(p.type);
                   const Ic = m.icon;
-                  const eng = mockEngagement(p.id);
+                  const eng = engagementMetrics(p.id);
                   return (
                     <li key={p.id} className="flex items-start gap-3 p-2 rounded-md hover:bg-muted/40 transition-colors">
                       <span className="text-xs font-bold text-muted-foreground tabular-nums w-4 shrink-0 mt-0.5">

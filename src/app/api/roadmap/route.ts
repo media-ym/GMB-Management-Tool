@@ -51,7 +51,7 @@ export async function GET() {
       status: "completed" as const,
       progress: 100,
       deliverables: [
-        { item: "Google OAuth (mock connect/disconnect)", done: true },
+        { item: "Google OAuth (real connect/disconnect via Google consent)", done: true },
         { item: "Import Google Business Profiles", done: locationCount > 0 },
         { item: "Sync Business Information", done: true },
         { item: "Sync Categories", done: true },

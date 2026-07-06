@@ -1,17 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Google Business Profile Service Layer
-// Production-ready Google OAuth + GBP API integration.
-// In development: falls back to mock data when GOOGLE_CLIENT_ID is not set.
-// In production: makes real Google API calls with OAuth token exchange.
+// Google Business Profile Service Layer — Production Only
+// All Google API calls are real. Requires GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { db } from "./db";
 
-// ─── Configuration ────────────────────────────────────────────────────────
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/google/callback`;
-const IS_CONFIGURED = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+export const IS_CONFIGURED = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 
 const GBP_SCOPES = [
   "https://www.googleapis.com/auth/business.manage",
@@ -24,10 +21,6 @@ const GBP_SCOPES = [
 // ─── OAuth Flow ───────────────────────────────────────────────────────────
 
 export function getGoogleAuthUrl(state?: string): string {
-  if (!IS_CONFIGURED) {
-    // Mock mode — return a placeholder URL that the UI handles
-    return `/api/google/callback?mock=true&state=${state || ""}`;
-  }
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: GOOGLE_REDIRECT_URI,
@@ -44,20 +37,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{
   accessToken: string;
   refreshToken: string;
   expiryDate: number;
-  email?: string;
-  googleUserId?: string;
 }> {
-  if (!IS_CONFIGURED) {
-    // Mock mode — return fake tokens
-    return {
-      accessToken: "mock_access_token_" + Date.now(),
-      refreshToken: "mock_refresh_token_" + Date.now(),
-      expiryDate: Date.now() + 3600 * 1000,
-      email: "gmb@myfng.in",
-      googleUserId: "mock_user_" + Date.now(),
-    };
-  }
-
   const body = new URLSearchParams({
     code,
     client_id: GOOGLE_CLIENT_ID,
@@ -89,13 +69,6 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   accessToken: string;
   expiryDate: number;
 }> {
-  if (!IS_CONFIGURED || !refreshToken || refreshToken.startsWith("mock_")) {
-    return {
-      accessToken: "mock_access_token_refreshed_" + Date.now(),
-      expiryDate: Date.now() + 3600 * 1000,
-    };
-  }
-
   const body = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     client_secret: GOOGLE_CLIENT_SECRET,
@@ -152,7 +125,6 @@ const GBP_PERF_BASE = "https://businessprofileperformance.googleapis.com/v1";
 const GBP_ACCOUNTS_BASE = "https://mybusinessaccountmanagement.googleapis.com/v1";
 
 export async function listGoogleAccounts(accessToken: string): Promise<any[]> {
-  if (!IS_CONFIGURED) return []; // Mock mode
   const res = await fetch(`${GBP_ACCOUNTS_BASE}/accounts`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -162,7 +134,6 @@ export async function listGoogleAccounts(accessToken: string): Promise<any[]> {
 }
 
 export async function listGoogleLocations(accessToken: string, accountName: string): Promise<any[]> {
-  if (!IS_CONFIGURED) return []; // Mock mode
   const res = await fetch(`${GBP_API_BASE}/${accountName}/locations?readMask=name,title,storeCode,latlng,metadata,profile,regularHours,specialHours,serviceItems,categories,phoneNumbers,websiteUri,openInfo`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -172,7 +143,6 @@ export async function listGoogleLocations(accessToken: string, accountName: stri
 }
 
 export async function getBusinessProfile(accessToken: string, locationName: string): Promise<any> {
-  if (!IS_CONFIGURED) return null;
   const res = await fetch(`${GBP_API_BASE}/${locationName}?readMask=title,storeCode,latlng,metadata,profile,regularHours,categories,phoneNumbers,websiteUri,openInfo,serviceItems,attributes`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -181,7 +151,6 @@ export async function getBusinessProfile(accessToken: string, locationName: stri
 }
 
 export async function listReviews(accessToken: string, locationName: string, pageSize = 50): Promise<any[]> {
-  if (!IS_CONFIGURED) return [];
   const res = await fetch(`${GBP_API_BASE}/${locationName}/reviews?pageSize=${pageSize}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -191,7 +160,6 @@ export async function listReviews(accessToken: string, locationName: string, pag
 }
 
 export async function replyToReview(accessToken: string, reviewName: string, replyText: string): Promise<any> {
-  if (!IS_CONFIGURED) return { reply: { comment: replyText } };
   const res = await fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -202,7 +170,6 @@ export async function replyToReview(accessToken: string, reviewName: string, rep
 }
 
 export async function createGooglePost(accessToken: string, locationName: string, post: any): Promise<any> {
-  if (!IS_CONFIGURED) return { name: "mock_post_" + Date.now() };
   const res = await fetch(`${GBP_API_BASE}/${locationName}/localPosts`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -213,7 +180,6 @@ export async function createGooglePost(accessToken: string, locationName: string
 }
 
 export async function getPerformanceMetrics(accessToken: string, locationName: string, startDate: string, endDate: string): Promise<any> {
-  if (!IS_CONFIGURED) return {};
   const res = await fetch(`${GBP_PERF_BASE}/locations/${locationName}:getDailyMetricsTimeSeries?dailyRange.startDate.date.year=${startDate}&dailyRange.endDate.date.year=${endDate}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -221,7 +187,7 @@ export async function getPerformanceMetrics(accessToken: string, locationName: s
   return res.json();
 }
 
-// ─── Sync Engine — fetches real data from Google and updates DB ───────────
+// ─── Sync Engine ──────────────────────────────────────────────────────────
 
 export async function syncGoogleProfiles(): Promise<{ synced: number; errors: string[] }> {
   const errors: string[] = [];
@@ -238,7 +204,6 @@ export async function syncGoogleProfiles(): Promise<{ synced: number; errors: st
       const locations = await listGoogleLocations(accessToken, account.name);
       for (const loc of locations) {
         try {
-          // Find existing location by googleLocationId or create
           const existing = await db.googleBusinessProfile.findFirst({
             where: { googleLocationId: loc.name },
           });
@@ -317,5 +282,5 @@ export const googleServiceStatus = {
   isConfigured: IS_CONFIGURED,
   hasClientSecret: !!GOOGLE_CLIENT_SECRET,
   redirectUri: GOOGLE_REDIRECT_URI,
-  mode: IS_CONFIGURED ? "production" : "mock",
+  mode: IS_CONFIGURED ? "production" : "not_configured",
 };

@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
   // Determine OAuth status
   // If Google OAuth is not configured (no GOOGLE_CLIENT_ID), always show "not_configured"
-  // regardless of what's in the database (mock data from seed).
+  // regardless of what is in the database (seed data).
   let oauthStatus = "disconnected";
   if (!googleServiceStatus.isConfigured) {
     oauthStatus = "not_configured";

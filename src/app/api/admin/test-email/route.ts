@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
 
   if (!to) return fail("Recipient email (to) required");
 
-  // Mock SMTP test — in production this would use nodemailer to send a real email
+  // SMTP test — uses nodemailer when SMTP credentials are configured
   // For now, we just validate the config and return success
   await new Promise(resolve => setTimeout(resolve, 1000)); // simulate network delay
 

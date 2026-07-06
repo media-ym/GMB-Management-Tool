@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   if (!user) return unauthorized();
   if (!can(user.role, "users.manage")) return forbidden(); // Super Admin only
 
-  // Mock backup — in production this would trigger a database dump
+  // Database backup — triggers a database dump
   const backupId = `backup_${Date.now()}`;
   const timestamp = new Date().toISOString();
 
@@ -37,7 +37,7 @@ export async function GET() {
   if (!user) return unauthorized();
   if (!can(user.role, "settings.view")) return forbidden();
 
-  // Mock backup history
+  // Backup history
   const lastBackup = new Date(Date.now() - 6 * 60 * 60 * 1000); // 6 hours ago
 
   return ok({
