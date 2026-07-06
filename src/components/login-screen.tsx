@@ -3,28 +3,54 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Building2, Mail, Lock, Eye, EyeOff, Loader2, Sparkles } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Building2, Mail, Lock, Eye, EyeOff, Loader2, Star, PenTool, Target, Sparkles, User, Phone, MapPin, Shield, CheckCircle2, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+
+const GREENS = {
+  primary: "#72D44C",
+  primaryDark: "#4FAE25",
+  light: "#F5FFF1",
+  text: "#202124",
+  gray: "#6B7280",
+  border: "#E7E7E7",
+  buttonGrad: "linear-gradient(135deg, #8BE04E 0%, #5DBE2E 100%)",
+  bgGrad: "linear-gradient(135deg, #f8fff2 0%, #e8ffd4 30%, #d8ffb5 60%, #bdfc89 100%)",
+};
+
+const FEATURES = [
+  { icon: Star, label: "Review Management" },
+  { icon: PenTool, label: "Google Posts" },
+  { icon: Target, label: "Local SEO Tracking" },
+  { icon: Sparkles, label: "MiSA AI Assistant" },
+];
+
+const DEMO_ACCOUNTS = [
+  { role: "Super Admin", email: "admin@myfng.in", color: "#72D44C" },
+  { role: "Marketing Manager", email: "marketing@myfng.in", color: "#5DBE2E" },
+  { role: "Branch Manager", email: "thane@myfng.in", color: "#4FAE25" },
+  { role: "Customer Support", email: "support@myfng.in", color: "#8BE04E" },
+  { role: "Viewer", email: "viewer@myfng.in", color: "#A0A0A0" },
+];
 
 export function LoginScreen() {
   const router = useRouter();
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("admin@myfng.in");
   const [password, setPassword] = useState("MyFNG@2025");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [remember, setRemember] = useState(true);
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Register form
+  const [regForm, setRegForm] = useState({ name: "", email: "", mobile: "", branch: "", role: "viewer", password: "", confirm: "", agree: false });
+
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     const res = await signIn("credentials", { email, password, redirect: false });
     setLoading(false);
-    if (res?.error) {
-      toast.error("Invalid credentials. Try a demo account below.");
-      return;
-    }
+    if (res?.error) { toast.error("Invalid credentials."); return; }
     toast.success("Welcome to MyFNG Local AI Manager");
     router.refresh();
   }
@@ -40,204 +66,355 @@ export function LoginScreen() {
     router.refresh();
   }
 
+  function handleRegister(e: React.FormEvent) {
+    e.preventDefault();
+    if (!regForm.name || !regForm.email || !regForm.password) { toast.error("Please fill all required fields"); return; }
+    if (regForm.password !== regForm.confirm) { toast.error("Passwords do not match"); return; }
+    if (!regForm.agree) { toast.error("Please agree to Terms"); return; }
+    toast.info("Account creation requires admin approval. Contact your Super Admin.");
+  }
+
   return (
-    <div className="min-h-screen flex">
-      {/* ═══ LEFT PANEL — Mint gradient with brand ═══════════════════════ */}
-      <div
-        className="hidden lg:flex lg:w-3/5 flex-col justify-between p-12 relative overflow-hidden"
-        style={{ background: "linear-gradient(180deg, #C8E6C9 0%, #81C784 100%)" }}
-      >
-        {/* Decorative circles */}
-        <div className="absolute top-10 right-10 size-64 rounded-full bg-white/10 blur-2xl" />
-        <div className="absolute bottom-20 left-10 size-48 rounded-full bg-white/10 blur-xl" />
-        <div className="absolute top-1/3 right-1/4 size-32 rounded-full bg-white/5 blur-lg" />
-
-        {/* Logo */}
-        <div className="relative z-10 flex items-center gap-3">
-          <div className="size-11 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center shadow-lg">
-            <Building2 className="size-6 text-white" />
-          </div>
-          <div>
-            <div className="font-bold text-xl text-white">MyFNG</div>
-            <div className="text-xs text-white/70">Local AI Manager</div>
-          </div>
-        </div>
-
-        {/* Center content */}
-        <div className="relative z-10 max-w-lg">
-          <h1 className="text-4xl font-bold text-white leading-tight mb-4">
-            One dashboard for every MyFNG Google Business Profile.
-          </h1>
-          <p className="text-white/80 text-lg leading-relaxed mb-8">
-            Centralize reviews, posts, local SEO, and analytics across all MyFNG locations. Powered by MiSA AI for faster, smarter operations.
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { icon: "★", label: "Review Management" },
-              { icon: "✎", label: "Google Posts" },
-              { icon: "⌖", label: "Local SEO Tracking" },
-              { icon: "✦", label: "MiSA AI Assistant" },
-            ].map((f) => (
-              <div key={f.label} className="flex items-center gap-2.5 text-sm text-white/90 bg-white/10 backdrop-blur rounded-lg px-3 py-2">
-                <span className="text-amber-300 font-bold text-base">{f.icon}</span>
-                {f.label}
+    <div className="min-h-screen flex" style={{ background: GREENS.bgGrad }}>
+      {/* ═══ LEFT SECTION — 40% Illustration ═════════════════════════════ */}
+      <div className="hidden lg:flex lg:w-2/5 flex-col justify-between p-12 relative overflow-hidden">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="flex-1 flex flex-col justify-center"
+        >
+          {/* 3D Illustration placeholder area */}
+          <motion.div
+            animate={{ y: [0, -10, 0] }}
+            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+            className="relative mb-10"
+          >
+            {/* Scene container */}
+            <div className="relative w-full max-w-sm mx-auto" style={{ height: "280px" }}>
+              {/* Wall clock */}
+              <div className="absolute top-0 right-8 size-16 rounded-full bg-white shadow-md flex items-center justify-center border-2 border-gray-100">
+                <div className="absolute top-1/2 left-1/2 w-0.5 h-5 bg-gray-700 origin-bottom" style={{ transform: "translate(-50%, -100%) rotate(30deg)" }} />
+                <div className="absolute top-1/2 left-1/2 w-0.5 h-3.5 bg-gray-700 origin-bottom" style={{ transform: "translate(-50%, -100%) rotate(150deg)" }} />
+                <div className="size-1.5 rounded-full bg-gray-700 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
               </div>
-            ))}
+
+              {/* Plant left */}
+              <div className="absolute bottom-0 left-0 w-20 h-32">
+                <div className="absolute bottom-0 left-4 w-12 h-16 rounded-t-lg bg-white shadow-sm" />
+                <motion.div animate={{ rotate: [0, 3, 0] }} transition={{ duration: 3, repeat: Infinity }} className="absolute bottom-12 left-2 w-8 h-20 rounded-full" style={{ background: "#4FAE25", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
+                <motion.div animate={{ rotate: [0, -3, 0] }} transition={{ duration: 3.5, repeat: Infinity }} className="absolute bottom-14 left-6 w-7 h-16 rounded-full" style={{ background: "#72D44C", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
+              </div>
+
+              {/* Desk + Laptop */}
+              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-64">
+                {/* Desk */}
+                <div className="w-full h-3 rounded-sm" style={{ background: "#4FAE25" }} />
+                <div className="flex justify-center -mt-16">
+                  {/* Laptop */}
+                  <div className="relative">
+                    <div className="w-32 h-20 rounded-lg bg-gray-200 border-2 border-gray-300 shadow-lg flex items-center justify-center">
+                      <div className="w-28 h-16 rounded bg-gradient-to-br from-green-100 to-green-50 flex items-center justify-center">
+                        <Building2 className="size-6" style={{ color: GREENS.primaryDark }} />
+                      </div>
+                    </div>
+                    <div className="w-36 h-1.5 rounded-b-lg bg-gray-300 mx-auto" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Coffee mug */}
+              <div className="absolute bottom-10 right-6 w-8 h-10 rounded-b-lg rounded-t-md shadow-sm" style={{ background: "#42A5F5" }}>
+                <div className="absolute top-1 left-1 right-1 h-2 rounded-full bg-white/30" />
+                <div className="absolute -right-2 top-3 w-3 h-4 rounded-r-full border-2 border-blue-400" />
+              </div>
+
+              {/* Character */}
+              <div className="absolute bottom-6 right-10 w-12 h-24">
+                {/* Head */}
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 size-8 rounded-full" style={{ background: "#E8C39E" }}>
+                  <div className="absolute top-1 left-1/2 -translate-x-1/2 w-6 h-3 rounded-t-full" style={{ background: "#5D4037" }} />
+                  <div className="absolute bottom-1 left-1.5 size-1 rounded-full bg-gray-700" />
+                  <div className="absolute bottom-1 right-1.5 size-1 rounded-full bg-gray-700" />
+                  <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-2 h-1 rounded-full bg-gray-700" />
+                </div>
+                {/* Body — green sweater */}
+                <div className="absolute top-7 left-1/2 -translate-x-1/2 w-10 h-10 rounded-t-lg" style={{ background: GREENS.primary }} />
+                {/* Arms */}
+                <div className="absolute top-8 left-0 w-3 h-7 rounded-full" style={{ background: GREENS.primary }} />
+                <div className="absolute top-8 right-0 w-3 h-7 rounded-full" style={{ background: GREENS.primary }} />
+                {/* Jeans */}
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 w-10 h-8 rounded-b-md" style={{ background: "#2196F3" }} />
+              </div>
+
+              {/* Floor shadow */}
+              <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-48 h-3 rounded-full bg-black/5 blur-md" />
+            </div>
+          </motion.div>
+
+          {/* Content */}
+          <div className="max-w-md">
+            <h1 className="text-3xl font-bold leading-tight mb-3" style={{ color: GREENS.text }}>
+              One dashboard for every MyFNG Google Business Profile.
+            </h1>
+            <p className="text-base mb-8" style={{ color: GREENS.gray }}>
+              Centralize reviews, posts, local SEO, and analytics across all MyFNG locations. Powered by MiSA AI for faster, smarter operations.
+            </p>
+
+            {/* Feature list */}
+            <div className="space-y-2.5">
+              {FEATURES.map((f, i) => (
+                <motion.div
+                  key={f.label}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.2 + i * 0.1 }}
+                  whileHover={{ y: -4, boxShadow: "0 8px 20px rgba(0,0,0,0.06)" }}
+                  className="flex items-center gap-3 bg-white/60 backdrop-blur rounded-xl px-3 py-2.5 cursor-default"
+                >
+                  <div className="size-8 rounded-full flex items-center justify-center" style={{ background: `${GREENS.primary}20` }}>
+                    <f.icon className="size-4" style={{ color: GREENS.primaryDark }} />
+                  </div>
+                  <span className="text-sm font-medium" style={{ color: GREENS.text }}>{f.label}</span>
+                </motion.div>
+              ))}
+            </div>
           </div>
-        </div>
+        </motion.div>
 
         {/* Footer */}
-        <div className="relative z-10 text-xs text-white/50">
+        <div className="text-xs" style={{ color: GREENS.gray, opacity: 0.6 }}>
           Internal Enterprise Platform · Authorized MyFNG personnel only · v1.0
         </div>
       </div>
 
-      {/* ═══ RIGHT PANEL — White form card ════════════════════════════════ */}
-      <div className="w-full lg:w-2/5 flex items-center justify-center bg-white p-6 sm:p-12">
-        <div className="w-full max-w-sm">
-          {/* Mobile logo */}
-          <div className="flex lg:hidden items-center gap-2.5 mb-8 justify-center">
-            <div className="size-10 rounded-xl flex items-center justify-center" style={{ background: "#81C784" }}>
-              <Building2 className="size-5 text-white" />
+      {/* ═══ RIGHT SECTION — 60% Auth Card ═══════════════════════════════ */}
+      <div className="w-full lg:w-3/5 flex items-center justify-center p-6 sm:p-12">
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-[520px] bg-white p-8 sm:p-12"
+          style={{ borderRadius: "32px", boxShadow: "0 25px 60px rgba(0,0,0,0.08)" }}
+        >
+          {/* Logo */}
+          <div className="flex items-center justify-center gap-2.5 mb-7">
+            <div className="size-11 rounded-xl flex items-center justify-center" style={{ background: GREENS.buttonGrad }}>
+              <Building2 className="size-6 text-white" />
             </div>
-            <span className="font-bold text-lg" style={{ color: "#2E7D32" }}>MyFNG</span>
+            <span className="font-bold text-xl" style={{ color: GREENS.text }}>MyFNG</span>
           </div>
 
-          {/* Heading */}
-          <div className="mb-8">
-            <h2 className="text-2xl font-semibold text-gray-900">Sign in</h2>
-            <p className="text-sm text-gray-500 mt-1">Use your MyFNG SSO credentials to continue.</p>
-          </div>
+          <AnimatePresence mode="wait">
+            {mode === "login" ? (
+              <motion.div
+                key="login"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                {/* Heading */}
+                <div className="text-center mb-10">
+                  <h2 className="text-4xl font-bold mb-2" style={{ color: GREENS.text }}>Welcome Back</h2>
+                  <p className="text-base" style={{ color: GREENS.gray }}>Sign in to continue managing all MyFNG branches.</p>
+                </div>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email */}
-            <div className="space-y-1.5">
-              <Label htmlFor="email" className="text-sm font-medium text-gray-700">Email</Label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-10 h-11 rounded-lg border-gray-200 focus:border-[#81C784] focus:ring-[#81C784] focus:ring-1"
-                  placeholder="you@myfng.in"
-                  required
-                />
-              </div>
-            </div>
-
-            {/* Password */}
-            <div className="space-y-1.5">
-              <Label htmlFor="password" className="text-sm font-medium text-gray-700">Password</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 pr-10 h-11 rounded-lg border-gray-200 focus:border-[#81C784] focus:ring-[#81C784] focus:ring-1"
-                  placeholder="••••••••"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Sign in button */}
-            <Button
-              type="submit"
-              disabled={loading}
-              className="w-full h-11 rounded-lg text-white font-semibold text-base border-0 hover:opacity-90 transition"
-              style={{ background: "#81C784" }}
-            >
-              {loading && <Loader2 className="size-4 animate-spin mr-2" />}
-              {loading ? "Signing in…" : "Sign in"}
-            </Button>
-          </form>
-
-          {/* Divider */}
-          <div className="flex items-center gap-3 my-6">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span className="text-xs text-gray-400">or sign in with</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
-
-          {/* Social buttons */}
-          <div className="flex items-center justify-center gap-3">
-            {/* Google */}
-            <button className="size-10 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition" title="Google">
-              <svg className="size-4" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-            </button>
-            {/* GitHub */}
-            <button className="size-10 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition" title="GitHub">
-              <svg className="size-4" viewBox="0 0 24 24" fill="#181717">
-                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-              </svg>
-            </button>
-            {/* Apple */}
-            <button className="size-10 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition" title="Apple">
-              <svg className="size-4" viewBox="0 0 24 24" fill="#000000">
-                <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-              </svg>
-            </button>
-          </div>
-
-          {/* Terms */}
-          <p className="text-xs text-gray-400 text-center mt-6 leading-relaxed">
-            By signing in you agree to MyFNG's{" "}
-            <a className="text-[#81C784] underline hover:opacity-80" href="#">Terms of Service</a>{" "}
-            and{" "}
-            <a className="text-[#81C784] underline hover:opacity-80" href="#">Privacy Policy</a>.
-          </p>
-
-          {/* Demo accounts */}
-          <div className="mt-6 pt-6 border-t border-gray-100">
-            <div className="flex items-center gap-1.5 mb-3 justify-center">
-              <Sparkles className="size-3 text-[#81C784]" />
-              <span className="text-xs text-gray-400">Quick demo login</span>
-            </div>
-            <div className="grid grid-cols-1 gap-1.5">
-              {[
-                { email: "admin@myfng.in", role: "Super Admin", color: "#81C784" },
-                { email: "marketing@myfng.in", role: "Marketing Manager", color: "#66BB6A" },
-                { email: "thane@myfng.in", role: "Branch Manager", color: "#4CAF50" },
-                { email: "support@myfng.in", role: "Customer Support", color: "#2E7D32" },
-                { email: "viewer@myfng.in", role: "Viewer", color: "#9E9E9E" },
-              ].map((acc) => (
-                <button
-                  key={acc.email}
-                  onClick={() => quickLogin(acc.email)}
-                  disabled={loading}
-                  className="flex items-center gap-2.5 rounded-lg border border-gray-100 px-3 py-2 text-left text-xs hover:bg-gray-50 transition disabled:opacity-50"
-                >
-                  <span className="size-2 rounded-full shrink-0" style={{ background: acc.color }} />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-gray-700 truncate">{acc.role}</div>
-                    <div className="text-gray-400 truncate">{acc.email}</div>
+                {/* Form */}
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div className="relative">
+                    <Mail className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: GREENS.gray }} />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="Email address"
+                      required
+                      className="w-full h-[58px] rounded-[18px] border pl-14 pr-5 text-base outline-none transition-all"
+                      style={{ borderColor: GREENS.border, color: GREENS.text }}
+                      onFocus={(e) => { e.target.style.borderColor = GREENS.primary; e.target.style.boxShadow = `0 0 0 3px ${GREENS.primary}25`; }}
+                      onBlur={(e) => { e.target.style.borderColor = GREENS.border; e.target.style.boxShadow = "none"; }}
+                    />
                   </div>
-                </button>
-              ))}
-            </div>
-            <p className="text-center text-[11px] text-gray-400 mt-3">
-              All demo accounts use password <code className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">MyFNG@2025</code>
-            </p>
-          </div>
-        </div>
+
+                  <div className="relative">
+                    <Lock className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: GREENS.gray }} />
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Password"
+                      required
+                      className="w-full h-[58px] rounded-[18px] border pl-14 pr-14 text-base outline-none transition-all"
+                      style={{ borderColor: GREENS.border, color: GREENS.text }}
+                      onFocus={(e) => { e.target.style.borderColor = GREENS.primary; e.target.style.boxShadow = `0 0 0 3px ${GREENS.primary}25`; }}
+                      onBlur={(e) => { e.target.style.borderColor = GREENS.border; e.target.style.boxShadow = "none"; }}
+                    />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-5 top-1/2 -translate-y-1/2" style={{ color: GREENS.gray }}>
+                      {showPassword ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
+                    </button>
+                  </div>
+
+                  {/* Remember + Forgot */}
+                  <div className="flex items-center justify-between text-sm">
+                    <label className="flex items-center gap-2 cursor-pointer" style={{ color: GREENS.gray }}>
+                      <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="size-4 rounded accent-[#72D44C]" />
+                      Remember me
+                    </label>
+                    <a href="#" className="font-medium hover:underline" style={{ color: GREENS.primaryDark }}>Forgot password?</a>
+                  </div>
+
+                  {/* Login button */}
+                  <motion.button
+                    type="submit"
+                    disabled={loading}
+                    whileHover={{ scale: 1.02, boxShadow: `0 10px 30px ${GREENS.primary}40` }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={{ duration: 0.3 }}
+                    className="w-full h-[58px] rounded-[18px] text-white font-bold text-base flex items-center justify-center gap-2 cursor-pointer border-0"
+                    style={{ background: GREENS.buttonGrad }}
+                  >
+                    {loading ? <Loader2 className="size-5 animate-spin" /> : <>Sign In <ArrowRight className="size-5" /></>}
+                  </motion.button>
+                </form>
+
+                {/* Divider */}
+                <div className="flex items-center gap-4 my-7">
+                  <div className="flex-1 h-px" style={{ background: GREENS.border }} />
+                  <span className="text-xs" style={{ color: GREENS.gray }}>OR</span>
+                  <div className="flex-1 h-px" style={{ background: GREENS.border }} />
+                </div>
+
+                {/* Quick Demo Login */}
+                <div className="mb-5">
+                  <p className="text-xs text-center mb-3" style={{ color: GREENS.gray }}>Quick Demo Login</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {DEMO_ACCOUNTS.map((acc) => (
+                      <motion.button
+                        key={acc.email}
+                        onClick={() => quickLogin(acc.email)}
+                        disabled={loading}
+                        whileHover={{ y: -3, borderColor: GREENS.primary }}
+                        whileTap={{ scale: 0.97 }}
+                        className="rounded-xl border bg-white px-3 py-2.5 text-left transition-all disabled:opacity-50"
+                        style={{ borderColor: GREENS.border }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="size-2 rounded-full shrink-0" style={{ background: acc.color }} />
+                          <div className="min-w-0">
+                            <div className="text-xs font-medium truncate" style={{ color: GREENS.text }}>{acc.role}</div>
+                            <div className="text-[10px] truncate" style={{ color: GREENS.gray }}>{acc.email}</div>
+                          </div>
+                        </div>
+                      </motion.button>
+                    ))}
+                  </div>
+                  <p className="text-center text-[11px] mt-3" style={{ color: GREENS.gray }}>
+                    All demo accounts use password <code className="font-mono px-1.5 py-0.5 rounded" style={{ background: GREENS.light }}>MyFNG@2025</code>
+                  </p>
+                </div>
+
+                {/* Register link */}
+                <div className="text-center text-sm" style={{ color: GREENS.gray }}>
+                  Don't have an account?{" "}
+                  <button onClick={() => setMode("register")} className="font-semibold hover:underline" style={{ color: GREENS.primaryDark }}>
+                    Create Account
+                  </button>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="register"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                {/* Heading */}
+                <div className="text-center mb-8">
+                  <h2 className="text-4xl font-bold mb-2" style={{ color: GREENS.text }}>Create Account</h2>
+                  <p className="text-base" style={{ color: GREENS.gray }}>Create your enterprise access.</p>
+                </div>
+
+                {/* Register Form */}
+                <form onSubmit={handleRegister} className="space-y-3.5">
+                  <InputField icon={User} placeholder="Full Name" value={regForm.name} onChange={(v) => setRegForm({ ...regForm, name: v })} />
+                  <InputField icon={Mail} placeholder="Email address" type="email" value={regForm.email} onChange={(v) => setRegForm({ ...regForm, email: v })} />
+                  <InputField icon={Phone} placeholder="Mobile Number" value={regForm.mobile} onChange={(v) => setRegForm({ ...regForm, mobile: v })} />
+                  <InputField icon={MapPin} placeholder="Branch (e.g. Mumbai)" value={regForm.branch} onChange={(v) => setRegForm({ ...regForm, branch: v })} />
+
+                  {/* Role select */}
+                  <div className="relative">
+                    <Shield className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: GREENS.gray }} />
+                    <select
+                      value={regForm.role}
+                      onChange={(e) => setRegForm({ ...regForm, role: e.target.value })}
+                      className="w-full h-[58px] rounded-[18px] border pl-14 pr-5 text-base outline-none appearance-none cursor-pointer"
+                      style={{ borderColor: GREENS.border, color: GREENS.text, background: "white" }}
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="customer_support">Customer Support</option>
+                      <option value="branch_manager">Branch Manager</option>
+                      <option value="marketing_manager">Marketing Manager</option>
+                    </select>
+                  </div>
+
+                  <InputField icon={Lock} placeholder="Password" type="password" value={regForm.password} onChange={(v) => setRegForm({ ...regForm, password: v })} />
+                  <InputField icon={Lock} placeholder="Confirm Password" type="password" value={regForm.confirm} onChange={(v) => setRegForm({ ...regForm, confirm: v })} />
+
+                  {/* Agree checkbox */}
+                  <label className="flex items-start gap-2.5 text-sm cursor-pointer" style={{ color: GREENS.gray }}>
+                    <input type="checkbox" checked={regForm.agree} onChange={(e) => setRegForm({ ...regForm, agree: e.target.checked })} className="size-4 mt-0.5 rounded accent-[#72D44C]" />
+                    <span>I agree to MyFNG's <a href="#" className="font-medium hover:underline" style={{ color: GREENS.primaryDark }}>Terms of Service</a> and <a href="#" className="font-medium hover:underline" style={{ color: GREENS.primaryDark }}>Privacy Policy</a></span>
+                  </label>
+
+                  {/* Create button */}
+                  <motion.button
+                    type="submit"
+                    whileHover={{ scale: 1.02, boxShadow: `0 10px 30px ${GREENS.primary}40` }}
+                    whileTap={{ scale: 0.98 }}
+                    transition={{ duration: 0.3 }}
+                    className="w-full h-[58px] rounded-[18px] text-white font-bold text-base flex items-center justify-center gap-2 cursor-pointer border-0"
+                    style={{ background: GREENS.buttonGrad }}
+                  >
+                    Create Account <ArrowRight className="size-5" />
+                  </motion.button>
+                </form>
+
+                {/* Login link */}
+                <div className="text-center text-sm mt-7" style={{ color: GREENS.gray }}>
+                  Already have an account?{" "}
+                  <button onClick={() => setMode("login")} className="font-semibold hover:underline" style={{ color: GREENS.primaryDark }}>
+                    Login
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
       </div>
+    </div>
+  );
+}
+
+// ─── Reusable input field ──────────────────────────────────────────────────
+function InputField({ icon: Icon, placeholder, type = "text", value, onChange }: {
+  icon: any; placeholder: string; type?: string; value: string; onChange: (v: string) => void;
+}) {
+  const GREENS = { gray: "#6B7280", border: "#E7E7E7", primary: "#72D44C", text: "#202124" };
+  return (
+    <div className="relative">
+      <Icon className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: GREENS.gray }} />
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full h-[58px] rounded-[18px] border pl-14 pr-5 text-base outline-none transition-all"
+        style={{ borderColor: GREENS.border, color: GREENS.text }}
+        onFocus={(e) => { e.target.style.borderColor = GREENS.primary; e.target.style.boxShadow = `0 0 0 3px ${GREENS.primary}25`; }}
+        onBlur={(e) => { e.target.style.borderColor = GREENS.border; e.target.style.boxShadow = "none"; }}
+      />
     </div>
   );
 }

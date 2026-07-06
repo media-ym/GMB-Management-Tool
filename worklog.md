@@ -1643,3 +1643,27 @@ Work Log:
 Stage Summary:
 - Login screen redesigned to match reference: mint gradient left panel, clean white form right panel, mint green button, social login, terms text.
 - Content unchanged — same MyFNG branding, same demo accounts, same password.
+
+---
+Task ID: 26-premium-login-register
+Agent: main (orchestrator)
+Task: Build premium login + register page matching detailed spec — soft green theme, glassmorphism, framer-motion animations, 3D illustration.
+
+Work Log:
+- Installed framer-motion for premium animations.
+- Built complete login + register page per spec:
+  * LEFT (40%): soft green gradient background (#f8fff2 → #bdfc89), 3D illustration scene (desk, laptop, character in green sweater, coffee mug, plant, wall clock — all CSS-built with floating animation), heading "One dashboard for every MyFNG Google Business Profile.", feature cards (Review Management, Google Posts, Local SEO, MiSA AI) with hover lift + shadow, footer text
+  * RIGHT (60%): white card (520px, 32px radius, soft shadow), MyFNG logo, "Welcome Back" heading (48px bold), subheading, email + password inputs (58px height, 18px radius, icons, green focus glow), Remember me + Forgot password, gradient Sign In button (#8BE04E → #5DBE2E, hover lift + glow), OR divider, Quick Demo Login (2-col grid, hover lift + green border), password note, "Create Account" link
+  * REGISTER: same layout, "Create Account" heading, Full Name + Email + Mobile + Branch + Role select + Password + Confirm Password + Agree to Terms, gradient Create Account button, "Already have an account? Login" link
+  * Animations: page fade-in (500ms), card slide-up, illustration float (infinite), button scale 1.03 on hover, input border animation, demo card lift, smooth login↔register transition (AnimatePresence)
+  * Colors: #72D44C primary, #4FAE25 primary dark, #F5FFF1 light, #202124 text, #6B7280 gray, #E7E7E7 border
+  * Responsive: desktop split 40/60, tablet illustration hidden, mobile card full width
+- Lint: 0 errors, 0 warnings.
+- Agent Browser verification:
+  * Login: "Welcome Back" heading, email/password fields, Remember me, Forgot password, Sign In button, Quick Demo Login with 5 accounts, "Create Account" link ✓
+  * Register: "Create Account" heading, Full Name, Email, Mobile, Branch, Role select, Password, Confirm Password, Agree to Terms, Create Account button, "Already have an account? Login" link ✓
+  * Toggle between login ↔ register works smoothly ✓
+
+Stage Summary:
+- Premium login + register page complete with soft green theme, glassmorphism, framer-motion animations, 3D illustration scene, and all spec requirements.
+- Content unchanged — same MyFNG branding, same demo accounts, same password.
