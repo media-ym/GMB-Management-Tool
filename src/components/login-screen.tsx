@@ -82,7 +82,7 @@ export function LoginScreen() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="flex-1 flex flex-col justify-center"
+          className="flex-1 flex flex-col justify-start pt-0"
         >
           {/* 3D Illustration — Mechanic repairing a car */}
           <motion.div
