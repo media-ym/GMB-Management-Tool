@@ -278,6 +278,199 @@ export async function syncGoogleReviews(locationId: string, googleLocationId: st
   }
 }
 
+// ─── Full Location Sync — fetches ALL real GMB data for one location ──────
+
+export async function syncLocationFull(locationId: string): Promise<{
+  success: boolean;
+  synced: { reviews: number; photos: number; hours: number; services: number; categories: number };
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  const result = { reviews: 0, photos: 0, hours: 0, services: 0, categories: 0 };
+  const accessToken = await getValidAccessToken();
+
+  if (!accessToken) {
+    return { success: false, synced: result, errors: ["No valid Google access token. Please reconnect Google OAuth."] };
+  }
+
+  // Get the GoogleBusinessProfile linked to this location
+  const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
+  if (!gbp) {
+    return { success: false, synced: result, errors: ["No Google Business Profile linked to this location. Import this location from Google first."] };
+  }
+
+  const locationName = gbp.googleLocationId; // e.g. "locations/12345"
+
+  try {
+    // ─── 1. Fetch full business profile from Google ─────────────────────
+    const profile = await getBusinessProfile(accessToken, locationName);
+
+    // Update Location record with real data
+    await db.location.update({
+      where: { id: locationId },
+      data: {
+        name: profile.title || gbp.profileName,
+        address: formatAddress(profile.address),
+        phone: profile.phoneNumbers?.primaryPhone || null,
+        website: profile.websiteUri || null,
+        latitude: profile.latlng?.latitude || null,
+        longitude: profile.latlng?.longitude || null,
+        avgRating: profile.metadata?.averageRating || 0,
+        reviewCount: profile.metadata?.reviewCount || 0,
+        syncStatus: "synced",
+        lastSyncedAt: new Date(),
+        categoriesJson: JSON.stringify([
+          profile.categories?.primaryCategory?.displayName,
+          ...(profile.categories?.additionalCategories?.map((c: any) => c.displayName) || []),
+        ].filter(Boolean)),
+      },
+    });
+
+    // Update GoogleBusinessProfile record
+    await db.googleBusinessProfile.update({
+      where: { id: gbp.id },
+      data: {
+        profileName: profile.title || gbp.profileName,
+        primaryCategory: profile.categories?.primaryCategory?.displayName || gbp.primaryCategory,
+        additionalCategoriesJson: JSON.stringify(profile.categories?.additionalCategories?.map((c: any) => c.displayName) || []),
+        averageRating: profile.metadata?.averageRating || 0,
+        totalReviews: profile.metadata?.reviewCount || 0,
+        verificationState: profile.metadata?.isVerified ? "verified" : "unverified",
+        profileStatus: profile.metadata?.canManage ? "active" : "disabled",
+        mapUrl: profile.metadata?.mapsUri || gbp.mapUrl,
+      },
+    });
+
+    // ─── 2. Sync Business Hours ─────────────────────────────────────────
+    if (profile.regularHours?.periods?.length > 0) {
+      // Clear existing hours
+      await db.businessHour.deleteMany({ where: { locationId } });
+      // Map Google's day codes (0=Sun..6=Sat) to our dayOfWeek
+      const dayMap: Record<string, number> = { SUNDAY: 0, MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6 };
+      for (const period of profile.regularHours.periods) {
+        const day = dayMap[period.openDay] ?? 0;
+        await db.businessHour.create({
+          data: {
+            locationId,
+            dayOfWeek: day,
+            openTime: `${period.openTime?.hours?.toString().padStart(2, "0") || "10"}:${period.openTime?.minutes?.toString().padStart(2, "0") || "00"}`,
+            closeTime: `${period.closeTime?.hours?.toString().padStart(2, "0") || "20"}:${period.closeTime?.minutes?.toString().padStart(2, "0") || "00"}`,
+            isClosed: false,
+          },
+        });
+        result.hours++;
+      }
+    }
+
+    // ─── 3. Sync Categories ─────────────────────────────────────────────
+    if (profile.categories) {
+      await db.businessCategory.deleteMany({ where: { locationId } });
+      if (profile.categories.primaryCategory) {
+        await db.businessCategory.create({
+          data: { locationId, categoryName: profile.categories.primaryCategory.displayName || "Interior Designer", isPrimary: true },
+        });
+        result.categories++;
+      }
+      for (const cat of profile.categories.additionalCategories || []) {
+        await db.businessCategory.create({
+          data: { locationId, categoryName: cat.displayName || "", isPrimary: false },
+        });
+        result.categories++;
+      }
+    }
+
+    // ─── 4. Sync Services ───────────────────────────────────────────────
+    if (profile.serviceItems?.length > 0) {
+      await db.service.deleteMany({ where: { locationId } });
+      for (const service of profile.serviceItems) {
+        await db.service.create({
+          data: {
+            locationId,
+            serviceName: service.displayName || service.name || "Service",
+            description: service.description || null,
+            category: service.category || null,
+            status: "active",
+          },
+        });
+        result.services++;
+      }
+    }
+
+    // ─── 5. Sync Reviews ────────────────────────────────────────────────
+    try {
+      const reviews = await listReviews(accessToken, locationName);
+      for (const review of reviews) {
+        const googleReviewId = review.name;
+        const existing = await db.review.findUnique({ where: { googleReviewId } });
+        if (!existing) {
+          await db.review.create({
+            data: {
+              locationId,
+              googleReviewId,
+              authorName: review.reviewer?.displayName || "Anonymous",
+              authorPhoto: review.reviewer?.profilePhotoUrl || null,
+              rating: review.starRating === "FIVE" ? 5 : review.starRating === "FOUR" ? 4 : review.starRating === "THREE" ? 3 : review.starRating === "TWO" ? 2 : 1,
+              text: review.comment || "",
+              sentiment: "neutral",
+              replyText: review.reviewReply?.comment || null,
+              replySource: review.reviewReply ? "manual" : null,
+              replyStatus: review.reviewReply ? "replied" : "pending",
+              repliedAt: review.reviewReply ? new Date(review.reviewReply.updateTime) : null,
+              createdAt: new Date(review.createTime),
+            },
+          });
+          result.reviews++;
+        }
+      }
+    } catch (e: any) {
+      errors.push(`Reviews sync: ${e.message}`);
+    }
+
+    // ─── 6. Sync Photos (metadata only — URLs from Google) ──────────────
+    try {
+      const mediaRes = await fetch(`${GBP_API_BASE}/${locationName}/media`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (mediaRes.ok) {
+        const mediaData = await mediaRes.json();
+        for (const photo of mediaData.media || []) {
+          const existing = await db.businessPhoto.findFirst({ where: { googlePhotoId: photo.name } });
+          if (!existing) {
+            await db.businessPhoto.create({
+              data: {
+                locationId,
+                googlePhotoId: photo.name,
+                imageUrl: photo.googleUrl || photo.locationUri || "",
+                thumbnailUrl: null,
+                source: "google",
+                status: "active",
+              },
+            });
+            result.photos++;
+          }
+        }
+      }
+    } catch (e: any) {
+      errors.push(`Photos sync: ${e.message}`);
+    }
+
+    return { success: true, synced: result, errors };
+  } catch (e: any) {
+    return { success: false, synced: result, errors: [e.message] };
+  }
+}
+
+function formatAddress(addr: any): string {
+  if (!addr) return "";
+  const parts = [
+    addr.addressLines?.join(", "),
+    addr.locality,
+    addr.administrativeArea,
+    addr.postalCode,
+  ].filter(Boolean);
+  return parts.join(", ");
+}
+
 export const googleServiceStatus = {
   isConfigured: IS_CONFIGURED,
   hasClientSecret: !!GOOGLE_CLIENT_SECRET,

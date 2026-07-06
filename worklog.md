@@ -1596,3 +1596,30 @@ Stage Summary:
 - All Google API calls are real (require GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET in .env).
 - All seed data is sample location data (cities, addresses, reviews) — no fake Google OAuth tokens.
 - When deployed: user sets Google credentials → connects real GMB → imports real locations → manages real reviews/posts/analytics.
+
+---
+Task ID: 24-real-gmb-sync
+Agent: main (orchestrator)
+Task: Fix location sync to fetch REAL GMB data — reviews, ratings, business info, hours, services, photos, categories.
+
+Work Log:
+- Created syncLocationFull() in google-service.ts — fetches ALL real GMB data for a single location:
+  1. Business Profile (name, address, phone, website, coordinates, rating, review count, verification)
+  2. Business Hours (regular hours from Google — day, open time, close time)
+  3. Categories (primary + additional from Google)
+  4. Services (service items from Google)
+  5. Reviews (all reviews with author, rating, text, reply status, timestamp)
+  6. Photos (media URLs from Google)
+  All data stored in DB with real counts. Old data cleared and replaced.
+- Rewrote /api/locations/[id]/sync to call syncLocationFull():
+  * "full" sync → fetches everything from Google
+  * "reviews" sync → fetches only reviews
+  * Creates REAL sync logs with actual record counts (not random numbers)
+  * Returns detailed sync results (reviews synced, photos synced, hours synced, etc.)
+  * Errors properly logged
+- Lint: 0 errors, 0 warnings.
+
+Stage Summary:
+- When user clicks "Sync" on a location → REAL Google Business Profile API is called → real reviews, real ratings, real business hours, real services, real photos, real categories all fetched and stored.
+- Location detail page ("View Details") shows this real synced data: Reviews, Avg Rating, Response Rate, Business Information, Business Hours, Services, Business Photos.
+- Flow: Connect Google → Import locations → Click Sync → View Details → See REAL GMB data.
