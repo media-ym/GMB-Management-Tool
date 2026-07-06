@@ -290,14 +290,14 @@ export function LoginScreen() {
           {/* Content */}
           <div className="max-w-md">
             <h1 className="text-3xl font-bold leading-tight mb-3" style={{ color: GREENS.text }}>
-              One dashboard for every MyFNG Google Business Profile.
+              One Dashboard for Every<br />MyFNG Google Business Profile.
             </h1>
-            <p className="text-base mb-8" style={{ color: GREENS.gray }}>
-              Centralize reviews, posts, local SEO, and analytics across all MyFNG locations. Powered by MiSA AI for faster, smarter operations.
+            <p className="text-base mb-8 leading-relaxed" style={{ color: GREENS.gray }}>
+              Centralize reviews, posts, local SEO, and<br />analytics across all MyFNG locations.
             </p>
 
-            {/* Feature list */}
-            <div className="space-y-2.5">
+            {/* Feature list — 2x2 grid */}
+            <div className="grid grid-cols-2 gap-2.5">
               {FEATURES.map((f, i) => (
                 <motion.div
                   key={f.label}
@@ -305,12 +305,12 @@ export function LoginScreen() {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.2 + i * 0.1 }}
                   whileHover={{ y: -4, boxShadow: "0 8px 20px rgba(0,0,0,0.06)" }}
-                  className="flex items-center gap-3 bg-white/60 backdrop-blur rounded-xl px-3 py-2.5 cursor-default"
+                  className="flex items-center gap-2.5 bg-white/60 backdrop-blur rounded-xl px-3 py-2.5 cursor-default"
                 >
-                  <div className="size-8 rounded-full flex items-center justify-center" style={{ background: `${GREENS.primary}20` }}>
-                    <f.icon className="size-4" style={{ color: GREENS.primaryDark }} />
+                  <div className="size-7 rounded-full flex items-center justify-center shrink-0" style={{ background: `${GREENS.primary}20` }}>
+                    <f.icon className="size-3.5" style={{ color: GREENS.primaryDark }} />
                   </div>
-                  <span className="text-sm font-medium" style={{ color: GREENS.text }}>{f.label}</span>
+                  <span className="text-xs font-medium" style={{ color: GREENS.text }}>{f.label}</span>
                 </motion.div>
               ))}
             </div>
