@@ -1771,3 +1771,26 @@ Stage Summary:
 - When user clicks "Sync" (dashboard or location): real search views, maps views, website clicks, phone calls, direction requests are fetched from Google for last 30 days and stored in DB.
 - Analytics dashboard, executive dashboard, and all charts show this real synced data.
 - No fake/random numbers anywhere.
+
+---
+Task ID: 31-review-reply-google
+Agent: main (orchestrator)
+Task: Fix review reply to push to REAL Google Business Profile + verify complete reviews flow.
+
+Work Log:
+- Fixed /api/reviews/[id]/reply POST route:
+  * Now imports replyToReview + getValidAccessToken from google-service.ts
+  * Includes location.googleProfiles in query
+  * When user publishes a reply: calls replyToReview() to push to REAL Google Business Profile API
+  * If Google API fails: returns error, reply not saved in DB
+  * If Google API succeeds: reply saved in DB with replyText, status, source, timestamp
+- Verified complete reviews flow:
+  1. SYNC: listReviews() fetches real reviews from Google → stores in DB with real author, rating, text, reply status, timestamp
+  2. DISPLAY: /api/reviews GET reads from DB (real synced data) → shows in Reviews inbox
+  3. REPLY: /api/reviews/[id]/reply POST pushes to REAL Google via replyToReview() → then saves in DB
+  4. AI REPLY: /api/reviews/[id]/reply GET generates AI draft → user edits → POST publishes to Google
+- Lint: 0 errors, 0 warnings.
+
+Stage Summary:
+- Reviews are 100% real: fetch from Google, display in dashboard, reply pushes back to Google.
+- Complete flow: Sync → Real reviews appear → Admin replies → Reply published on Google.

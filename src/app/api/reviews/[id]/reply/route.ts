@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail, notFound } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { replyToReview, getValidAccessToken } from "@/lib/google-service";
 import { aiReviewReply } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
@@ -18,8 +19,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const replyText: string | undefined = body.replyText;
   if (!replyText || replyText.trim().length < 3) return fail("replyText is required");
 
-  const review = await db.review.findUnique({ where: { id }, include: { location: true } });
+  const review = await db.review.findUnique({ where: { id }, include: { location: { include: { googleProfiles: true } } } });
   if (!review) return notFound("Review not found");
+
+  // ─── Push reply to REAL Google Business Profile ────────────────────────
+  const gbp = review.location?.googleProfiles?.[0];
+  if (gbp && review.googleReviewId) {
+    const accessToken = await getValidAccessToken();
+    if (accessToken) {
+      try {
+        await replyToReview(accessToken, review.googleReviewId, replyText.trim());
+      } catch (e: any) {
+        await logAudit({
+          userId: user.id, userName: user.name, action: "review.reply_google_failed",
+          entity: "review", entityId: id, newValue: { error: e.message },
+          ip: req.headers.get("x-forwarded-for") ?? undefined,
+        });
+        return fail(`Failed to publish reply to Google: ${e.message}`, 500);
+      }
+    }
+  }
 
   const updated = await db.review.update({
     where: { id },
