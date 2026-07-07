@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore, useEffect } from "react";
+import { useSyncExternalStore, useEffect, useState } from "react";
 import { signOut } from "next-auth/react";
 import { api } from "@/lib/api-client";
 import { useAppStore, roleLabel } from "@/lib/store";
@@ -85,6 +85,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
   const { view, setView, commandOpen, setCommandOpen } = useAppStore();
   const qc = useQueryClient();
   const { theme, setTheme } = useTheme();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
@@ -249,7 +250,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
             </DropdownMenu>
 
             {/* Hamburger menu — mobile only, LAST item on right */}
-            <Sheet>
+            <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <SheetTrigger asChild>
                 <Button variant="ghost" size="icon" className="lg:hidden text-white hover:bg-white/15 shrink-0" aria-label="Open menu">
                   <Menu className="size-5" />
@@ -263,7 +264,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
                       return (
                         <button
                           key={n.key}
-                          onClick={() => setView(n.key)}
+                          onClick={() => { setView(n.key); setMobileMenuOpen(false); }}
                           className={cn(
                             "px-3 py-2.5 text-[14px] transition kt-nav-item text-left rounded-lg",
                             active ? "kt-nav-active" : "text-white/70 font-normal",
