@@ -587,7 +587,7 @@ export function ReviewsView() {
               value={activeLocationId}
               onValueChange={(v) => setActiveLocationId(v as string | "all")}
             >
-              <SelectTrigger size="sm" className="min-w-[180px]">
+              <SelectTrigger size="sm" className="min-w-[140px] w-full sm:w-auto">
                 <SelectValue placeholder="All locations" />
               </SelectTrigger>
               <SelectContent>
@@ -606,7 +606,7 @@ export function ReviewsView() {
                 onClick={handleExport}
                 aria-label="Export reviews as CSV"
               >
-                <Download className="size-3.5 mr-1.5" /> Export CSV
+                <Download className="size-3.5 mr-1.5" /> <span className="hidden sm:inline">Export</span> CSV
               </Button>
             )}
             <Button size="sm" onClick={handleSync}>
@@ -692,7 +692,7 @@ export function ReviewsView() {
                       setSentimentFilter(v as SentimentFilter)
                     }
                   >
-                    <SelectTrigger size="sm" className="min-w-[140px]">
+                    <SelectTrigger size="sm" className="min-w-[120px] w-full sm:w-auto">
                       <SelectValue placeholder="Sentiment" />
                     </SelectTrigger>
                     <SelectContent>
@@ -732,13 +732,13 @@ export function ReviewsView() {
                     </ToggleGroupItem>
                   </ToggleGroup>
 
-                  <div className="relative">
+                  <div className="relative flex-1 sm:flex-initial">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
                     <Input
                       placeholder="Search reviews…"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      className="pl-8 min-w-[180px] h-9"
+                      className="pl-8 min-w-[120px] sm:min-w-[180px] h-9"
                       aria-label="Search reviews by author, text, or location"
                     />
                   </div>
@@ -803,7 +803,7 @@ export function ReviewsView() {
 
       {/* Reply editor dialog — enhanced with Templates + Internal Notes side panel */}
       <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
-        <DialogContent className="sm:max-w-4xl">
+        <DialogContent className="sm:max-w-4xl max-h-[92vh] overflow-y-auto scroll-area">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <MessageSquare className="size-5 text-primary" />
@@ -846,12 +846,12 @@ export function ReviewsView() {
 
           <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-4">
             {/* Editor column */}
-            <div className="space-y-2">
+            <div className="space-y-2 order-1">
               <Textarea
                 value={editorText}
                 onChange={(e) => setEditorText(e.target.value)}
                 placeholder="Write a thoughtful, on-brand reply…"
-                className="min-h-[260px] resize-y"
+                className="min-h-[160px] sm:min-h-[260px] resize-y"
                 maxLength={MAX_REPLY}
                 aria-label="Reply text"
               />
@@ -909,14 +909,15 @@ export function ReviewsView() {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <DialogClose asChild>
-              <Button variant="outline">Cancel</Button>
+              <Button variant="outline" className="w-full sm:w-auto">Cancel</Button>
             </DialogClose>
             <Button
               variant="secondary"
               onClick={handleSaveDraft}
               disabled={publishMut.isPending}
+              className="w-full sm:w-auto"
             >
               Save draft
             </Button>
@@ -925,6 +926,7 @@ export function ReviewsView() {
               disabled={
                 publishMut.isPending || editorText.trim().length < 3
               }
+              className="w-full sm:w-auto"
             >
               {publishMut.isPending ? (
                 <>
