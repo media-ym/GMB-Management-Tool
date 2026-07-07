@@ -377,7 +377,8 @@ export function AuditView() {
               {/* Desktop table */}
               <div className="hidden md:block">
                 <div className="max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area">
-                  <Table>
+                  <div className="overflow-x-auto scroll-area">
+                    <Table>
                     <TableHeader className="sticky top-0 z-10 bg-card">
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="w-[160px]">
@@ -502,7 +503,8 @@ export function AuditView() {
                         );
                       })}
                     </TableBody>
-                  </Table>
+                    </Table>
+                  </div>
                 </div>
               </div>
 
@@ -648,7 +650,8 @@ function DetailsBlock({ value }: { value: string }) {
 function TableSkeleton() {
   return (
     <div className="max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area">
-      <Table>
+      <div className="overflow-x-auto scroll-area">
+        <Table>
         <TableHeader className="sticky top-0 z-10 bg-card">
           <TableRow className="hover:bg-transparent">
             <TableHead className="w-[160px]">Time</TableHead>
@@ -683,7 +686,8 @@ function TableSkeleton() {
             </TableRow>
           ))}
         </TableBody>
-      </Table>
+        </Table>
+      </div>
     </div>
   );
 }

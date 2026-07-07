@@ -685,7 +685,8 @@ function UsersTab() {
         ) : filtered.length === 0 ? (
           <UsersEmpty search={search} />
         ) : (
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader>
               <TableRow className="bg-muted/40">
                 <TableHead className="pl-5">Name</TableHead>
@@ -710,7 +711,8 @@ function UsersTab() {
                 />
               ))}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         )}
       </Card>
 
@@ -918,7 +920,8 @@ function RoleBadge({ role }: { role: Role }) {
 
 function UsersTableSkeleton() {
   return (
-    <Table>
+    <div className="overflow-x-auto scroll-area">
+      <Table>
       <TableHeader>
         <TableRow className="bg-muted/40">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -935,7 +938,8 @@ function UsersTableSkeleton() {
           </TableRow>
         ))}
       </TableBody>
-    </Table>
+      </Table>
+    </div>
   );
 }
 
@@ -2034,7 +2038,8 @@ function NotificationsContent() {
         action={readonly ? <ReadonlyBadge /> : undefined}
       >
         <div className="overflow-x-auto">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader>
               <TableRow className="bg-muted/40">
                 <TableHead className="pl-4">Event</TableHead>
@@ -2069,7 +2074,8 @@ function NotificationsContent() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
         {!readonly && (
           <div className="flex justify-end pt-4 mt-2 border-t">
@@ -2665,7 +2671,8 @@ function StorageContent() {
           {/* Bucket usage table */}
           <CardSection title="Bucket Usage" description="Per-bucket file counts & sizes">
             <div className="overflow-x-auto">
-              <Table>
+              <div className="overflow-x-auto scroll-area">
+                <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/40">
                     <TableHead className="pl-4">Bucket</TableHead>
@@ -2696,7 +2703,8 @@ function StorageContent() {
                     );
                   })}
                 </TableBody>
-              </Table>
+                </Table>
+              </div>
             </div>
           </CardSection>
 
@@ -2939,7 +2947,8 @@ function JobsContent() {
           </CardContent>
         ) : (
           <div className="overflow-x-auto max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area">
-            <Table>
+            <div className="overflow-x-auto scroll-area">
+              <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40 sticky top-0">
                   <TableHead className="pl-4">Queue</TableHead>
@@ -2981,7 +2990,8 @@ function JobsContent() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+              </Table>
+            </div>
           </div>
         )}
       </Card>
@@ -3046,7 +3056,8 @@ function ErrorMonitoringContent() {
           </CardContent>
         ) : (
           <div className="overflow-x-auto max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area">
-            <Table>
+            <div className="overflow-x-auto scroll-area">
+              <Table>
               <TableHeader>
                 <TableRow className="bg-muted/40 sticky top-0">
                   <TableHead className="pl-4">Module</TableHead>
@@ -3112,7 +3123,8 @@ function ErrorMonitoringContent() {
                   </>
                 ))}
               </TableBody>
-            </Table>
+              </Table>
+            </div>
           </div>
         )}
       </Card>
@@ -3200,7 +3212,8 @@ function BackupContent() {
           {/* Backup history */}
           <CardSection title="Backup History" description="Recent backup runs">
             <div className="overflow-x-auto">
-              <Table>
+              <div className="overflow-x-auto scroll-area">
+                <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/40">
                     <TableHead className="pl-4">Backup ID</TableHead>
@@ -3233,7 +3246,8 @@ function BackupContent() {
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
+                </Table>
+              </div>
             </div>
           </CardSection>
 

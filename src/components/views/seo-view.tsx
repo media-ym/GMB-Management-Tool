@@ -831,7 +831,8 @@ function KeywordsTab({
         </div>
       ) : (
         <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <SortableHead label="Keyword" k="keyword" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="min-w-[180px]" />
@@ -912,7 +913,8 @@ function KeywordsTab({
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
       )}
 
@@ -1548,7 +1550,8 @@ function CompetitorsTab({
           </div>
         ) : (
           <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">
-            <Table>
+            <div className="overflow-x-auto scroll-area">
+              <Table>
               <TableHeader>
                 <TableRow className="bg-muted/30">
                   <TableHead className="w-8" />
@@ -1626,7 +1629,8 @@ function CompetitorsTab({
                   );
                 })}
               </TableBody>
-            </Table>
+              </Table>
+            </div>
           </div>
         )}
       </CardSection>
@@ -1762,7 +1766,8 @@ function LocationComparisonTab({
         </div>
       ) : (
         <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <ComparisonSortHead label="City" k="city" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
@@ -1821,7 +1826,8 @@ function LocationComparisonTab({
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
       )}
     </CardSection>
@@ -1891,7 +1897,8 @@ function AuditTab({
         </div>
       ) : (
         <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <TableHead className="w-8" />
@@ -1999,7 +2006,8 @@ function AuditTab({
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
       )}
     </CardSection>

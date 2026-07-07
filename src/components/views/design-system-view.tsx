@@ -763,7 +763,8 @@ function BreakpointsSection({ data }: { data: DesignSystemData }) {
         ))}
       </div>
 
-      <Table>
+      <div className="overflow-x-auto scroll-area">
+        <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Name</TableHead>
@@ -786,7 +787,8 @@ function BreakpointsSection({ data }: { data: DesignSystemData }) {
             </TableRow>
           ))}
         </TableBody>
-      </Table>
+        </Table>
+      </div>
     </CardSection>
   );
 }

@@ -433,7 +433,8 @@ export function RoadmapView() {
       >
         {/* Desktop: table */}
         <div className="hidden md:block">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-16">Sprint</TableHead>
@@ -463,7 +464,8 @@ export function RoadmapView() {
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
 
         {/* Mobile: cards */}
@@ -502,7 +504,8 @@ export function RoadmapView() {
         >
           {/* Desktop table */}
           <div className="hidden sm:block">
-            <Table>
+            <div className="overflow-x-auto scroll-area">
+              <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Risk</TableHead>
@@ -523,7 +526,8 @@ export function RoadmapView() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+              </Table>
+            </div>
           </div>
 
           {/* Mobile cards */}
@@ -555,7 +559,8 @@ export function RoadmapView() {
         >
           {/* Desktop table */}
           <div className="hidden sm:block">
-            <Table>
+            <div className="overflow-x-auto scroll-area">
+              <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Metric</TableHead>
@@ -586,7 +591,8 @@ export function RoadmapView() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+              </Table>
+            </div>
           </div>
 
           {/* Mobile cards */}

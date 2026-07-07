@@ -475,7 +475,8 @@ export function ReportsView() {
         ) : (
           <div className="max-h-[calc(100vh-20rem)] overflow-y-auto rounded-md border">
             <ScrollArea className="h-full">
-              <Table>
+              <div className="overflow-x-auto scroll-area">
+                <Table>
                 <TableHeader className="sticky top-0 z-10 bg-card">
                   <TableRow>
                     <TableHead className="min-w-[220px]">Report</TableHead>
@@ -570,7 +571,8 @@ export function ReportsView() {
                     );
                   })}
                 </TableBody>
-              </Table>
+                </Table>
+              </div>
             </ScrollArea>
           </div>
         )}

@@ -551,7 +551,8 @@ function SchemaTab({ data, isLoading }: { data?: SystemResponse; isLoading: bool
 
         {/* Table */}
         <div className="rounded-lg border max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="min-w-[200px]">
@@ -601,7 +602,8 @@ function SchemaTab({ data, isLoading }: { data?: SystemResponse; isLoading: bool
                 ))
               )}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
         <div className="mt-2 text-xs text-muted-foreground">
           Showing {rows.length} of {data?.schema.totalTables ?? 0} tables.
@@ -648,7 +650,8 @@ function SyncLogsTab({ data, isLoading }: { data?: SystemResponse; isLoading: bo
       description={`${logs.length} most recent Google sync runs`}
     >
       <div className="rounded-lg border max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area">
-        <Table>
+        <div className="overflow-x-auto scroll-area">
+          <Table>
           <TableHeader className="sticky top-0 z-10 bg-card">
             <TableRow className="hover:bg-transparent">
               <TableHead className="min-w-[110px]">Module</TableHead>
@@ -730,7 +733,8 @@ function SyncLogsTab({ data, isLoading }: { data?: SystemResponse; isLoading: bo
               })
             )}
           </TableBody>
-        </Table>
+          </Table>
+        </div>
       </div>
     </CardSection>
   );
@@ -797,7 +801,8 @@ function JobsTab({ data, isLoading }: { data?: SystemResponse; isLoading: boolea
         }
       >
         <div className="rounded-lg border max-h-96 overflow-y-auto scroll-area">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="min-w-[140px]">Queue</TableHead>
@@ -878,7 +883,8 @@ function JobsTab({ data, isLoading }: { data?: SystemResponse; isLoading: boolea
                 })
               )}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
       </CardSection>
     </div>
@@ -953,7 +959,8 @@ function ErrorLogsTab({ data, isLoading }: { data?: SystemResponse; isLoading: b
       description={`${errors.filter((e) => !e.resolved).length} unresolved of ${errors.length} recent errors`}
     >
       <div className="rounded-lg border max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area">
-        <Table>
+        <div className="overflow-x-auto scroll-area">
+          <Table>
           <TableHeader className="sticky top-0 z-10 bg-card">
             <TableRow className="hover:bg-transparent">
               <TableHead className="min-w-[110px]">Module</TableHead>
@@ -1021,7 +1028,8 @@ function ErrorLogsTab({ data, isLoading }: { data?: SystemResponse; isLoading: b
               ))
             )}
           </TableBody>
-        </Table>
+          </Table>
+        </div>
       </div>
     </CardSection>
   );
@@ -1111,7 +1119,8 @@ function StorageTab({ data, isLoading }: { data?: SystemResponse; isLoading: boo
         description={`Last ${files.length} uploaded files`}
       >
         <div className="rounded-lg border max-h-[28rem] overflow-y-auto scroll-area">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="min-w-[140px]">Bucket</TableHead>
@@ -1151,7 +1160,8 @@ function StorageTab({ data, isLoading }: { data?: SystemResponse; isLoading: boo
                 ))
               )}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
       </CardSection>
     </div>
@@ -1345,7 +1355,8 @@ function AiUsageTab({ data, isLoading }: { data?: SystemResponse; isLoading: boo
       {/* Daily table */}
       <CardSection title="Daily Breakdown" description="Per-day AI usage detail">
         <div className="rounded-lg border overflow-hidden">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Date</TableHead>
@@ -1372,7 +1383,8 @@ function AiUsageTab({ data, isLoading }: { data?: SystemResponse; isLoading: boo
                 ))
               )}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
       </CardSection>
     </div>
@@ -1481,7 +1493,8 @@ function IntegrationsTab({ data: _data, isLoading }: { data?: SystemResponse; is
         description="Credentials & tokens used by background jobs"
       >
         <div className="rounded-lg border overflow-x-auto">
-          <Table>
+          <div className="overflow-x-auto scroll-area">
+            <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="min-w-[180px]">Provider</TableHead>
@@ -1516,7 +1529,8 @@ function IntegrationsTab({ data: _data, isLoading }: { data?: SystemResponse; is
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </div>
       </CardSection>
 
@@ -1567,7 +1581,8 @@ function TableSkeleton({ cols = 5 }: { cols?: number }) {
   return (
     <CardSection title="Loading…" description="Fetching data">
       <div className="rounded-lg border max-h-[calc(100vh-24rem)] overflow-hidden">
-        <Table>
+        <div className="overflow-x-auto scroll-area">
+          <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               {Array.from({ length: cols }).map((_, i) => (
@@ -1584,7 +1599,8 @@ function TableSkeleton({ cols = 5 }: { cols?: number }) {
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+          </Table>
+        </div>
       </div>
     </CardSection>
   );

@@ -803,7 +803,8 @@ export function GoogleIntegrationView() {
               />
             ) : (
               <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1 px-1">
-                <Table>
+                <div className="overflow-x-auto scroll-area">
+                  <Table>
                   <TableHeader className="sticky top-0 z-10 bg-card">
                     <TableRow>
                       <TableHead className="min-w-[200px]">Profile</TableHead>
@@ -896,7 +897,8 @@ export function GoogleIntegrationView() {
                       </TableRow>
                     ))}
                   </TableBody>
-                </Table>
+                  </Table>
+                </div>
               </div>
             )}
           </CardSection>
@@ -923,7 +925,8 @@ export function GoogleIntegrationView() {
               />
             ) : (
               <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1 px-1">
-                <Table>
+                <div className="overflow-x-auto scroll-area">
+                  <Table>
                   <TableHeader className="sticky top-0 z-10 bg-card">
                     <TableRow>
                       <TableHead>Module</TableHead>
@@ -993,7 +996,8 @@ export function GoogleIntegrationView() {
                       );
                     })}
                   </TableBody>
-                </Table>
+                  </Table>
+                </div>
               </div>
             )}
           </CardSection>
@@ -1020,7 +1024,8 @@ export function GoogleIntegrationView() {
               />
             ) : (
               <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1 px-1">
-                <Table>
+                <div className="overflow-x-auto scroll-area">
+                  <Table>
                   <TableHeader className="sticky top-0 z-10 bg-card">
                     <TableRow>
                       <TableHead className="min-w-[160px]">Error Code</TableHead>
@@ -1070,7 +1075,8 @@ export function GoogleIntegrationView() {
                       </TableRow>
                     ))}
                   </TableBody>
-                </Table>
+                  </Table>
+                </div>
               </div>
             )}
           </CardSection>

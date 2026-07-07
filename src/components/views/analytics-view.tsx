@@ -1109,7 +1109,8 @@ function ExecutiveTab(props: ExecutiveTabProps) {
                     <div className="text-center py-10 text-sm text-muted-foreground">No location-level data for this selection.</div>
                   ) : (
                     <div className="max-h-96 overflow-y-auto scroll-area rounded-md">
-                      <Table>
+                      <div className="overflow-x-auto scroll-area">
+                        <Table>
                         <TableHeader className="sticky top-0 bg-card z-10">
                           <TableRow>
                             <SortableHead label="Location" sortKey="name" current={sortKey} dir={sortDir} onSort={toggleSort} />
@@ -1144,7 +1145,8 @@ function ExecutiveTab(props: ExecutiveTabProps) {
                             </TableRow>
                           ))}
                         </TableBody>
-                      </Table>
+                        </Table>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -2125,7 +2127,8 @@ function LocationComparisonTable({
 }) {
   return (
     <div className="max-h-96 overflow-y-auto scroll-area rounded-md">
-      <Table>
+      <div className="overflow-x-auto scroll-area">
+        <Table>
         <TableHeader className="sticky top-0 bg-card z-10">
           <TableRow>
             <ComparisonSortableHead label="Location" sortKey="name" current={sortKey} dir={sortDir} onSort={onSort} />
@@ -2182,7 +2185,8 @@ function LocationComparisonTable({
             </TableRow>
           ))}
         </TableBody>
-      </Table>
+        </Table>
+      </div>
     </div>
   );
 }

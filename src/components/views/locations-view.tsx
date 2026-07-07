@@ -1665,7 +1665,8 @@ function HoursTab({ detail, canManage }: { detail: LocationDetailResponse; canMa
 
           {/* Desktop: table */}
           <div className="hidden sm:block overflow-hidden rounded-lg border">
-            <Table>
+            <div className="overflow-x-auto scroll-area">
+              <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-32 text-xs">Day</TableHead>
@@ -1712,7 +1713,8 @@ function HoursTab({ detail, canManage }: { detail: LocationDetailResponse; canMa
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+              </Table>
+            </div>
           </div>
 
           {/* Mobile: cards */}
@@ -1781,7 +1783,8 @@ function HoursTab({ detail, canManage }: { detail: LocationDetailResponse; canMa
             <p className="text-xs text-muted-foreground py-2">No special hours configured.</p>
           ) : (
             <div className="overflow-hidden rounded-lg border">
-              <Table>
+              <div className="overflow-x-auto scroll-area">
+                <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-xs">Date</TableHead>
@@ -1811,7 +1814,8 @@ function HoursTab({ detail, canManage }: { detail: LocationDetailResponse; canMa
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
+                </Table>
+              </div>
             </div>
           )}
         </CardContent>
@@ -1908,7 +1912,8 @@ function ServicesTab({ detail }: { detail: LocationDetailResponse }) {
             <EmptyRow icon={Inbox} message="No products configured." />
           ) : (
             <div className="overflow-hidden rounded-lg border">
-              <Table>
+              <div className="overflow-x-auto scroll-area">
+                <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-xs">Product</TableHead>
@@ -1960,7 +1965,8 @@ function ServicesTab({ detail }: { detail: LocationDetailResponse }) {
                     </TableRow>
                   ))}
                 </TableBody>
-              </Table>
+                </Table>
+              </div>
             </div>
           )}
         </CardContent>
