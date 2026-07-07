@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { syncLocationFull, syncGoogleReviews, googleServiceStatus } from "@/lib/google-service";
+import { syncLocationFull, syncGoogleReviews, syncLocationAnalytics, googleServiceStatus } from "@/lib/google-service";
 
 export const dynamic = "force-dynamic";
 
@@ -107,7 +107,35 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return ok({ id, module: "reviews", synced: result.synced }, `Synced ${result.synced} review(s) from Google for "${location.name}"`);
   }
 
-  // ─── Other module syncs (posts, analytics) — use full sync ─────────────
+  // ─── Analytics-only sync — fetch real Google Business Performance API ───
+  if (syncModule === "analytics") {
+    const result = await syncLocationAnalytics(id, 30);
+
+    await db.syncLog.create({
+      data: {
+        module: "analytics",
+        locationId: id,
+        startedAt: now,
+        completedAt: new Date(),
+        status: result.synced > 0 ? "success" : "partial",
+        recordsProcessed: result.synced,
+        recordsInserted: result.synced,
+        recordsUpdated: 0,
+        recordsFailed: result.errors.length,
+        errorMessage: result.errors.length > 0 ? result.errors.join("; ") : null,
+      },
+    });
+
+    await logAudit({
+      userId: user.id, userName: user.name, action: "sync.run", entity: "location", entityId: id,
+      newValue: { module: "analytics", days: 30, synced: result.synced },
+      ip: req.headers.get("x-forwarded-for") ?? undefined,
+    });
+
+    return ok({ id, module: "analytics", synced: result.synced }, `Synced ${result.synced} days of real analytics from Google for "${location.name}"`);
+  }
+
+  // ─── Full sync (profile + hours + categories + services + reviews + photos + analytics) ──
   const result = await syncLocationFull(id);
   await db.syncLog.create({
     data: {

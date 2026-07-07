@@ -1743,3 +1743,31 @@ Stage Summary:
   * Event → EVENT post (with event title + date schedule on GMB)
   * Update → STANDARD post (business update on GMB)
 - When user selects a post type and publishes, the correct Google post type is created on the selected GMB profile.
+
+---
+Task ID: 30-real-analytics
+Agent: main (orchestrator)
+Task: Fix analytics to fetch REAL GMB performance data from Google Business Performance API.
+
+Work Log:
+- Rewrote getPerformanceMetrics() in google-service.ts:
+  * Proper URL params: dailyRange.startDate.date.year/month/day + dailyRange.endDate.date.year/month/day + dailyMetrics
+  * Returns timeSeries.datedValues array
+- Created getFullPerformanceMetrics(): fetches ALL 5 metric types in parallel via Promise.allSettled:
+  * BUSINESS_IMPRESSIONS_DESKTOP_SEARCH → searchViews
+  * BUSINESS_IMPRESSIONS_DESKTOP_MAPS → mapsViews
+  * WEBSITE_CLICKS → websiteClicks
+  * CALL_CLICKS → phoneCalls
+  * BUSINESS_DIRECTION_REQUESTS → directionRequests
+  * Aggregates into daily array with real values per date
+- Created syncLocationAnalytics(): fetches real metrics for 30 days and upserts into AnalyticDaily table (locationId + date unique). Real numbers stored.
+- Added analytics sync to syncLocationFull() as step 7 — now full sync includes real analytics.
+- Fixed /api/locations/[id]/sync: "analytics" module now calls syncLocationAnalytics() directly (not full sync).
+- Fixed /api/dashboard POST sync: iterates all locations, calls syncLocationAnalytics() for each, stores real metrics. Returns actual counts.
+- Lint: 0 errors, 0 warnings.
+
+Stage Summary:
+- Analytics now 100% real from Google Business Performance API.
+- When user clicks "Sync" (dashboard or location): real search views, maps views, website clicks, phone calls, direction requests are fetched from Google for last 30 days and stored in DB.
+- Analytics dashboard, executive dashboard, and all charts show this real synced data.
+- No fake/random numbers anywhere.

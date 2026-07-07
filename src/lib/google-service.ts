@@ -179,12 +179,139 @@ export async function createGooglePost(accessToken: string, locationName: string
   return res.json();
 }
 
-export async function getPerformanceMetrics(accessToken: string, locationName: string, startDate: string, endDate: string): Promise<any> {
-  const res = await fetch(`${GBP_PERF_BASE}/locations/${locationName}:getDailyMetricsTimeSeries?dailyRange.startDate.date.year=${startDate}&dailyRange.endDate.date.year=${endDate}`, {
+// ─── Performance Metrics (real Google Business Performance API) ───────────
+
+export async function getPerformanceMetrics(
+  accessToken: string,
+  locationName: string,
+  startDate: { year: number; month: number; day: number },
+  endDate: { year: number; month: number; day: number },
+  metricType: string = "BUSINESS_IMPRESSIONS_DESKTOP_MAPS"
+): Promise<any[]> {
+  const url = new URL(`${GBP_PERF_BASE}/locations/${locationName}:getDailyMetricsTimeSeries`);
+  url.searchParams.set("dailyRange.startDate.date.year", String(startDate.year));
+  url.searchParams.set("dailyRange.startDate.date.month", String(startDate.month));
+  url.searchParams.set("dailyRange.startDate.date.day", String(startDate.day));
+  url.searchParams.set("dailyRange.endDate.date.year", String(endDate.year));
+  url.searchParams.set("dailyRange.endDate.date.month", String(endDate.month));
+  url.searchParams.set("dailyRange.endDate.date.day", String(endDate.day));
+  url.searchParams.set("dailyMetrics", metricType);
+
+  const res = await fetch(url.toString(), {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!res.ok) throw new Error(`Failed to get metrics: ${res.status}`);
-  return res.json();
+  if (!res.ok) throw new Error(`Failed to get performance metrics: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.timeSeries?.datedValues ?? [];
+}
+
+// Fetch ALL 5 metric types for a date range and return as daily aggregates
+export async function getFullPerformanceMetrics(
+  accessToken: string,
+  locationName: string,
+  daysBack: number = 30
+): Promise<{ date: Date; searchViews: number; mapsViews: number; websiteClicks: number; phoneCalls: number; directionRequests: number }[]> {
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(today.getDate() - daysBack);
+
+  const startDate = { year: start.getFullYear(), month: start.getMonth() + 1, day: start.getDate() };
+  const endDate = { year: today.getFullYear(), month: today.getMonth() + 1, day: today.getDate() };
+
+  // Google API returns one metric type per call, so fetch all 5 in parallel
+  const metricTypes = {
+    searchViews: "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
+    mapsViews: "BUSINESS_IMPRESSIONS_DESKTOP_MAPS",
+    websiteClicks: "WEBSITE_CLICKS",
+    phoneCalls: "CALL_CLICKS",
+    directionRequests: "BUSINESS_DIRECTION_REQUESTS",
+  };
+
+  const [searchRes, mapsRes, websiteRes, callRes, directionRes] = await Promise.allSettled([
+    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.searchViews),
+    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.mapsViews),
+    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.websiteClicks),
+    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.phoneCalls),
+    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.directionRequests),
+  ]);
+
+  // Build a map of date → metrics
+  const dailyMap = new Map<string, { date: Date; searchViews: number; mapsViews: number; websiteClicks: number; phoneCalls: number; directionRequests: number }>();
+
+  function populate(result: PromiseSettledResult<any[]>, key: keyof typeof metricTypes) {
+    if (result.status !== "fulfilled") return;
+    for (const entry of result.value) {
+      const dateStr = entry.date?.year
+        ? `${entry.date.year}-${String(entry.date.month).padStart(2, "0")}-${String(entry.date.day).padStart(2, "0")}`
+        : null;
+      if (!dateStr) continue;
+      if (!dailyMap.has(dateStr)) {
+        dailyMap.set(dateStr, {
+          date: new Date(dateStr),
+          searchViews: 0, mapsViews: 0, websiteClicks: 0, phoneCalls: 0, directionRequests: 0,
+        });
+      }
+      const day = dailyMap.get(dateStr)!;
+      const value = entry.value ?? 0;
+      (day as any)[key] += value;
+    }
+  }
+
+  populate(searchRes, "searchViews");
+  populate(mapsRes, "mapsViews");
+  populate(websiteRes, "websiteClicks");
+  populate(callRes, "phoneCalls");
+  populate(directionRes, "directionRequests");
+
+  return Array.from(dailyMap.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+// ─── Sync real analytics data into DB ─────────────────────────────────────
+
+export async function syncLocationAnalytics(locationId: string, daysBack: number = 30): Promise<{ synced: number; errors: string[] }> {
+  const errors: string[] = [];
+  const accessToken = await getValidAccessToken();
+  if (!accessToken) return { synced: 0, errors: ["No valid Google access token"] };
+
+  const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
+  if (!gbp) return { synced: 0, errors: ["No Google Business Profile linked"] };
+
+  try {
+    const dailyMetrics = await getFullPerformanceMetrics(accessToken, gbp.googleLocationId, daysBack);
+    let synced = 0;
+
+    for (const day of dailyMetrics) {
+      const dateKey = day.date;
+      dateKey.setHours(0, 0, 0, 0);
+
+      // Upsert — if record exists for this location+date, update; otherwise create
+      await db.analyticDaily.upsert({
+        where: { locationId_date: { locationId, date: dateKey } },
+        create: {
+          locationId,
+          date: dateKey,
+          searchViews: day.searchViews,
+          mapsViews: day.mapsViews,
+          websiteClicks: day.websiteClicks,
+          phoneCalls: day.phoneCalls,
+          directionRequests: day.directionRequests,
+          bookings: 0,
+        },
+        update: {
+          searchViews: day.searchViews,
+          mapsViews: day.mapsViews,
+          websiteClicks: day.websiteClicks,
+          phoneCalls: day.phoneCalls,
+          directionRequests: day.directionRequests,
+        },
+      });
+      synced++;
+    }
+
+    return { synced, errors };
+  } catch (e: any) {
+    return { synced: 0, errors: [e.message] };
+  }
 }
 
 // ─── Sync Engine ──────────────────────────────────────────────────────────
@@ -452,6 +579,16 @@ export async function syncLocationFull(locationId: string): Promise<{
       }
     } catch (e: any) {
       errors.push(`Photos sync: ${e.message}`);
+    }
+
+    // ─── 7. Sync Analytics (real Google Business Performance API) ────────
+    try {
+      const analyticsResult = await syncLocationAnalytics(locationId, 30);
+      if (analyticsResult.errors.length > 0) {
+        errors.push(`Analytics sync: ${analyticsResult.errors.join("; ")}`);
+      }
+    } catch (e: any) {
+      errors.push(`Analytics sync: ${e.message}`);
     }
 
     return { success: true, synced: result, errors };

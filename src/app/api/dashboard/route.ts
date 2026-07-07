@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, fail, unauthorized, forbidden } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { syncLocationAnalytics } from "@/lib/google-service";
 
 export const dynamic = "force-dynamic";
 
@@ -60,16 +61,36 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const locationIds = scopeLocationIds(user, body.locationId);
   const where = locationIds ? { id: { in: locationIds } } : {};
-  await db.location.updateMany({ where, data: { syncStatus: "synced", lastSyncedAt: new Date() } });
+
+  // Fetch all in-scope locations with their Google Business Profiles
+  const locations = await db.location.findMany({
+    where,
+    select: { id: true, name: true, googleProfiles: { select: { googleLocationId: true } } },
+  });
+
+  let syncedCount = 0;
+  const errors: string[] = [];
+
+  // Sync each location's analytics from real Google Business Performance API
+  for (const loc of locations) {
+    const gbp = loc.googleProfiles?.[0];
+    if (gbp) {
+      const result = await syncLocationAnalytics(loc.id, 30);
+      syncedCount += result.synced;
+      if (result.errors.length > 0) errors.push(`${loc.name}: ${result.errors.join(", ")}`);
+    }
+    // Update sync status
+    await db.location.update({ where: { id: loc.id }, data: { syncStatus: "synced", lastSyncedAt: new Date() } });
+  }
 
   await logAudit({
     userId: user.id,
     userName: user.name,
     action: "sync.run",
     entity: "location",
-    newValue: { locationIds: locationIds ?? "all" },
+    newValue: { locationIds: locationIds ?? "all", locationsSynced: locations.length, analyticsDays: syncedCount, errors: errors.length },
     ip: req.headers.get("x-forwarded-for") ?? undefined,
   });
 
-  return ok({ synced: true }, "Sync completed");
+  return ok({ synced: true, locations: locations.length, analyticsDays: syncedCount, errors }, `Synced ${locations.length} location(s) and ${syncedCount} days of analytics from Google`);
 }
