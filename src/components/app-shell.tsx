@@ -181,38 +181,12 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
             )}
           </nav>
 
-          {/* Mobile menu */}
-          <Sheet>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" className="lg:hidden text-white hover:bg-white/15 shrink-0">
-                <Menu className="size-5" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="top" className="h-auto p-0" style={{ background: "var(--topbar-bg)" }}>
-              <div className="p-4 max-h-[70vh] overflow-y-auto scroll-area">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
-                  {visibleNav.map((n) => {
-                    const active = view === n.key;
-                    return (
-                      <button
-                        key={n.key}
-                        onClick={() => setView(n.key)}
-                        className={cn(
-                          "px-3 py-2.5 text-[14px] transition kt-nav-item text-left",
-                          active ? "kt-nav-active" : "text-white/70 font-normal",
-                        )}
-                      >
-                        {n.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </SheetContent>
-          </Sheet>
+          {/* Spacer for mobile — pushes right items to the end */}
+          <div className="flex-1 lg:hidden" />
 
-          {/* Right utilities */}
+          {/* Right utilities — order: Search(hidden on mobile) → Sync(hidden on mobile) → Notifications → Theme → Profile → Hamburger(mobile only) */}
           <div className="flex items-center gap-0.5 shrink-0">
+            {/* Search — desktop only */}
             <button
               onClick={() => setCommandOpen(true)}
               className="hidden md:flex items-center gap-2 h-9 px-3 rounded-lg bg-white/10 text-sm text-white/80 hover:bg-white/20 transition w-40"
@@ -224,10 +198,12 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
               </kbd>
             </button>
 
+            {/* Sync — desktop only */}
             <Button variant="ghost" size="icon" onClick={handleSync} className="text-white/80 hover:bg-white/15 hover:text-white hidden sm:flex" aria-label="Sync">
               <RefreshCw className="size-[18px]" />
             </Button>
 
+            {/* Notifications */}
             <Button variant="ghost" size="icon" onClick={() => setView("notifications")} aria-label="Notifications" className="relative text-white/80 hover:bg-white/15 hover:text-white">
               <Bell className="size-[18px]" />
               {unreadCount > 0 && (
@@ -237,17 +213,19 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
               )}
             </Button>
 
+            {/* Theme toggle */}
             <Button variant="ghost" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme" className="text-white/80 hover:bg-white/15 hover:text-white">
               {mounted && theme === "dark" ? <Sun className="size-[18px]" /> : <Moon className="size-[18px]" />}
             </Button>
 
+            {/* Profile dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="h-9 px-1.5 gap-1.5 text-white hover:bg-white/15 hover:text-white">
                   <Avatar className="size-7">
                     <AvatarFallback className="bg-white/20 text-white text-xs">{initials(user.name)}</AvatarFallback>
                   </Avatar>
-                  <ChevronDown className="size-3.5 text-white/60" />
+                  <ChevronDown className="size-3.5 text-white/60 hidden sm:block" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -269,6 +247,36 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* Hamburger menu — mobile only, LAST item on right */}
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="lg:hidden text-white hover:bg-white/15 shrink-0" aria-label="Open menu">
+                  <Menu className="size-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-72 p-0" style={{ background: "var(--topbar-bg)" }}>
+                <div className="p-4 max-h-[85vh] overflow-y-auto scroll-area">
+                  <div className="grid grid-cols-1 gap-1">
+                    {visibleNav.map((n) => {
+                      const active = view === n.key;
+                      return (
+                        <button
+                          key={n.key}
+                          onClick={() => setView(n.key)}
+                          className={cn(
+                            "px-3 py-2.5 text-[14px] transition kt-nav-item text-left rounded-lg",
+                            active ? "kt-nav-active" : "text-white/70 font-normal",
+                          )}
+                        >
+                          {n.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
           </div>
         </div>
       </header>
