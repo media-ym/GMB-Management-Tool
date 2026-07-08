@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail, notFound } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { replyToReview, getValidAccessToken } from "@/lib/google-service";
+import { replyToReview, deleteReviewReply, getValidAccessToken } from "@/lib/google-service";
 import { aiReviewReply } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
@@ -105,4 +105,56 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch (e: any) {
     return fail(e.message || "AI generation failed", 500);
   }
+}
+
+// DELETE /api/reviews/[id]/reply — remove a previously published reply from Google + DB
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+  if (!can(user.role, "reviews.reply")) return forbidden();
+
+  const { id } = await params;
+  const review = await db.review.findUnique({
+    where: { id },
+    include: { location: { include: { googleProfiles: true } } },
+  });
+  if (!review) return notFound("Review not found");
+
+  // ─── Push delete to REAL Google Business Profile ───────────────────────
+  const gbp = review.location?.googleProfiles?.[0];
+  if (gbp && review.googleReviewId && review.replyStatus === "replied") {
+    const accessToken = await getValidAccessToken();
+    if (accessToken) {
+      try {
+        await deleteReviewReply(accessToken, review.googleReviewId);
+      } catch (e: any) {
+        await logAudit({
+          userId: user.id, userName: user.name, action: "review.reply_delete_google_failed",
+          entity: "review", entityId: id, newValue: { error: e.message },
+          ip: req.headers.get("x-forwarded-for") ?? undefined,
+        });
+        return fail(`Failed to delete reply on Google: ${e.message}`, 500);
+      }
+    }
+  }
+
+  const updated = await db.review.update({
+    where: { id },
+    data: {
+      replyText: null,
+      replyStatus: "pending",
+      replySource: null,
+      repliedAt: null,
+      replyBy: null,
+    },
+  });
+
+  await logAudit({
+    userId: user.id, userName: user.name, action: "review.reply_deleted",
+    entity: "review", entityId: id,
+    newValue: { previousStatus: "replied", newStatus: "pending" },
+    ip: req.headers.get("x-forwarded-for") ?? undefined,
+  });
+
+  return ok({ id: updated.id, replyStatus: updated.replyStatus }, "Reply removed from Google Business Profile");
 }

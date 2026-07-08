@@ -1,0 +1,1212 @@
+     1→"use client";
+     2→
+     3→import { useMemo, useState } from "react";
+     4→import { cn } from "@/lib/utils";
+     5→import { useQuery, useQueryClient } from "@tanstack/react-query";
+     6→import { api } from "@/lib/api-client";
+     7→import { useUser } from "@/lib/user-context";
+     8→import { can } from "@/lib/permissions";
+     9→import { PageHeader, CardSection } from "@/components/shared/page-header";
+    10→import { StatCard } from "@/components/shared/stat-card";
+    11→import {
+    12→  SyncStatusBadge,
+    13→  RatingStars,
+    14→} from "@/components/shared/badges";
+    15→import { Button } from "@/components/ui/button";
+    16→import { Card, CardContent } from "@/components/ui/card";
+    17→import { Skeleton } from "@/components/ui/skeleton";
+    18→import { Badge } from "@/components/ui/badge";
+    19→import { Input } from "@/components/ui/input";
+    20→import { Progress } from "@/components/ui/progress";
+    21→import {
+    22→  Tabs, TabsContent, TabsList, TabsTrigger,
+    23→} from "@/components/ui/tabs";
+    24→import {
+    25→  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+    26→} from "@/components/ui/table";
+    27→import {
+    28→  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+    29→} from "@/components/ui/tooltip";
+    30→import {
+    31→  Dialog, DialogContent, DialogDescription, DialogFooter,
+    32→  DialogHeader, DialogTitle,
+    33→} from "@/components/ui/dialog";
+    34→import {
+    35→  AlertDialog, AlertDialogAction, AlertDialogCancel,
+    36→  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+    37→  AlertDialogHeader, AlertDialogTitle,
+    38→} from "@/components/ui/alert-dialog";
+    39→import {
+    40→  Plug, RefreshCw, CheckCircle2, AlertTriangle, Link2Off, ShieldCheck,
+    41→  Building2, Star, MapPin, ExternalLink, Loader2, Clock, KeyRound,
+    42→  Copy, Check, Globe, Server, Activity, CircleCheck, CircleAlert,
+    43→  CalendarClock, Lock,
+    44→} from "lucide-react";
+    45→import { toast } from "sonner";
+    46→import { formatDistanceToNow, format } from "date-fns";
+    47→
+    48→// ────────────────────────────────────────────────────────────────────────────
+    49→// Types matching /api/google-integration response
+    50→// ────────────────────────────────────────────────────────────────────────────
+    51→
+    52→type OauthStatus = "connected" | "token_expired" | "disconnected" | "not_configured";
+    53→type VerificationState = "verified" | "unverified" | "pending";
+    54→type ProfileStatus = "active" | "suspended" | "disabled";
+    55→type SyncStatus = "synced" | "syncing" | "pending" | "error";
+    56→type ApiHealth = "healthy" | "degraded";
+    57→
+    58→interface OauthState {
+    59→  status: OauthStatus;
+    60→  connectedEmail: string | null;
+    61→  tokenExpiry: string | null;
+    62→  scopes: string[];
+    63→  lastConnectedAt: string | null;
+    64→}
+    65→interface ConnectedAccount {
+    66→  id: string;
+    67→  email: string;
+    68→  googleUserId: string;
+    69→  status: string;
+    70→  tokenExpiry: string | null;
+    71→  scopes: string[];
+    72→  profileCount: number;
+    73→  createdAt: string;
+    74→}
+    75→interface GbpProfile {
+    76→  id: string;
+    77→  googleLocationId: string;
+    78→  profileName: string;
+    79→  primaryCategory: string;
+    80→  averageRating: number;
+    81→  totalReviews: number;
+    82→  verificationState: VerificationState;
+    83→  profileStatus: ProfileStatus;
+    84→  mapUrl: string;
+    85→  locationName: string;
+    86→  locationCity: string;
+    87→  syncStatus: SyncStatus;
+    88→  lastSyncedAt: string | null;
+    89→}
+    90→interface SyncSummary {
+    91→  connectedProfiles: number;
+    92→  verifiedProfiles: number;
+    93→  activeProfiles: number;
+    94→  syncErrors: number;
+    95→  apiHealth: ApiHealth;
+    96→}
+    97→interface SyncErrorRow {
+    98→  id: string;
+    99→  module: string;
+   100→  locationName: string;
+   101→  status: "failed" | "partial" | "success" | "running";
+   102→  errorMessage: string | null;
+   103→  startedAt: string;
+   104→}
+   105→interface ApiErrorRow {
+   106→  id: string;
+   107→  errorCode: string;
+   108→  errorMessage: string;
+   109→  createdAt: string;
+   110→}
+   111→interface GoogleIntegrationResponse {
+   112→  oauth: OauthState;
+   113→  accounts: ConnectedAccount[];
+   114→  profiles: GbpProfile[];
+   115→  summary: SyncSummary;
+   116→  recentSyncErrors: SyncErrorRow[];
+   117→  apiErrors: ApiErrorRow[];
+   118→}
+   119→
+   120→// ────────────────────────────────────────────────────────────────────────────
+   121→// Static metadata
+   122→// ────────────────────────────────────────────────────────────────────────────
+   123→
+   124→const REQUESTED_SCOPES: { label: string; scope: string }[] = [
+   125→  { label: "Business Profile", scope: "https://www.googleapis.com/auth/business.performance" },
+   126→  { label: "Business Information", scope: "https://www.googleapis.com/auth/business.business_info" },
+   127→  { label: "Business Manage", scope: "https://www.googleapis.com/auth/business.manage" },
+   128→  { label: "OpenID", scope: "openid" },
+   129→  { label: "Email", scope: "https://www.googleapis.com/auth/userinfo.email" },
+   130→  { label: "Profile", scope: "https://www.googleapis.com/auth/userinfo.profile" },
+   131→];
+   132→
+   133→const SYNC_SCHEDULE: { module: string; schedule: string; icon: React.ComponentType<{ className?: string }> }[] = [
+   134→  { module: "Reviews",       schedule: "Every 5 minutes",  icon: Star },
+   135→  { module: "Business Info", schedule: "Every 30 minutes", icon: Building2 },
+   136→  { module: "Analytics",     schedule: "Daily",            icon: Activity },
+   137→  { module: "Photos",        schedule: "Daily",            icon: MapPin },
+   138→  { module: "Categories",    schedule: "Daily",            icon: Server },
+   139→  { module: "Services",      schedule: "Daily",            icon: Globe },
+   140→];
+   141→
+   142→const REQUIRED_APIS: { name: string; description: string }[] = [
+   143→  { name: "Business Profile Business Information API", description: "Business info, categories, services & photos" },
+   144→  { name: "Business Profile Performance API",          description: "Search impressions, customer actions & queries" },
+   145→  { name: "Business Profile APIs",                     description: "Reviews, posts & location management" },
+   146→  { name: "Google OAuth",                              description: "Authentication & token refresh" },
+   147→  { name: "Google People API",                         description: "Account profile & verified email" },
+   148→];
+   149→
+   150→const AUTHORIZED_ORIGINS: { origin: string; env: string }[] = [
+   151→  { origin: "http://localhost:3000", env: "Development" },
+   152→  { origin: "https://staging.myfng.in", env: "Staging" },
+   153→  { origin: "https://app.myfng.in", env: "Production" },
+   154→];
+   155→
+   156→const REDIRECT_URI = "/auth/google/callback";
+   157→
+   158→// ────────────────────────────────────────────────────────────────────────────
+   159→// Helpers
+   160→// ────────────────────────────────────────────────────────────────────────────
+   161→
+   162→function relativeTime(iso: string | null): string {
+   163→  if (!iso) return "Never";
+   164→  try {
+   165→    return formatDistanceToNow(new Date(iso), { addSuffix: true });
+   166→  } catch {
+   167→    return "—";
+   168→  }
+   169→}
+   170→
+   171→function fullTime(iso: string | null): string {
+   172→  if (!iso) return "—";
+   173→  try {
+   174→    return format(new Date(iso), "d MMM yyyy, h:mm a");
+   175→  } catch {
+   176→    return "—";
+   177→  }
+   178→}
+   179→
+   180→function scopeLabel(scope: string): string {
+   181→  const found = REQUESTED_SCOPES.find((s) => s.scope === scope);
+   182→  return found?.label ?? scope.replace(/^https:\/\/www\.googleapis\.com\/auth\/business\./, "").replace(/^https:\/\/www\.googleapis\.com\/auth\/userinfo\./, "userinfo.").replace(/^https:\/\/www\.googleapis\.com\/auth\//, "");
+   183→}
+   184→
+   185→function tokenProgress(expiryIso: string | null): { pct: number; totalMs: number; remainingMs: number } {
+   186→  if (!expiryIso) return { pct: 0, totalMs: 0, remainingMs: 0 };
+   187→  const now = Date.now();
+   188→  const expiry = new Date(expiryIso).getTime();
+   189→  // assume access tokens are issued with a 1h lifetime
+   190→  const totalMs = 60 * 60 * 1000;
+   191→  const remainingMs = expiry - now;
+   192→  const pct = Math.max(0, Math.min(100, (remainingMs / totalMs) * 100));
+   193→  return { pct, totalMs, remainingMs };
+   194→}
+   195→
+   196→function verificationBadge(v: VerificationState) {
+   197→  const map = {
+   198→    verified:   { label: "Verified",   cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+   199→    unverified: { label: "Unverified", cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+   200→    pending:    { label: "Pending",    cls: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
+   201→  }[v];
+   202→  return <Badge variant="outline" className={cn("font-medium", map.cls)}>{map.label}</Badge>;
+   203→}
+   204→
+   205→function profileStatusBadge(s: ProfileStatus) {
+   206→  const map = {
+   207→    active:    { label: "Active",    cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+   208→    suspended: { label: "Suspended", cls: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" },
+   209→    disabled:  { label: "Disabled",  cls: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
+   210→  }[s];
+   211→  return <Badge variant="outline" className={cn("font-medium", map.cls)}>{map.label}</Badge>;
+   212→}
+   213→
+   214→// ────────────────────────────────────────────────────────────────────────────
+   215→// Sub-components (kept inside this file)
+   216→// ────────────────────────────────────────────────────────────────────────────
+   217→
+   218→function StatCardSkeleton() {
+   219→  return (
+   220→    <Card>
+   221→      <CardContent className="p-5">
+   222→        <div className="flex items-start justify-between gap-3">
+   223→          <div className="space-y-2 flex-1">
+   224→            <Skeleton className="h-3 w-24" />
+   225→            <Skeleton className="h-7 w-16" />
+   226→          </div>
+   227→          <Skeleton className="size-10 rounded-lg" />
+   228→        </div>
+   229→      </CardContent>
+   230→    </Card>
+   231→  );
+   232→}
+   233→
+   234→function EmptyState({
+   235→  icon: Icon, title, description, tone = "emerald", action,
+   236→}: {
+   237→  icon: React.ComponentType<{ className?: string }>;
+   238→  title: string;
+   239→  description?: string;
+   240→  tone?: "emerald" | "rose" | "slate";
+   241→  action?: React.ReactNode;
+   242→}) {
+   243→  const tones = {
+   244→    emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+   245→    rose: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+   246→    slate: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
+   247→  };
+   248→  return (
+   249→    <div className="flex flex-col items-center justify-center text-center py-12 px-4">
+   250→      <div className={cn("size-14 rounded-full flex items-center justify-center mb-3", tones[tone])}>
+   251→        <Icon className="size-7" />
+   252→      </div>
+   253→      <h4 className="text-sm font-semibold">{title}</h4>
+   254→      {description && <p className="text-xs text-muted-foreground mt-1 max-w-sm">{description}</p>}
+   255→      {action && <div className="mt-4">{action}</div>}
+   256→    </div>
+   257→  );
+   258→}
+   259→
+   260→function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+   261→  const [copied, setCopied] = useState(false);
+   262→  async function onCopy() {
+   263→    try {
+   264→      await navigator.clipboard.writeText(value);
+   265→      setCopied(true);
+   266→      toast.success("Copied to clipboard");
+   267→      setTimeout(() => setCopied(false), 1500);
+   268→    } catch {
+   269→      toast.error("Couldn't copy to clipboard");
+   270→    }
+   271→  }
+   272→  return (
+   273→    <Button
+   274→      type="button"
+   275→      variant="ghost"
+   276→      size="sm"
+   277→      onClick={onCopy}
+   278→      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+   279→    >
+   280→      {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+   281→      {copied ? "Copied" : label}
+   282→    </Button>
+   283→  );
+   284→}
+   285→
+   286→// ────────────────────────────────────────────────────────────────────────────
+   287→// OAuth connection hero card
+   288→// ────────────────────────────────────────────────────────────────────────────
+   289→
+   290→function OauthConnectionCard({
+   291→  oauth, canSync, onConnect, onDisconnect, connecting, disconnecting,
+   292→}: {
+   293→  oauth: OauthState;
+   294→  canSync: boolean;
+   295→  onConnect: () => void;
+   296→  onDisconnect: () => void;
+   297→  connecting: boolean;
+   298→  disconnecting: boolean;
+   299→}) {
+   300→  const [disconnectOpen, setDisconnectOpen] = useState(false);
+   301→
+   302→  // CONNECTED ──────────────────────────────────────────────────────────────
+   303→  if (oauth.status === "connected") {
+   304→    const { pct, remainingMs } = tokenProgress(oauth.tokenExpiry);
+   305→    const remainingMin = Math.max(0, Math.round(remainingMs / 60000));
+   306→    return (
+   307→      <Card className="border-emerald-500/30 bg-emerald-500/[0.04]">
+   308→        <CardContent className="p-5">
+   309→          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+   310→            <div className="flex items-start gap-4 min-w-0 flex-1">
+   311→              <div className="size-12 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+   312→                <ShieldCheck className="size-6" />
+   313→              </div>
+   314→              <div className="min-w-0 flex-1 space-y-3">
+   315→                <div>
+   316→                  <div className="flex items-center gap-2 flex-wrap">
+   317→                    <h3 className="text-base font-semibold text-emerald-700 dark:text-emerald-400">Connected</h3>
+   318→                    <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 font-medium">
+   319→                      <CircleCheck className="size-3 mr-1" /> Active
+   320→                    </Badge>
+   321→                  </div>
+   322→                  <p className="text-sm text-muted-foreground mt-1">
+   323→                    Signed in as <span className="font-medium text-foreground">{oauth.connectedEmail ?? "—"}</span>
+   324→                  </p>
+   325→                </div>
+   326→
+   327→                <div className="grid sm:grid-cols-2 gap-3">
+   328→                  <div className="rounded-lg border border-emerald-500/20 bg-card/60 p-3">
+   329→                    <div className="text-xs text-muted-foreground uppercase tracking-wide">Token expires</div>
+   330→                    <div className="text-sm font-semibold mt-0.5 tabular-nums">
+   331→                      {relativeTime(oauth.tokenExpiry)}
+   332→                    </div>
+   333→                    <TooltipProvider>
+   334→                      <Tooltip>
+   335→                        <TooltipTrigger asChild>
+   336→                          <Progress
+   337→                            value={pct}
+   338→                            className="mt-2 h-1.5 bg-emerald-500/15 [&>[data-slot=progress-indicator]]:bg-emerald-500"
+   339→                          />
+   340→                        </TooltipTrigger>
+   341→                        <TooltipContent side="bottom" className="text-xs">
+   342→                          ~{remainingMin} min remaining · {fullTime(oauth.tokenExpiry)}
+   343→                        </TooltipContent>
+   344→                      </Tooltip>
+   345→                    </TooltipProvider>
+   346→                  </div>
+   347→                  <div className="rounded-lg border border-emerald-500/20 bg-card/60 p-3">
+   348→                    <div className="text-xs text-muted-foreground uppercase tracking-wide">Last connected</div>
+   349→                    <div className="text-sm font-semibold mt-0.5">
+   350→                      {relativeTime(oauth.lastConnectedAt)}
+   351→                    </div>
+   352→                    <div className="text-xs text-muted-foreground mt-1">
+   353→                      {fullTime(oauth.lastConnectedAt)}
+   354→                    </div>
+   355→                  </div>
+   356→                </div>
+   357→
+   358→                {oauth.scopes.length > 0 && (
+   359→                  <div>
+   360→                    <div className="text-xs text-muted-foreground uppercase tracking-wide mb-1.5">Authorized scopes</div>
+   361→                    <div className="flex flex-wrap gap-1.5">
+   362→                      {oauth.scopes.map((s) => (
+   363→                        <Badge
+   364→                          key={s}
+   365→                          variant="outline"
+   366→                          className="font-mono text-[10px] bg-card/60 border-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+   367→                        >
+   368→                          {scopeLabel(s)}
+   369→                        </Badge>
+   370→                      ))}
+   371→                    </div>
+   372→                  </div>
+   373→                )}
+   374→              </div>
+   375→            </div>
+   376→
+   377→            {canSync && (
+   378→              <div className="flex flex-col gap-2 shrink-0">
+   379→                <Button
+   380→                  variant="outline"
+   381→                  className="border-rose-500/30 text-rose-600 hover:bg-rose-500/10 hover:text-rose-700 dark:hover:text-rose-300"
+   382→                  onClick={() => setDisconnectOpen(true)}
+   383→                  disabled={disconnecting}
+   384→                >
+   385→                  {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Link2Off className="size-4" />}
+   386→                  Disconnect
+   387→                </Button>
+   388→              </div>
+   389→            )}
+   390→          </div>
+   391→        </CardContent>
+   392→      </Card>
+   393→    );
+   394→  }
+   395→
+   396→  // TOKEN_EXPIRED ──────────────────────────────────────────────────────────
+   397→  if (oauth.status === "token_expired") {
+   398→    return (
+   399→      <>
+   400→        <Card className="border-amber-500/40 bg-amber-500/[0.05]">
+   401→          <CardContent className="p-5">
+   402→            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+   403→              <div className="flex items-start gap-4">
+   404→                <div className="size-12 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+   405→                  <AlertTriangle className="size-6" />
+   406→                </div>
+   407→                <div>
+   408→                  <div className="flex items-center gap-2 flex-wrap">
+   409→                    <h3 className="text-base font-semibold text-amber-700 dark:text-amber-400">Token expired</h3>
+   410→                    <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-medium">
+   411→                      Re-authorization required
+   412→                    </Badge>
+   413→                  </div>
+   414→                  <p className="text-sm text-muted-foreground mt-1 max-w-md">
+   415→                    The access token for <span className="font-medium text-foreground">{oauth.connectedEmail ?? "your account"}</span> has expired.
+   416→                    Re-authorize to resume syncing reviews, posts & analytics.
+   417→                  </p>
+   418→                </div>
+   419→              </div>
+   420→              {canSync && (
+   421→                <Button
+   422→                  className="bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+   423→                  onClick={() => onConnect()}
+   424→                  disabled={connecting}
+   425→                >
+   426→                  {connecting ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+   427→                  Re-authorize Google
+   428→                </Button>
+   429→              )}
+   430→            </div>
+   431→          </CardContent>
+   432→        </Card>
+   433→      </>
+   434→    );
+   435→  }
+   436→
+   437→  // NOT CONFIGURED ─────────────────────────────────────────────────────────
+   438→  if (oauth.status === "not_configured") {
+   439→    return (
+   440→      <Card className="border-amber-500/30 bg-amber-500/[0.04]">
+   441→        <CardContent className="p-5">
+   442→          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+   443→            <div className="flex items-start gap-4">
+   444→              <div className="size-12 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+   445→                <KeyRound className="size-6" />
+   446→              </div>
+   447→              <div>
+   448→                <h3 className="text-base font-semibold text-amber-700 dark:text-amber-400">Google OAuth Not Configured</h3>
+   449→                <p className="text-xs text-muted-foreground mt-0.5 max-w-md">
+   450→                  Add <code className="font-mono bg-muted/50 px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="font-mono bg-muted/50 px-1 rounded">GOOGLE_CLIENT_SECRET</code> to your <code className="font-mono bg-muted/50 px-1 rounded">.env</code> file to enable real Google Business Profile connection.
+   451→                </p>
+   452→                <div className="mt-2 rounded-lg border bg-muted/20 p-3 text-xs space-y-1">
+   453→                  <p className="font-semibold">Setup Steps:</p>
+   454→                  <ol className="list-decimal list-inside space-y-0.5 text-muted-foreground">
+   455→                    <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener" className="text-primary underline">Google Cloud Console</a></li>
+   456→                    <li>Create a project and enable Google Business Profile API</li>
+   457→                    <li>Create OAuth 2.0 credentials (Web Application)</li>
+   458→                    <li>Add redirect URI: <code className="font-mono">{oauth.redirectUri}</code></li>
+   459→                    <li>Copy Client ID and Secret to your .env file</li>
+   460→                    <li>Restart the server</li>
+   461→                  </ol>
+   462→                </div>
+   463→              </div>
+   464→            </div>
+   465→          </div>
+   466→        </CardContent>
+   467→      </Card>
+   468→    );
+   469→  }
+   470→
+   471→  // DISCONNECTED ───────────────────────────────────────────────────────────
+   472→  return (
+   473→    <>
+   474→      <Card className="border-slate-500/30 bg-slate-500/[0.04]">
+   475→        <CardContent className="p-5">
+   476→          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+   477→            <div className="flex items-start gap-4">
+   478→              <div className="size-12 rounded-xl bg-slate-500/15 text-slate-600 dark:text-slate-300 flex items-center justify-center shrink-0">
+   479→                <Plug className="size-6" />
+   480→              </div>
+   481→              <div>
+   482→                <div className="flex items-center gap-2 flex-wrap">
+   483→                  <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">Not connected</h3>
+   484→                  <Badge variant="outline" className="bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20 font-medium">
+   485→                    No Google account linked
+   486→                  </Badge>
+   487→                </div>
+   488→                <p className="text-sm text-muted-foreground mt-1 max-w-md">
+   489→                  Connect a Google Business Profile account to sync reviews, posts, analytics & business info across all locations.
+   490→                </p>
+   491→              </div>
+   492→            </div>
+   493→            {canSync ? (
+   494→              <Button
+   495→                className="bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+   496→                onClick={() => onConnect()}
+   497→                disabled={connecting}
+   498→              >
+   499→                {connecting ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
+   500→                Connect Google Business Profile
+   501→              </Button>
+   502→            ) : (
+   503→              <TooltipProvider>
+   504→                <Tooltip>
+   505→                  <TooltipTrigger asChild>
+   506→                    <span tabIndex={0}>
+   507→                      <Button className="bg-emerald-600 hover:bg-emerald-700 text-white shrink-0" disabled>
+   508→                        <Lock className="size-4" /> Connect
+   509→                      </Button>
+   510→                    </span>
+   511→                  </TooltipTrigger>
+   512→                  <TooltipContent side="bottom" className="text-xs">
+   513→                    Requires system.sync permission
+   514→                  </TooltipContent>
+   515→                </Tooltip>
+   516→              </TooltipProvider>
+   517→            )}
+   518→          </div>
+   519→        </CardContent>
+   520→      </Card>
+   521→
+   522→      <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
+   523→        <AlertDialogContent>
+   524→          <AlertDialogHeader>
+   525→            <AlertDialogTitle className="flex items-center gap-2">
+   526→              <Link2Off className="size-5 text-rose-500" />
+   527→              Disconnect Google account?
+   528→            </AlertDialogTitle>
+   529→            <AlertDialogDescription>
+   530→              This will revoke the OAuth token for <span className="font-medium text-foreground">{oauth.connectedEmail ?? "the connected account"}</span>.
+   531→              All scheduled syncs will pause until you re-authorize. Existing reviews, posts & analytics data will be preserved.
+   532→            </AlertDialogDescription>
+   533→          </AlertDialogHeader>
+   534→          <AlertDialogFooter>
+   535→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+   536→            <AlertDialogAction
+   537→              className="bg-rose-600 hover:bg-rose-700 text-white"
+   538→              onClick={() => onDisconnect()}
+   539→            >
+   540→              {disconnecting ? <Loader2 className="size-4 animate-spin mr-1" /> : null}
+   541→              Disconnect
+   542→            </AlertDialogAction>
+   543→          </AlertDialogFooter>
+   544→        </AlertDialogContent>
+   545→      </AlertDialog>
+   546→    </>
+   547→  );
+   548→}
+   549→
+   550→// ────────────────────────────────────────────────────────────────────────────
+   551→// Main view
+   552→// ────────────────────────────────────────────────────────────────────────────
+   553→
+   554→export function GoogleIntegrationView() {
+   555→  const user = useUser();
+   556→  const qc = useQueryClient();
+   557→  const canSync = can(user.role, "system.sync");
+   558→
+   559→  const [activeTab, setActiveTab] = useState("profiles");
+   560→  const [connecting, setConnecting] = useState(false);
+   561→  const [disconnecting, setDisconnecting] = useState(false);
+   562→  const [syncingLocationId, setSyncingLocationId] = useState<string | null>(null);
+   563→  const [syncingAll, setSyncingAll] = useState(false);
+   564→
+   565→  const { data, isLoading, isError, refetch } = useQuery<GoogleIntegrationResponse>({
+   566→    queryKey: ["google-integration"],
+   567→    queryFn: () => api<GoogleIntegrationResponse>("/api/google-integration"),
+   568→    refetchOnWindowFocus: false,
+   569→  });
+   570→
+   571→  function handleRefresh() {
+   572→    qc.invalidateQueries({ queryKey: ["google-integration"] });
+   573→    toast.success("Google Integration refreshed");
+   574→  }
+   575→
+   576→  async function handleConnect() {
+   577→    if (!canSync) return;
+   578→    setConnecting(true);
+   579→    const tid = toast.loading("Redirecting to Google…");
+   580→    try {
+   581→      const res = await fetch("/api/google-integration", {
+   582→        method: "POST",
+   583→        headers: { "Content-Type": "application/json" },
+   584→        body: JSON.stringify({ action: "connect" }),
+   585→      });
+   586→      const json = await res.json();
+   587→      if (json.success && json.data?.authUrl) {
+   588→        // Redirect to real Google OAuth consent screen
+   589→        toast.success("Redirecting to Google for authentication…", { id: tid });
+   590→        window.location.href = json.data.authUrl;
+   591→      } else {
+   592→        toast.error(json.message || "Failed to connect — Google OAuth not configured", { id: tid });
+   593→      }
+   594→    } catch (e) {
+   595→      toast.error(e instanceof Error ? e.message : "Failed to connect", { id: tid });
+   596→    } finally {
+   597→      setConnecting(false);
+   598→    }
+   599→  }
+   600→
+   601→  async function handleDisconnect() {
+   602→    if (!canSync) return;
+   603→    setDisconnecting(true);
+   604→    const tid = toast.loading("Disconnecting…");
+   605→    try {
+   606→      await api("/api/google-integration", {
+   607→        method: "POST",
+   608→        body: JSON.stringify({ action: "disconnect" }),
+   609→      });
+   610→      toast.success("Google account disconnected", { id: tid });
+   611→      qc.invalidateQueries({ queryKey: ["google-integration"] });
+   612→    } catch (e) {
+   613→      toast.error(e instanceof Error ? e.message : "Failed to disconnect", { id: tid });
+   614→    } finally {
+   615→      setDisconnecting(false);
+   616→    }
+   617→  }
+   618→
+   619→  async function handleSync(locationId?: string) {
+   620→    if (!canSync) return;
+   621→    const tid = toast.loading(locationId ? "Syncing profile…" : "Syncing all profiles…");
+   622→    if (locationId) setSyncingLocationId(locationId);
+   623→    else setSyncingAll(true);
+   624→    try {
+   625→      const res = await api<{ synced: number }>("/api/google-integration", {
+   626→        method: "POST",
+   627→        body: JSON.stringify({ action: "sync", locationId }),
+   628→      });
+   629→      toast.success(`Synced ${res.synced} location(s) from Google`, { id: tid });
+   630→      qc.invalidateQueries({ queryKey: ["google-integration"] });
+   631→    } catch (e) {
+   632→      toast.error(e instanceof Error ? e.message : "Sync failed", { id: tid });
+   633→    } finally {
+   634→      setSyncingLocationId(null);
+   635→      setSyncingAll(false);
+   636→    }
+   637→  }
+   638→
+   639→  const oauth = data?.oauth;
+   640→  const summary = data?.summary;
+   641→  const profiles = data?.profiles ?? [];
+   642→  const syncErrors = data?.recentSyncErrors ?? [];
+   643→  const apiErrors = data?.apiErrors ?? [];
+   644→
+   645→  return (
+   646→    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
+   647→      <PageHeader
+   648→        title="Google Integration"
+   649→        description="OAuth, sync & API status for Google Business Profile"
+   650→        icon={Plug}
+   651→        actions={
+   652→          <Button
+   653→            variant="outline"
+   654→            size="sm"
+   655→            onClick={handleRefresh}
+   656→            disabled={isLoading}
+   657→          >
+   658→            <RefreshCw className={cn("size-4", isLoading && "animate-spin")} />
+   659→            Refresh
+   660→          </Button>
+   661→        }
+   662→      />
+   663→
+   664→      {/* OAuth Connection hero card */}
+   665→      {isLoading || !oauth ? (
+   666→        <Card>
+   667→          <CardContent className="p-5">
+   668→            <div className="flex items-start gap-4">
+   669→              <Skeleton className="size-12 rounded-xl" />
+   670→              <div className="flex-1 space-y-3">
+   671→                <Skeleton className="h-5 w-40" />
+   672→                <Skeleton className="h-4 w-64" />
+   673→                <div className="grid sm:grid-cols-2 gap-3 mt-2">
+   674→                  <Skeleton className="h-20 w-full rounded-lg" />
+   675→                  <Skeleton className="h-20 w-full rounded-lg" />
+   676→                </div>
+   677→              </div>
+   678→            </div>
+   679→          </CardContent>
+   680→        </Card>
+   681→      ) : (
+   682→        <OauthConnectionCard
+   683→          oauth={oauth}
+   684→          canSync={canSync}
+   685→          onConnect={handleConnect}
+   686→          onDisconnect={handleDisconnect}
+   687→          connecting={connecting}
+   688→          disconnecting={disconnecting}
+   689→        />
+   690→      )}
+   691→
+   692→      {/* Sync health stat row + API health badge */}
+   693→      <div className="space-y-3">
+   694→        <div className="flex items-center justify-between flex-wrap gap-2">
+   695→          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Sync Health</h2>
+   696→          {summary && (
+   697→            <Badge
+   698→              variant="outline"
+   699→              className={cn(
+   700→                "font-medium",
+   701→                summary.apiHealth === "healthy"
+   702→                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+   703→                  : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+   704→              )}
+   705→            >
+   706→              <CircleCheck className={cn("size-3 mr-1", summary.apiHealth === "healthy" ? "text-emerald-500" : "text-amber-500")} />
+   707→              API {summary.apiHealth === "healthy" ? "Healthy" : "Degraded"}
+   708→            </Badge>
+   709→          )}
+   710→        </div>
+   711→
+   712→        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+   713→          {isLoading || !summary ? (
+   714→            <>
+   715→              <StatCardSkeleton />
+   716→              <StatCardSkeleton />
+   717→              <StatCardSkeleton />
+   718→              <StatCardSkeleton />
+   719→            </>
+   720→          ) : (
+   721→            <>
+   722→              <StatCard
+   723→                label="Connected Profiles"
+   724→                value={summary.connectedProfiles}
+   725→                icon={Building2}
+   726→                accent="emerald"
+   727→                hint="GBP profiles linked"
+   728→              />
+   729→              <StatCard
+   730→                label="Verified Profiles"
+   731→                value={summary.verifiedProfiles}
+   732→                icon={ShieldCheck}
+   733→                accent="teal"
+   734→                hint="Google-verified listings"
+   735→              />
+   736→              <StatCard
+   737→                label="Active Profiles"
+   738→                value={summary.activeProfiles}
+   739→                icon={CircleCheck}
+   740→                accent="emerald"
+   741→                hint="Status: active"
+   742→              />
+   743→              <StatCard
+   744→                label="Sync Errors"
+   745→                value={summary.syncErrors}
+   746→                icon={CircleAlert}
+   747→                accent={summary.syncErrors > 0 ? "rose" : "emerald"}
+   748→                hint={summary.syncErrors > 0 ? "Recent failures" : "All clear"}
+   749→              />
+   750→            </>
+   751→          )}
+   752→        </div>
+   753→      </div>
+   754→
+   755→      {/* Tabs */}
+   756→      <Tabs value={activeTab} onValueChange={setActiveTab}>
+   757→        <TabsList className="w-full max-w-full overflow-x-auto justify-start h-auto flex-wrap">
+   758→          <TabsTrigger value="profiles"><Building2 className="size-3.5" /> Profiles</TabsTrigger>
+   759→          <TabsTrigger value="sync-logs"><RefreshCw className="size-3.5" /> Sync Logs</TabsTrigger>
+   760→          <TabsTrigger value="api-errors"><CircleAlert className="size-3.5" /> API Errors</TabsTrigger>
+   761→          <TabsTrigger value="configuration"><Server className="size-3.5" /> Configuration</TabsTrigger>
+   762→        </TabsList>
+   763→
+   764→        {/* ── Profiles tab ─────────────────────────────────────────────────── */}
+   765→        <TabsContent value="profiles">
+   766→          <CardSection
+   767→            title="Google Business Profiles"
+   768→            description={`${profiles.length} profile${profiles.length === 1 ? "" : "s"} linked to this account`}
+   769→            action={
+   770→              canSync && profiles.length > 0 ? (
+   771→                <Button
+   772→                  variant="outline"
+   773→                  size="sm"
+   774→                  onClick={() => handleSync()}
+   775→                  disabled={syncingAll}
+   776→                >
+   777→                  {syncingAll ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+   778→                  Sync all
+   779→                </Button>
+   780→              ) : undefined
+   781→            }
+   782→          >
+   783→            {isLoading ? (
+   784→              <div className="space-y-2">
+   785→                {Array.from({ length: 5 }).map((_, i) => (
+   786→                  <Skeleton key={i} className="h-12 w-full" />
+   787→                ))}
+   788→              </div>
+   789→            ) : isError ? (
+   790→              <EmptyState
+   791→                icon={CircleAlert}
+   792→                title="Couldn't load profiles"
+   793→                description="There was a problem fetching your Google Business Profiles."
+   794→                tone="rose"
+   795→                action={<Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>}
+   796→              />
+   797→            ) : profiles.length === 0 ? (
+   798→              <EmptyState
+   799→                icon={Building2}
+   800→                title="No Google Business Profiles linked"
+   801→                description="Once you connect a Google account with Business Profile access, your locations will appear here."
+   802→                tone="slate"
+   803→              />
+   804→            ) : (
+   805→              <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1 px-1">
+   806→                <div className="overflow-x-auto scroll-area">
+   807→                  <Table>
+   808→                  <TableHeader className="sticky top-0 z-10 bg-card">
+   809→                    <TableRow>
+   810→                      <TableHead className="min-w-[200px]">Profile</TableHead>
+   811→                      <TableHead>Location</TableHead>
+   812→                      <TableHead>Category</TableHead>
+   813→                      <TableHead>Rating</TableHead>
+   814→                      <TableHead className="text-right">Reviews</TableHead>
+   815→                      <TableHead>Verification</TableHead>
+   816→                      <TableHead>Status</TableHead>
+   817→                      <TableHead>Sync</TableHead>
+   818→                      <TableHead>Last Synced</TableHead>
+   819→                      <TableHead className="text-right">Actions</TableHead>
+   820→                    </TableRow>
+   821→                  </TableHeader>
+   822→                  <TableBody>
+   823→                    {profiles.map((p) => (
+   824→                      <TableRow key={p.id}>
+   825→                        <TableCell>
+   826→                          <div className="font-medium text-sm leading-tight">{p.profileName}</div>
+   827→                          <div className="font-mono text-[10px] text-muted-foreground mt-0.5 break-all">
+   828→                            {p.googleLocationId}
+   829→                          </div>
+   830→                        </TableCell>
+   831→                        <TableCell>
+   832→                          <div className="text-sm">{p.locationName || "—"}</div>
+   833→                          <div className="text-xs text-muted-foreground flex items-center gap-1">
+   834→                            <MapPin className="size-3" />
+   835→                            {p.locationCity || "—"}
+   836→                          </div>
+   837→                        </TableCell>
+   838→                        <TableCell className="text-sm text-muted-foreground">{p.primaryCategory || "—"}</TableCell>
+   839→                        <TableCell>
+   840→                          {p.totalReviews > 0 ? (
+   841→                            <RatingStars rating={p.averageRating} size={12} />
+   842→                          ) : (
+   843→                            <span className="text-xs text-muted-foreground">No ratings</span>
+   844→                          )}
+   845→                        </TableCell>
+   846→                        <TableCell className="text-right tabular-nums text-sm">{p.totalReviews}</TableCell>
+   847→                        <TableCell>{verificationBadge(p.verificationState)}</TableCell>
+   848→                        <TableCell>{profileStatusBadge(p.profileStatus)}</TableCell>
+   849→                        <TableCell><SyncStatusBadge status={p.syncStatus} /></TableCell>
+   850→                        <TableCell>
+   851→                          <TooltipProvider>
+   852→                            <Tooltip>
+   853→                              <TooltipTrigger asChild>
+   854→                                <span className="text-xs text-muted-foreground cursor-default">
+   855→                                  {relativeTime(p.lastSyncedAt)}
+   856→                                </span>
+   857→                              </TooltipTrigger>
+   858→                              <TooltipContent side="top" className="text-xs">
+   859→                                {fullTime(p.lastSyncedAt)}
+   860→                              </TooltipContent>
+   861→                            </Tooltip>
+   862→                          </TooltipProvider>
+   863→                        </TableCell>
+   864→                        <TableCell className="text-right">
+   865→                          <div className="flex items-center justify-end gap-1">
+   866→                            {canSync && (
+   867→                              <Button
+   868→                                variant="ghost"
+   869→                                size="sm"
+   870→                                className="h-8"
+   871→                                disabled={syncingLocationId === p.id || syncingAll}
+   872→                                onClick={() => handleSync(p.id)}
+   873→                              >
+   874→                                {syncingLocationId === p.id ? (
+   875→                                  <Loader2 className="size-3.5 animate-spin" />
+   876→                                ) : (
+   877→                                  <RefreshCw className="size-3.5" />
+   878→                                )}
+   879→                                <span className="ml-1 hidden sm:inline">Sync</span>
+   880→                              </Button>
+   881→                            )}
+   882→                            {p.mapUrl && (
+   883→                              <Button
+   884→                                variant="ghost"
+   885→                                size="sm"
+   886→                                className="h-8"
+   887→                                asChild
+   888→                              >
+   889→                                <a href={p.mapUrl} target="_blank" rel="noopener noreferrer">
+   890→                                  <ExternalLink className="size-3.5" />
+   891→                                  <span className="sr-only">View on Maps</span>
+   892→                                </a>
+   893→                              </Button>
+   894→                            )}
+   895→                          </div>
+   896→                        </TableCell>
+   897→                      </TableRow>
+   898→                    ))}
+   899→                  </TableBody>
+   900→                  </Table>
+   901→                </div>
+   902→              </div>
+   903→            )}
+   904→          </CardSection>
+   905→        </TabsContent>
+   906→
+   907→        {/* ── Sync Logs tab ────────────────────────────────────────────────── */}
+   908→        <TabsContent value="sync-logs">
+   909→          <CardSection
+   910→            title="Recent Sync Errors"
+   911→            description={`${syncErrors.length} failed or partial sync${syncErrors.length === 1 ? "" : "s"} in the recent window`}
+   912→          >
+   913→            {isLoading ? (
+   914→              <div className="space-y-2">
+   915→                {Array.from({ length: 4 }).map((_, i) => (
+   916→                  <Skeleton key={i} className="h-12 w-full" />
+   917→                ))}
+   918→              </div>
+   919→            ) : syncErrors.length === 0 ? (
+   920→              <EmptyState
+   921→                icon={CircleCheck}
+   922→                title="All syncs healthy"
+   923→                description="No recent sync failures across any of your Google Business Profile modules."
+   924→                tone="emerald"
+   925→              />
+   926→            ) : (
+   927→              <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1 px-1">
+   928→                <div className="overflow-x-auto scroll-area">
+   929→                  <Table>
+   930→                  <TableHeader className="sticky top-0 z-10 bg-card">
+   931→                    <TableRow>
+   932→                      <TableHead>Module</TableHead>
+   933→                      <TableHead>Location</TableHead>
+   934→                      <TableHead>Status</TableHead>
+   935→                      <TableHead className="min-w-[260px]">Error Message</TableHead>
+   936→                      <TableHead>Started</TableHead>
+   937→                    </TableRow>
+   938→                  </TableHeader>
+   939→                  <TableBody>
+   940→                    {syncErrors.map((s) => {
+   941→                      const isFailed = s.status === "failed";
+   942→                      const statusMap = {
+   943→                        failed:  { label: "Failed",  cls: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" },
+   944→                        partial: { label: "Partial", cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+   945→                        running: { label: "Running", cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+   946→                        success: { label: "Success", cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+   947→                      }[s.status];
+   948→                      return (
+   949→                        <TableRow
+   950→                          key={s.id}
+   951→                          className={isFailed ? "border-l-2 border-l-rose-500 bg-rose-500/[0.03]" : ""}
+   952→                        >
+   953→                          <TableCell>
+   954→                            <Badge
+   955→                              variant="outline"
+   956→                              className="font-mono text-[10px] bg-card"
+   957→                            >
+   958→                              {s.module}
+   959→                            </Badge>
+   960→                          </TableCell>
+   961→                          <TableCell className="text-sm">{s.locationName}</TableCell>
+   962→                          <TableCell>
+   963→                            <Badge variant="outline" className={cn("font-medium", statusMap.cls)}>
+   964→                              {statusMap.label}
+   965→                            </Badge>
+   966→                          </TableCell>
+   967→                          <TableCell>
+   968→                            <TooltipProvider>
+   969→                              <Tooltip>
+   970→                                <TooltipTrigger asChild>
+   971→                                  <span className="text-xs text-muted-foreground line-clamp-2 cursor-default">
+   972→                                    {s.errorMessage || "No error details"}
+   973→                                  </span>
+   974→                                </TooltipTrigger>
+   975→                                <TooltipContent side="top" className="max-w-md text-xs whitespace-pre-wrap">
+   976→                                  {s.errorMessage || "No error details"}
+   977→                                </TooltipContent>
+   978→                              </Tooltip>
+   979→                            </TooltipProvider>
+   980→                          </TableCell>
+   981→                          <TableCell>
+   982→                            <TooltipProvider>
+   983→                              <Tooltip>
+   984→                                <TooltipTrigger asChild>
+   985→                                  <span className="text-xs text-muted-foreground cursor-default">
+   986→                                    {relativeTime(s.startedAt)}
+   987→                                  </span>
+   988→                                </TooltipTrigger>
+   989→                                <TooltipContent side="top" className="text-xs">
+   990→                                  {fullTime(s.startedAt)}
+   991→                                </TooltipContent>
+   992→                              </Tooltip>
+   993→                            </TooltipProvider>
+   994→                          </TableCell>
+   995→                        </TableRow>
+   996→                      );
+   997→                    })}
+   998→                  </TableBody>
+   999→                  </Table>
+  1000→                </div>
+  1001→              </div>
+  1002→            )}
+  1003→          </CardSection>
+  1004→        </TabsContent>
+  1005→
+  1006→        {/* ── API Errors tab ───────────────────────────────────────────────── */}
+  1007→        <TabsContent value="api-errors">
+  1008→          <CardSection
+  1009→            title="Google API Errors"
+  1010→            description={`${apiErrors.length} unresolved Google API error${apiErrors.length === 1 ? "" : "s"}`}
+  1011→          >
+  1012→            {isLoading ? (
+  1013→              <div className="space-y-2">
+  1014→                {Array.from({ length: 3 }).map((_, i) => (
+  1015→                  <Skeleton key={i} className="h-12 w-full" />
+  1016→                ))}
+  1017→              </div>
+  1018→            ) : apiErrors.length === 0 ? (
+  1019→              <EmptyState
+  1020→                icon={CircleCheck}
+  1021→                title="No API errors"
+  1022→                description="All Google API requests in the recent window have completed successfully."
+  1023→                tone="emerald"
+  1024→              />
+  1025→            ) : (
+  1026→              <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1 px-1">
+  1027→                <div className="overflow-x-auto scroll-area">
+  1028→                  <Table>
+  1029→                  <TableHeader className="sticky top-0 z-10 bg-card">
+  1030→                    <TableRow>
+  1031→                      <TableHead className="min-w-[160px]">Error Code</TableHead>
+  1032→                      <TableHead className="min-w-[320px]">Message</TableHead>
+  1033→                      <TableHead>Created</TableHead>
+  1034→                    </TableRow>
+  1035→                  </TableHeader>
+  1036→                  <TableBody>
+  1037→                    {apiErrors.map((e) => (
+  1038→                      <TableRow key={e.id} className="border-l-2 border-l-rose-500 bg-rose-500/[0.03]">
+  1039→                        <TableCell>
+  1040→                          <Badge
+  1041→                            variant="outline"
+  1042→                            className="font-mono text-[10px] bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+  1043→                          >
+  1044→                            {e.errorCode}
+  1045→                          </Badge>
+  1046→                        </TableCell>
+  1047→                        <TableCell>
+  1048→                          <TooltipProvider>
+  1049→                            <Tooltip>
+  1050→                              <TooltipTrigger asChild>
+  1051→                                <span className="text-xs text-foreground line-clamp-2 cursor-default">
+  1052→                                  {e.errorMessage}
+  1053→                                </span>
+  1054→                              </TooltipTrigger>
+  1055→                              <TooltipContent side="top" className="max-w-md text-xs whitespace-pre-wrap">
+  1056→                                {e.errorMessage}
+  1057→                              </TooltipContent>
+  1058→                            </Tooltip>
+  1059→                          </TooltipProvider>
+  1060→                        </TableCell>
+  1061→                        <TableCell>
+  1062→                          <TooltipProvider>
+  1063→                            <Tooltip>
+  1064→                              <TooltipTrigger asChild>
+  1065→                                <span className="text-xs text-muted-foreground cursor-default">
+  1066→                                  {relativeTime(e.createdAt)}
+  1067→                                </span>
+  1068→                              </TooltipTrigger>
+  1069→                              <TooltipContent side="top" className="text-xs">
+  1070→                                {fullTime(e.createdAt)}
+  1071→                              </TooltipContent>
+  1072→                            </Tooltip>
+  1073→                          </TooltipProvider>
+  1074→                        </TableCell>
+  1075→                      </TableRow>
+  1076→                    ))}
+  1077→                  </TableBody>
+  1078→                  </Table>
+  1079→                </div>
+  1080→              </div>
+  1081→            )}
+  1082→          </CardSection>
+  1083→        </TabsContent>
+  1084→
+  1085→        {/* ── Configuration tab ────────────────────────────────────────────── */}
+  1086→        <TabsContent value="configuration">
+  1087→          <div className="space-y-4">
+  1088→            {/* Sync schedule */}
+  1089→            <CardSection
+  1090→              title="Sync Schedule"
+  1091→              description="How often MyFNG polls each Google Business Profile module"
+  1092→            >
+  1093→              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+  1094→                {SYNC_SCHEDULE.map((s) => (
+  1095→                  <div
+  1096→                    key={s.module}
+  1097→                    className="rounded-lg border bg-card/60 p-4 flex items-start gap-3"
+  1098→                  >
+  1099→                    <div className="size-9 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+  1100→                      <s.icon className="size-4" />
+  1101→                    </div>
+  1102→                    <div className="min-w-0">
+  1103→                      <div className="text-sm font-semibold">{s.module}</div>
+  1104→                      <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+  1105→                        <Clock className="size-3" />
+  1106→                        {s.schedule}
+  1107→                      </div>
+  1108→                    </div>
+  1109→                  </div>
+  1110→                ))}
+  1111→              </div>
+  1112→            </CardSection>
+  1113→
+  1114→            {/* Required Google APIs */}
+  1115→            <CardSection
+  1116→              title="Required Google APIs"
+  1117→              description="Google Cloud APIs that must be enabled for the project"
+  1118→            >
+  1119→              <div className="space-y-2">
+  1120→                {REQUIRED_APIS.map((a) => (
+  1121→                  <div
+  1122→                    key={a.name}
+  1123→                    className="flex items-center justify-between gap-3 rounded-lg border bg-card/60 p-3"
+  1124→                  >
+  1125→                    <div className="flex items-start gap-3 min-w-0">
+  1126→                      <div className="size-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+  1127→                        <Server className="size-4" />
+  1128→                      </div>
+  1129→                      <div className="min-w-0">
+  1130→                        <div className="text-sm font-medium">{a.name}</div>
+  1131→                        <div className="text-xs text-muted-foreground">{a.description}</div>
+  1132→                      </div>
+  1133→                    </div>
+  1134→                    <Badge
+  1135→                      variant="outline"
+  1136→                      className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 font-medium shrink-0"
+  1137→                    >
+  1138→                      <CircleCheck className="size-3 mr-1" />
+  1139→                      Enabled
+  1140→                    </Badge>
+  1141→                  </div>
+  1142→                ))}
+  1143→              </div>
+  1144→            </CardSection>
+  1145→
+  1146→            {/* OAuth redirect URI + authorized origins */}
+  1147→            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  1148→              <CardSection
+  1149→                title="OAuth Redirect URI"
+  1150→                description="Configure this exact URI in Google Cloud Console → APIs & Services → Credentials"
+  1151→              >
+  1152→                <div className="rounded-lg border bg-muted/30 p-3">
+  1153→                  <div className="flex items-center justify-between gap-2">
+  1154→                    <code className="font-mono text-xs text-foreground break-all">
+  1155→                      {REDIRECT_URI}
+  1156→                    </code>
+  1157→                    <CopyButton value={REDIRECT_URI} />
+  1158→                  </div>
+  1159→                  <div className="mt-2 text-[11px] text-muted-foreground flex items-center gap-1">
+  1160→                    <KeyRound className="size-3" />
+  1161→                    Full redirect path relative to your MyFNG origin
+  1162→                  </div>
+  1163→                </div>
+  1164→              </CardSection>
+  1165→
+  1166→              <CardSection
+  1167→                title="Authorized JavaScript Origins"
+  1168→                description="Allowed origins for browser-based Google API requests"
+  1169→              >
+  1170→                <div className="space-y-2">
+  1171→                  {AUTHORIZED_ORIGINS.map((o) => (
+  1172→                    <div
+  1173→                      key={o.origin}
+  1174→                      className="flex items-center justify-between gap-2 rounded-lg border bg-card/60 p-3"
+  1175→                    >
+  1176→                      <div className="min-w-0">
+  1177→                        <div className="font-mono text-xs text-foreground break-all">{o.origin}</div>
+  1178→                        <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+  1179→                          <Globe className="size-3" />
+  1180→                          {o.env}
+  1181→                        </div>
+  1182→                      </div>
+  1183→                      <CopyButton value={o.origin} />
+  1184→                    </div>
+  1185→                  ))}
+  1186→                </div>
+  1187→              </CardSection>
+  1188→            </div>
+  1189→
+  1190→            {/* Helpful note */}
+  1191→            <Card>
+  1192→              <CardContent className="p-4">
+  1193→                <div className="flex items-start gap-3">
+  1194→                  <CalendarClock className="size-5 text-amber-500 shrink-0 mt-0.5" />
+  1195→                  <div className="text-xs text-muted-foreground leading-relaxed">
+  1196→                    <span className="font-medium text-foreground">Token refresh policy:</span>{" "}
+  1197→                    Access tokens expire after 1 hour and are auto-refreshed using the stored refresh token.
+  1198→                    If the refresh token is revoked (e.g. user changes password or disconnects from Google),
+  1199→                    re-authorization is required. Sync jobs for the affected account will pause until then.
+  1200→                  </div>
+  1201→                </div>
+  1202→              </CardContent>
+  1203→            </Card>
+  1204→          </div>
+  1205→        </TabsContent>
+  1206→      </Tabs>
+  1207→    </div>
+  1208→  );
+  1209→}
+  1210→
+  1211→export default GoogleIntegrationView;
+  1212→

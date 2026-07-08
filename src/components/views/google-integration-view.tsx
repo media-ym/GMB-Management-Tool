@@ -122,10 +122,8 @@ interface GoogleIntegrationResponse {
 // ────────────────────────────────────────────────────────────────────────────
 
 const REQUESTED_SCOPES: { label: string; scope: string }[] = [
-  { label: "Business Profile", scope: "https://www.googleapis.com/auth/business.performance" },
-  { label: "Business Information", scope: "https://www.googleapis.com/auth/business.business_info" },
-  { label: "Business Manage", scope: "https://www.googleapis.com/auth/business.manage" },
-  { label: "OpenID", scope: "openid" },
+  { label: "Business Profile (manage)", scope: "https://www.googleapis.com/auth/business.manage" },
+  { label: "OpenID Connect", scope: "openid" },
   { label: "Email", scope: "https://www.googleapis.com/auth/userinfo.email" },
   { label: "Profile", scope: "https://www.googleapis.com/auth/userinfo.profile" },
 ];

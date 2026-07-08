@@ -9,7 +9,6 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
-  
   const error = url.searchParams.get("error");
   const state = url.searchParams.get("state");
 
@@ -18,38 +17,27 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL(`/?google_error=${encodeURIComponent(error)}`, url.origin));
   }
 
-  const user = await getSessionUser();
+  // ─── CSRF: validate OAuth state against cookie ─────────────────────────
+  // The `state` param must match the `gmb_oauth_state` cookie we set when
+  // initiating the OAuth flow. Reject on mismatch or missing cookie.
+  const cookieState = req.cookies.get("gmb_oauth_state")?.value;
+  // Always clear the cookie after the flow regardless of outcome
+  const clearStateCookie = "gmb_oauth_state=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly";
 
-  if (!code) {
-    const existing = await db.googleAccount.findFirst();
-    if (existing) {
-      await db.googleAccount.update({
-        where: { id: existing.id },
-        data: {
-          status: "active",
-          accessToken: "no_token",
-          refreshToken: "no_token",
-          tokenExpiry: new Date(Date.now() + 3600 * 1000),
-        },
-      });
-    } else {
-      await db.googleAccount.create({
-        data: {
-          email: "gmb@myfng.in",
-          googleUserId: "not_connected",
-          status: "active",
-          accessToken: "no_token",
-          refreshToken: "no_token",
-          tokenExpiry: new Date(Date.now() + 3600 * 1000),
-          scopesJson: JSON.stringify(["https://www.googleapis.com/auth/business.manage"]),
-        },
-      });
-    }
-    if (user) {
-      await logAudit({ userId: user.id, userName: user.name, action: "google.connect", entity: "google_account", newValue: { mode: "not_configured" }, ip: req.headers.get("x-forwarded-for") ?? undefined });
-    }
-    return NextResponse.redirect(new URL("/?google_connected=true", url.origin));
+  if (!state || !cookieState || state !== cookieState) {
+    const redirect = NextResponse.redirect(new URL("/?google_error=state_mismatch", url.origin));
+    redirect.headers.set("Set-Cookie", clearStateCookie);
+    return redirect;
   }
+
+  // ─── No code = OAuth flow did not complete ─────────────────────────────
+  if (!code) {
+    const redirect = NextResponse.redirect(new URL("/?google_error=no_code", url.origin));
+    redirect.headers.set("Set-Cookie", clearStateCookie);
+    return redirect;
+  }
+
+  const user = await getSessionUser();
 
   // Real OAuth — exchange code for tokens
   try {
@@ -69,6 +57,11 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* ignore userinfo error */ }
 
+    // Persist the actual scopes Google granted
+    const grantedScopes = tokens.scope
+      ? tokens.scope.split(" ").filter(Boolean)
+      : ["https://www.googleapis.com/auth/business.manage"];
+
     // Upsert google account
     const existing = await db.googleAccount.findFirst();
     if (existing) {
@@ -81,7 +74,7 @@ export async function GET(req: NextRequest) {
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken || existing.refreshToken,
           tokenExpiry: new Date(tokens.expiryDate),
-          scopesJson: JSON.stringify(["https://www.googleapis.com/auth/business.manage"]),
+          scopesJson: JSON.stringify(grantedScopes),
         },
       });
     } else {
@@ -93,7 +86,7 @@ export async function GET(req: NextRequest) {
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
           tokenExpiry: new Date(tokens.expiryDate),
-          scopesJson: JSON.stringify(["https://www.googleapis.com/auth/business.manage"]),
+          scopesJson: JSON.stringify(grantedScopes),
         },
       });
     }
@@ -102,19 +95,31 @@ export async function GET(req: NextRequest) {
       await logAudit({ userId: user.id, userName: user.name, action: "google.connect", entity: "google_account", newValue: { email, mode: "production" }, ip: req.headers.get("x-forwarded-for") ?? undefined });
     }
 
-    return NextResponse.redirect(new URL("/?google_connected=true", url.origin));
+    const redirect = NextResponse.redirect(new URL("/?google_connected=true", url.origin));
+    redirect.headers.set("Set-Cookie", clearStateCookie);
+    return redirect;
   } catch (e: any) {
     console.error("Google OAuth callback error:", e);
-    return NextResponse.redirect(new URL(`/?google_error=${encodeURIComponent(e.message)}`, url.origin));
+    const redirect = NextResponse.redirect(new URL(`/?google_error=${encodeURIComponent(e.message)}`, url.origin));
+    redirect.headers.set("Set-Cookie", clearStateCookie);
+    return redirect;
   }
 }
 
-// POST /api/google/callback — initiate OAuth flow (get auth URL)
+// POST /api/google/callback — initiate OAuth flow (get auth URL + set state cookie)
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const authUrl = getGoogleAuthUrl(body.state);
-  return NextResponse.json({ success: true, authUrl, mode: googleServiceStatus.mode });
+  const { url: authUrl, state } = getGoogleAuthUrl(body.state);
+  const res = NextResponse.json({ success: true, authUrl, state, mode: googleServiceStatus.mode });
+  // Set CSRF state cookie — HttpOnly, SameSite=Lax, 1h expiry
+  res.cookies.set("gmb_oauth_state", state, {
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 60 * 60, // 1 hour
+    path: "/",
+  });
+  return res;
 }

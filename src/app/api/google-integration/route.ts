@@ -117,9 +117,18 @@ export async function POST(req: NextRequest) {
     if (!googleServiceStatus.isConfigured) {
       return fail("Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file first.", 400);
     }
-    // Return the real Google OAuth URL — frontend will redirect to it
-    const authUrl = getGoogleAuthUrl(body.state || undefined);
-    return ok({ authUrl, redirect: true }, "Redirecting to Google for authentication…");
+    // Generate the real Google OAuth URL with a CSRF state nonce.
+    // The state is stored in an HttpOnly cookie (1h, SameSite=Lax) so the OAuth
+    // callback can validate it before accepting the authorization code.
+    const { url: authUrl, state } = getGoogleAuthUrl(body.state || undefined);
+    const res = ok({ authUrl, state, redirect: true }, "Redirecting to Google for authentication…");
+    res.cookies.set("gmb_oauth_state", state, {
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: 60 * 60, // 1 hour
+      path: "/",
+    });
+    return res;
   }
 
   // ─── Disconnect: revoke tokens ─────────────────────────────────────────

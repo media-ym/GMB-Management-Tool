@@ -12,7 +12,6 @@ export const IS_CONFIGURED = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 
 const GBP_SCOPES = [
   "https://www.googleapis.com/auth/business.manage",
-  "https://www.googleapis.com/auth/business.info",
   "openid",
   "email",
   "profile",
@@ -20,7 +19,11 @@ const GBP_SCOPES = [
 
 // ─── OAuth Flow ───────────────────────────────────────────────────────────
 
-export function getGoogleAuthUrl(state?: string): string {
+export function getGoogleAuthUrl(state?: string): { url: string; state: string } {
+  // Generate a high-entropy CSRF state if none provided.
+  // The caller is responsible for storing this value (typically in a cookie)
+  // and validating it on the OAuth callback.
+  const finalState = state || crypto.randomUUID();
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: GOOGLE_REDIRECT_URI,
@@ -28,15 +31,16 @@ export function getGoogleAuthUrl(state?: string): string {
     scope: GBP_SCOPES,
     access_type: "offline",
     prompt: "consent",
-    ...(state ? { state } : {}),
+    state: finalState,
   });
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  return { url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`, state: finalState };
 }
 
 export async function exchangeCodeForTokens(code: string): Promise<{
   accessToken: string;
   refreshToken: string;
   expiryDate: number;
+  scope?: string;
 }> {
   const body = new URLSearchParams({
     code,
@@ -62,6 +66,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
     expiryDate: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+    scope: typeof tokens.scope === "string" ? tokens.scope : undefined,
   };
 }
 
@@ -123,6 +128,8 @@ export async function getValidAccessToken(): Promise<string | null> {
 const GBP_API_BASE = "https://mybusinessbusinessinformation.googleapis.com/v1";
 const GBP_PERF_BASE = "https://businessprofileperformance.googleapis.com/v1";
 const GBP_ACCOUNTS_BASE = "https://mybusinessaccountmanagement.googleapis.com/v1";
+// v4 API — kept alive ONLY for reviews and localPosts (per Google's supported-apis matrix)
+const GBP_V4_BASE = "https://mybusiness.googleapis.com/v4";
 
 export async function listGoogleAccounts(accessToken: string): Promise<any[]> {
   const res = await fetch(`${GBP_ACCOUNTS_BASE}/accounts`, {
@@ -151,12 +158,28 @@ export async function getBusinessProfile(accessToken: string, locationName: stri
 }
 
 export async function listReviews(accessToken: string, locationName: string, pageSize = 50): Promise<any[]> {
-  const res = await fetch(`${GBP_API_BASE}/${locationName}/reviews?pageSize=${pageSize}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Failed to list reviews: ${res.status}`);
-  const data = await res.json();
-  return data.reviews ?? [];
+  // v4 reviews endpoint with full pagination — Google returns up to 50/page.
+  // Loop on nextPageToken until exhausted, with a 10-page safety limit (500 reviews max).
+  const allReviews: any[] = [];
+  let pageToken: string | undefined;
+  const maxPages = 10;
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = new URL(`${GBP_V4_BASE}/${locationName}/reviews`);
+    url.searchParams.set("pageSize", String(pageSize));
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) throw new Error(`Failed to list reviews: ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data.reviews)) allReviews.push(...data.reviews);
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+
+  return allReviews;
 }
 
 export async function replyToReview(accessToken: string, reviewName: string, replyText: string): Promise<any> {
@@ -169,13 +192,52 @@ export async function replyToReview(accessToken: string, reviewName: string, rep
   return res.json();
 }
 
+export async function deleteReviewReply(accessToken: string, reviewName: string): Promise<boolean> {
+  // Deletes the owner reply from a Google review. reviewName is the full Google
+  // review name like "accounts/{aid}/locations/{lid}/reviews/{rid}".
+  const res = await fetch(`${GBP_V4_BASE}/${reviewName}/reply`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Failed to delete review reply: ${res.status}`);
+  return true;
+}
+
 export async function createGooglePost(accessToken: string, locationName: string, post: any): Promise<any> {
-  const res = await fetch(`${GBP_API_BASE}/${locationName}/localPosts`, {
+  // Local posts remain exclusively on v4 — Business Information API v1 has no /localPosts endpoint.
+  const res = await fetch(`${GBP_V4_BASE}/${locationName}/localPosts`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(post),
   });
   if (!res.ok) throw new Error(`Failed to create post: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteGooglePost(accessToken: string, postName: string): Promise<boolean> {
+  // postName is the full Google post name like "accounts/{aid}/locations/{lid}/localPosts/{pid}"
+  const res = await fetch(`${GBP_V4_BASE}/${postName}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Failed to delete Google post: ${res.status}`);
+  return true;
+}
+
+export async function patchGooglePost(
+  accessToken: string,
+  postName: string,
+  updates: { title?: string; summary?: string; callToAction?: any; topicType?: string },
+  fieldMask: string = "summary,title,callToAction"
+): Promise<any> {
+  // PATCH existing local post on Google. topicType is immutable and is NOT included
+  // in the updateMask (only sent via fieldMask=topicType per Google docs, but ignored on update).
+  const res = await fetch(`${GBP_V4_BASE}/${postName}?updateMask=${fieldMask}&fieldMask=topicType`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Failed to patch Google post: ${res.status}`);
   return res.json();
 }
 

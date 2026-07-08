@@ -1,0 +1,743 @@
+     1→// ═══════════════════════════════════════════════════════════════════════════
+     2→// Google Business Profile Service Layer — Production Only
+     3→// All Google API calls are real. Requires GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET.
+     4→// ═══════════════════════════════════════════════════════════════════════════
+     5→
+     6→import { db } from "./db";
+     7→
+     8→const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+     9→const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+    10→const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/google/callback`;
+    11→export const IS_CONFIGURED = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+    12→
+    13→const GBP_SCOPES = [
+    14→  "https://www.googleapis.com/auth/business.manage",
+    15→  "https://www.googleapis.com/auth/business.info",
+    16→  "openid",
+    17→  "email",
+    18→  "profile",
+    19→].join(" ");
+    20→
+    21→// ─── OAuth Flow ───────────────────────────────────────────────────────────
+    22→
+    23→export function getGoogleAuthUrl(state?: string): string {
+    24→  const params = new URLSearchParams({
+    25→    client_id: GOOGLE_CLIENT_ID,
+    26→    redirect_uri: GOOGLE_REDIRECT_URI,
+    27→    response_type: "code",
+    28→    scope: GBP_SCOPES,
+    29→    access_type: "offline",
+    30→    prompt: "consent",
+    31→    ...(state ? { state } : {}),
+    32→  });
+    33→  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    34→}
+    35→
+    36→export async function exchangeCodeForTokens(code: string): Promise<{
+    37→  accessToken: string;
+    38→  refreshToken: string;
+    39→  expiryDate: number;
+    40→}> {
+    41→  const body = new URLSearchParams({
+    42→    code,
+    43→    client_id: GOOGLE_CLIENT_ID,
+    44→    client_secret: GOOGLE_CLIENT_SECRET,
+    45→    redirect_uri: GOOGLE_REDIRECT_URI,
+    46→    grant_type: "authorization_code",
+    47→  });
+    48→
+    49→  const res = await fetch("https://oauth2.googleapis.com/token", {
+    50→    method: "POST",
+    51→    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    52→    body,
+    53→  });
+    54→
+    55→  if (!res.ok) {
+    56→    const err = await res.text();
+    57→    throw new Error(`Google token exchange failed: ${res.status} ${err}`);
+    58→  }
+    59→
+    60→  const tokens = await res.json();
+    61→  return {
+    62→    accessToken: tokens.access_token,
+    63→    refreshToken: tokens.refresh_token,
+    64→    expiryDate: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+    65→  };
+    66→}
+    67→
+    68→export async function refreshAccessToken(refreshToken: string): Promise<{
+    69→  accessToken: string;
+    70→  expiryDate: number;
+    71→}> {
+    72→  const body = new URLSearchParams({
+    73→    client_id: GOOGLE_CLIENT_ID,
+    74→    client_secret: GOOGLE_CLIENT_SECRET,
+    75→    refresh_token: refreshToken,
+    76→    grant_type: "refresh_token",
+    77→  });
+    78→
+    79→  const res = await fetch("https://oauth2.googleapis.com/token", {
+    80→    method: "POST",
+    81→    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    82→    body,
+    83→  });
+    84→
+    85→  if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`);
+    86→  const tokens = await res.json();
+    87→  return {
+    88→    accessToken: tokens.access_token,
+    89→    expiryDate: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+    90→  };
+    91→}
+    92→
+    93→export async function getValidAccessToken(): Promise<string | null> {
+    94→  const account = await db.googleAccount.findFirst();
+    95→  if (!account) return null;
+    96→
+    97→  // Check if token is still valid (5 min buffer)
+    98→  if (account.tokenExpiry && new Date(account.tokenExpiry) > new Date(Date.now() + 5 * 60 * 1000)) {
+    99→    return account.accessToken;
+   100→  }
+   101→
+   102→  // Try to refresh
+   103→  if (account.refreshToken) {
+   104→    try {
+   105→      const { accessToken, expiryDate } = await refreshAccessToken(account.refreshToken);
+   106→      await db.googleAccount.update({
+   107→        where: { id: account.id },
+   108→        data: { accessToken, tokenExpiry: new Date(expiryDate), status: "active" },
+   109→      });
+   110→      return accessToken;
+   111→    } catch (e) {
+   112→      console.error("Token refresh failed:", e);
+   113→      await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
+   114→      return null;
+   115→    }
+   116→  }
+   117→
+   118→  return null;
+   119→}
+   120→
+   121→// ─── Google Business Profile API Calls ────────────────────────────────────
+   122→
+   123→const GBP_API_BASE = "https://mybusinessbusinessinformation.googleapis.com/v1";
+   124→const GBP_PERF_BASE = "https://businessprofileperformance.googleapis.com/v1";
+   125→const GBP_ACCOUNTS_BASE = "https://mybusinessaccountmanagement.googleapis.com/v1";
+   126→
+   127→export async function listGoogleAccounts(accessToken: string): Promise<any[]> {
+   128→  const res = await fetch(`${GBP_ACCOUNTS_BASE}/accounts`, {
+   129→    headers: { Authorization: `Bearer ${accessToken}` },
+   130→  });
+   131→  if (!res.ok) throw new Error(`Failed to list accounts: ${res.status}`);
+   132→  const data = await res.json();
+   133→  return data.accounts ?? [];
+   134→}
+   135→
+   136→export async function listGoogleLocations(accessToken: string, accountName: string): Promise<any[]> {
+   137→  const res = await fetch(`${GBP_API_BASE}/${accountName}/locations?readMask=name,title,storeCode,latlng,metadata,profile,regularHours,specialHours,serviceItems,categories,phoneNumbers,websiteUri,openInfo`, {
+   138→    headers: { Authorization: `Bearer ${accessToken}` },
+   139→  });
+   140→  if (!res.ok) throw new Error(`Failed to list locations: ${res.status}`);
+   141→  const data = await res.json();
+   142→  return data.locations ?? [];
+   143→}
+   144→
+   145→export async function getBusinessProfile(accessToken: string, locationName: string): Promise<any> {
+   146→  const res = await fetch(`${GBP_API_BASE}/${locationName}?readMask=title,storeCode,latlng,metadata,profile,regularHours,categories,phoneNumbers,websiteUri,openInfo,serviceItems,attributes`, {
+   147→    headers: { Authorization: `Bearer ${accessToken}` },
+   148→  });
+   149→  if (!res.ok) throw new Error(`Failed to get profile: ${res.status}`);
+   150→  return res.json();
+   151→}
+   152→
+   153→export async function listReviews(accessToken: string, locationName: string, pageSize = 50): Promise<any[]> {
+   154→  const res = await fetch(`${GBP_API_BASE}/${locationName}/reviews?pageSize=${pageSize}`, {
+   155→    headers: { Authorization: `Bearer ${accessToken}` },
+   156→  });
+   157→  if (!res.ok) throw new Error(`Failed to list reviews: ${res.status}`);
+   158→  const data = await res.json();
+   159→  return data.reviews ?? [];
+   160→}
+   161→
+   162→export async function replyToReview(accessToken: string, reviewName: string, replyText: string): Promise<any> {
+   163→  const res = await fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
+   164→    method: "PUT",
+   165→    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+   166→    body: JSON.stringify({ comment: replyText }),
+   167→  });
+   168→  if (!res.ok) throw new Error(`Failed to publish reply: ${res.status}`);
+   169→  return res.json();
+   170→}
+   171→
+   172→export async function createGooglePost(accessToken: string, locationName: string, post: any): Promise<any> {
+   173→  const res = await fetch(`${GBP_API_BASE}/${locationName}/localPosts`, {
+   174→    method: "POST",
+   175→    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+   176→    body: JSON.stringify(post),
+   177→  });
+   178→  if (!res.ok) throw new Error(`Failed to create post: ${res.status}`);
+   179→  return res.json();
+   180→}
+   181→
+   182→// ─── Performance Metrics (real Google Business Performance API) ───────────
+   183→
+   184→export async function getPerformanceMetrics(
+   185→  accessToken: string,
+   186→  locationName: string,
+   187→  startDate: { year: number; month: number; day: number },
+   188→  endDate: { year: number; month: number; day: number },
+   189→  metricType: string = "BUSINESS_IMPRESSIONS_DESKTOP_MAPS"
+   190→): Promise<any[]> {
+   191→  const url = new URL(`${GBP_PERF_BASE}/locations/${locationName}:getDailyMetricsTimeSeries`);
+   192→  url.searchParams.set("dailyRange.startDate.date.year", String(startDate.year));
+   193→  url.searchParams.set("dailyRange.startDate.date.month", String(startDate.month));
+   194→  url.searchParams.set("dailyRange.startDate.date.day", String(startDate.day));
+   195→  url.searchParams.set("dailyRange.endDate.date.year", String(endDate.year));
+   196→  url.searchParams.set("dailyRange.endDate.date.month", String(endDate.month));
+   197→  url.searchParams.set("dailyRange.endDate.date.day", String(endDate.day));
+   198→  url.searchParams.set("dailyMetrics", metricType);
+   199→
+   200→  const res = await fetch(url.toString(), {
+   201→    headers: { Authorization: `Bearer ${accessToken}` },
+   202→  });
+   203→  if (!res.ok) throw new Error(`Failed to get performance metrics: ${res.status} ${await res.text()}`);
+   204→  const data = await res.json();
+   205→  return data.timeSeries?.datedValues ?? [];
+   206→}
+   207→
+   208→// Fetch ALL 5 metric types for a date range and return as daily aggregates
+   209→export async function getFullPerformanceMetrics(
+   210→  accessToken: string,
+   211→  locationName: string,
+   212→  daysBack: number = 30
+   213→): Promise<{ date: Date; searchViews: number; mapsViews: number; websiteClicks: number; phoneCalls: number; directionRequests: number }[]> {
+   214→  const today = new Date();
+   215→  const start = new Date(today);
+   216→  start.setDate(today.getDate() - daysBack);
+   217→
+   218→  const startDate = { year: start.getFullYear(), month: start.getMonth() + 1, day: start.getDate() };
+   219→  const endDate = { year: today.getFullYear(), month: today.getMonth() + 1, day: today.getDate() };
+   220→
+   221→  // Google API returns one metric type per call, so fetch all 5 in parallel
+   222→  const metricTypes = {
+   223→    searchViews: "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
+   224→    mapsViews: "BUSINESS_IMPRESSIONS_DESKTOP_MAPS",
+   225→    websiteClicks: "WEBSITE_CLICKS",
+   226→    phoneCalls: "CALL_CLICKS",
+   227→    directionRequests: "BUSINESS_DIRECTION_REQUESTS",
+   228→  };
+   229→
+   230→  const [searchRes, mapsRes, websiteRes, callRes, directionRes] = await Promise.allSettled([
+   231→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.searchViews),
+   232→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.mapsViews),
+   233→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.websiteClicks),
+   234→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.phoneCalls),
+   235→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.directionRequests),
+   236→  ]);
+   237→
+   238→  // Build a map of date → metrics
+   239→  const dailyMap = new Map<string, { date: Date; searchViews: number; mapsViews: number; websiteClicks: number; phoneCalls: number; directionRequests: number }>();
+   240→
+   241→  function populate(result: PromiseSettledResult<any[]>, key: keyof typeof metricTypes) {
+   242→    if (result.status !== "fulfilled") return;
+   243→    for (const entry of result.value) {
+   244→      const dateStr = entry.date?.year
+   245→        ? `${entry.date.year}-${String(entry.date.month).padStart(2, "0")}-${String(entry.date.day).padStart(2, "0")}`
+   246→        : null;
+   247→      if (!dateStr) continue;
+   248→      if (!dailyMap.has(dateStr)) {
+   249→        dailyMap.set(dateStr, {
+   250→          date: new Date(dateStr),
+   251→          searchViews: 0, mapsViews: 0, websiteClicks: 0, phoneCalls: 0, directionRequests: 0,
+   252→        });
+   253→      }
+   254→      const day = dailyMap.get(dateStr)!;
+   255→      const value = entry.value ?? 0;
+   256→      (day as any)[key] += value;
+   257→    }
+   258→  }
+   259→
+   260→  populate(searchRes, "searchViews");
+   261→  populate(mapsRes, "mapsViews");
+   262→  populate(websiteRes, "websiteClicks");
+   263→  populate(callRes, "phoneCalls");
+   264→  populate(directionRes, "directionRequests");
+   265→
+   266→  return Array.from(dailyMap.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
+   267→}
+   268→
+   269→// ─── Sync real analytics data into DB ─────────────────────────────────────
+   270→
+   271→export async function syncLocationAnalytics(locationId: string, daysBack: number = 30): Promise<{ synced: number; errors: string[] }> {
+   272→  const errors: string[] = [];
+   273→  const accessToken = await getValidAccessToken();
+   274→  if (!accessToken) return { synced: 0, errors: ["No valid Google access token"] };
+   275→
+   276→  const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
+   277→  if (!gbp) return { synced: 0, errors: ["No Google Business Profile linked"] };
+   278→
+   279→  try {
+   280→    const dailyMetrics = await getFullPerformanceMetrics(accessToken, gbp.googleLocationId, daysBack);
+   281→    let synced = 0;
+   282→
+   283→    for (const day of dailyMetrics) {
+   284→      const dateKey = day.date;
+   285→      dateKey.setHours(0, 0, 0, 0);
+   286→
+   287→      // Upsert — if record exists for this location+date, update; otherwise create
+   288→      await db.analyticDaily.upsert({
+   289→        where: { locationId_date: { locationId, date: dateKey } },
+   290→        create: {
+   291→          locationId,
+   292→          date: dateKey,
+   293→          searchViews: day.searchViews,
+   294→          mapsViews: day.mapsViews,
+   295→          websiteClicks: day.websiteClicks,
+   296→          phoneCalls: day.phoneCalls,
+   297→          directionRequests: day.directionRequests,
+   298→          bookings: 0,
+   299→        },
+   300→        update: {
+   301→          searchViews: day.searchViews,
+   302→          mapsViews: day.mapsViews,
+   303→          websiteClicks: day.websiteClicks,
+   304→          phoneCalls: day.phoneCalls,
+   305→          directionRequests: day.directionRequests,
+   306→        },
+   307→      });
+   308→      synced++;
+   309→    }
+   310→
+   311→    return { synced, errors };
+   312→  } catch (e: any) {
+   313→    return { synced: 0, errors: [e.message] };
+   314→  }
+   315→}
+   316→
+   317→// ─── Update Google Business Profile (push changes TO Google) ───────────────
+   318→
+   319→export async function updateGoogleBusinessProfile(
+   320→  accessToken: string,
+   321→  locationName: string,
+   322→  updates: {
+   323→    title?: string;
+   324→    phone?: string;
+   325→    website?: string;
+   326→    description?: string;
+   327→    appointmentUrl?: string;
+   328→    hours?: { dayOfWeek: string; openTime?: { hours: number; minutes: number }; closeTime?: { hours: number; minutes: number }; isClosed?: boolean }[];
+   329→    categories?: { primaryCategory: string; additionalCategories?: string[] };
+   330→  }
+   331→): Promise<any> {
+   332→  const body: any = {};
+   333→  const fieldMask: string[] = [];
+   334→
+   335→  if (updates.title !== undefined) { body.title = updates.title; fieldMask.push("title"); }
+   336→  if (updates.phone !== undefined) { body.phoneNumbers = { primaryPhone: updates.phone }; fieldMask.push("phoneNumbers"); }
+   337→  if (updates.website !== undefined) { body.websiteUri = updates.website; fieldMask.push("websiteUri"); }
+   338→  if (updates.description !== undefined) {
+   339→    body.profile = { ...(body.profile || {}), description: updates.description };
+   340→    fieldMask.push("profile.description");
+   341→  }
+   342→  if (updates.appointmentUrl !== undefined) {
+   343→    body.profile = { ...(body.profile || {}), appointmentUrl: updates.appointmentUrl };
+   344→    fieldMask.push("profile.appointmentUrl");
+   345→  }
+   346→  if (updates.hours?.length > 0) {
+   347→    body.regularHours = {
+   348→      periods: updates.hours.map(h => ({
+   349→        openDay: h.dayOfWeek,
+   350→        openTime: h.openTime,
+   351→        closeDay: h.dayOfWeek,
+   352→        closeTime: h.closeTime,
+   353→      })),
+   354→    };
+   355→    fieldMask.push("regularHours");
+   356→  }
+   357→  if (updates.categories) {
+   358→    body.categories = {
+   359→      primaryCategory: { displayName: updates.categories.primaryCategory },
+   360→      additionalCategories: (updates.categories.additionalCategories || []).map(c => ({ displayName: c })),
+   361→    };
+   362→    fieldMask.push("categories");
+   363→  }
+   364→
+   365→  const res = await fetch(`${GBP_API_BASE}/${locationName}?updateMask=${fieldMask.join(",")}&validateOnly=false`, {
+   366→    method: "PATCH",
+   367→    headers: {
+   368→      Authorization: `Bearer ${accessToken}`,
+   369→      "Content-Type": "application/json",
+   370→    },
+   371→    body: JSON.stringify(body),
+   372→  });
+   373→
+   374→  if (!res.ok) {
+   375→    const errText = await res.text();
+   376→    throw new Error(`Failed to update Google Business Profile: ${res.status} ${errText}`);
+   377→  }
+   378→  return res.json();
+   379→}
+   380→
+   381→// ─── Sync Engine ──────────────────────────────────────────────────────────
+   382→
+   383→export async function syncGoogleProfiles(): Promise<{ synced: number; errors: string[] }> {
+   384→  const errors: string[] = [];
+   385→  const accessToken = await getValidAccessToken();
+   386→  if (!accessToken) {
+   387→    return { synced: 0, errors: ["No valid Google access token. Please reconnect Google OAuth."] };
+   388→  }
+   389→
+   390→  try {
+   391→    const accounts = await listGoogleAccounts(accessToken);
+   392→    let synced = 0;
+   393→
+   394→    for (const account of accounts) {
+   395→      const locations = await listGoogleLocations(accessToken, account.name);
+   396→      for (const loc of locations) {
+   397→        try {
+   398→          const existing = await db.googleBusinessProfile.findFirst({
+   399→            where: { googleLocationId: loc.name },
+   400→          });
+   401→
+   402→          const locData = {
+   403→            googleLocationId: loc.name,
+   404→            profileName: loc.title || "Unknown",
+   405→            primaryCategory: loc.categories?.primaryCategory?.displayName || null,
+   406→            additionalCategoriesJson: JSON.stringify(loc.categories?.additionalCategories?.map((c: any) => c.displayName) || []),
+   407→            averageRating: loc.metadata?.averageRating || 0,
+   408→            totalReviews: loc.metadata?.reviewCount || 0,
+   409→            verificationState: loc.metadata?.isVerified ? "verified" : "unverified",
+   410→            profileStatus: loc.metadata?.canManage ? "active" : "disabled",
+   411→            mapUrl: loc.metadata?.mapsUri || null,
+   412→          };
+   413→
+   414→          if (existing) {
+   415→            await db.googleBusinessProfile.update({ where: { id: existing.id }, data: locData });
+   416→          } else {
+   417→            await db.googleBusinessProfile.create({ data: { ...locData, locationId: "" } });
+   418→          }
+   419→          synced++;
+   420→        } catch (e: any) {
+   421→          errors.push(`Location ${loc.name}: ${e.message}`);
+   422→        }
+   423→      }
+   424→    }
+   425→
+   426→    return { synced, errors };
+   427→  } catch (e: any) {
+   428→    return { synced: 0, errors: [e.message] };
+   429→  }
+   430→}
+   431→
+   432→export async function syncGoogleReviews(locationId: string, googleLocationId: string): Promise<{ synced: number; errors: string[] }> {
+   433→  const errors: string[] = [];
+   434→  const accessToken = await getValidAccessToken();
+   435→  if (!accessToken) return { synced: 0, errors: ["No valid access token"] };
+   436→
+   437→  try {
+   438→    const reviews = await listReviews(accessToken, googleLocationId);
+   439→    let synced = 0;
+   440→
+   441→    for (const review of reviews) {
+   442→      const googleReviewId = review.name;
+   443→      const existing = await db.review.findUnique({ where: { googleReviewId } });
+   444→
+   445→      if (!existing) {
+   446→        await db.review.create({
+   447→          data: {
+   448→            locationId,
+   449→            googleReviewId,
+   450→            authorName: review.reviewer?.displayName || "Anonymous",
+   451→            authorPhoto: review.reviewer?.profilePhotoUrl || null,
+   452→            rating: review.starRating === "FIVE" ? 5 : review.starRating === "FOUR" ? 4 : review.starRating === "THREE" ? 3 : review.starRating === "TWO" ? 2 : 1,
+   453→            text: review.comment || "",
+   454→            sentiment: "neutral",
+   455→            replyText: review.reviewReply?.comment || null,
+   456→            replySource: review.reviewReply ? "manual" : null,
+   457→            replyStatus: review.reviewReply ? "replied" : "pending",
+   458→            repliedAt: review.reviewReply ? new Date(review.reviewReply.updateTime) : null,
+   459→            createdAt: new Date(review.createTime),
+   460→          },
+   461→        });
+   462→        synced++;
+   463→      }
+   464→    }
+   465→
+   466→    return { synced, errors };
+   467→  } catch (e: any) {
+   468→    return { synced: 0, errors: [e.message] };
+   469→  }
+   470→}
+   471→
+   472→// ─── Full Location Sync — fetches ALL real GMB data for one location ──────
+   473→
+   474→export async function syncLocationFull(locationId: string): Promise<{
+   475→  success: boolean;
+   476→  synced: { reviews: number; photos: number; hours: number; services: number; categories: number };
+   477→  errors: string[];
+   478→}> {
+   479→  const errors: string[] = [];
+   480→  const result = { reviews: 0, photos: 0, hours: 0, services: 0, categories: 0 };
+   481→  const accessToken = await getValidAccessToken();
+   482→
+   483→  if (!accessToken) {
+   484→    return { success: false, synced: result, errors: ["No valid Google access token. Please reconnect Google OAuth."] };
+   485→  }
+   486→
+   487→  // Get the GoogleBusinessProfile linked to this location
+   488→  const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
+   489→  if (!gbp) {
+   490→    return { success: false, synced: result, errors: ["No Google Business Profile linked to this location. Import this location from Google first."] };
+   491→  }
+   492→
+   493→  const locationName = gbp.googleLocationId; // e.g. "locations/12345"
+   494→
+   495→  try {
+   496→    // ─── 1. Fetch full business profile from Google ─────────────────────
+   497→    const profile = await getBusinessProfile(accessToken, locationName);
+   498→
+   499→    // Update Location record with real data
+   500→    await db.location.update({
+   501→      where: { id: locationId },
+   502→      data: {
+   503→        name: profile.title || gbp.profileName,
+   504→        address: formatAddress(profile.address),
+   505→        phone: profile.phoneNumbers?.primaryPhone || null,
+   506→        website: profile.websiteUri || null,
+   507→        latitude: profile.latlng?.latitude || null,
+   508→        longitude: profile.latlng?.longitude || null,
+   509→        avgRating: profile.metadata?.averageRating || 0,
+   510→        reviewCount: profile.metadata?.reviewCount || 0,
+   511→        syncStatus: "synced",
+   512→        lastSyncedAt: new Date(),
+   513→        categoriesJson: JSON.stringify([
+   514→          profile.categories?.primaryCategory?.displayName,
+   515→          ...(profile.categories?.additionalCategories?.map((c: any) => c.displayName) || []),
+   516→        ].filter(Boolean)),
+   517→      },
+   518→    });
+   519→
+   520→    // Update GoogleBusinessProfile record
+   521→    await db.googleBusinessProfile.update({
+   522→      where: { id: gbp.id },
+   523→      data: {
+   524→        profileName: profile.title || gbp.profileName,
+   525→        primaryCategory: profile.categories?.primaryCategory?.displayName || gbp.primaryCategory,
+   526→        additionalCategoriesJson: JSON.stringify(profile.categories?.additionalCategories?.map((c: any) => c.displayName) || []),
+   527→        averageRating: profile.metadata?.averageRating || 0,
+   528→        totalReviews: profile.metadata?.reviewCount || 0,
+   529→        verificationState: profile.metadata?.isVerified ? "verified" : "unverified",
+   530→        profileStatus: profile.metadata?.canManage ? "active" : "disabled",
+   531→        mapUrl: profile.metadata?.mapsUri || gbp.mapUrl,
+   532→      },
+   533→    });
+   534→
+   535→    // ─── 2. Sync Business Hours ─────────────────────────────────────────
+   536→    if (profile.regularHours?.periods?.length > 0) {
+   537→      // Clear existing hours
+   538→      await db.businessHour.deleteMany({ where: { locationId } });
+   539→      // Map Google's day codes (0=Sun..6=Sat) to our dayOfWeek
+   540→      const dayMap: Record<string, number> = { SUNDAY: 0, MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6 };
+   541→      for (const period of profile.regularHours.periods) {
+   542→        const day = dayMap[period.openDay] ?? 0;
+   543→        await db.businessHour.create({
+   544→          data: {
+   545→            locationId,
+   546→            dayOfWeek: day,
+   547→            openTime: `${period.openTime?.hours?.toString().padStart(2, "0") || "10"}:${period.openTime?.minutes?.toString().padStart(2, "0") || "00"}`,
+   548→            closeTime: `${period.closeTime?.hours?.toString().padStart(2, "0") || "20"}:${period.closeTime?.minutes?.toString().padStart(2, "0") || "00"}`,
+   549→            isClosed: false,
+   550→          },
+   551→        });
+   552→        result.hours++;
+   553→      }
+   554→    }
+   555→
+   556→    // ─── 3. Sync Categories ─────────────────────────────────────────────
+   557→    if (profile.categories) {
+   558→      await db.businessCategory.deleteMany({ where: { locationId } });
+   559→      if (profile.categories.primaryCategory) {
+   560→        await db.businessCategory.create({
+   561→          data: { locationId, categoryName: profile.categories.primaryCategory.displayName || "Interior Designer", isPrimary: true },
+   562→        });
+   563→        result.categories++;
+   564→      }
+   565→      for (const cat of profile.categories.additionalCategories || []) {
+   566→        await db.businessCategory.create({
+   567→          data: { locationId, categoryName: cat.displayName || "", isPrimary: false },
+   568→        });
+   569→        result.categories++;
+   570→      }
+   571→    }
+   572→
+   573→    // ─── 4. Sync Services ───────────────────────────────────────────────
+   574→    if (profile.serviceItems?.length > 0) {
+   575→      await db.service.deleteMany({ where: { locationId } });
+   576→      for (const service of profile.serviceItems) {
+   577→        await db.service.create({
+   578→          data: {
+   579→            locationId,
+   580→            serviceName: service.displayName || service.name || "Service",
+   581→            description: service.description || null,
+   582→            category: service.category || null,
+   583→            status: "active",
+   584→          },
+   585→        });
+   586→        result.services++;
+   587→      }
+   588→    }
+   589→
+   590→    // ─── 5. Sync Reviews ────────────────────────────────────────────────
+   591→    try {
+   592→      const reviews = await listReviews(accessToken, locationName);
+   593→      for (const review of reviews) {
+   594→        const googleReviewId = review.name;
+   595→        const existing = await db.review.findUnique({ where: { googleReviewId } });
+   596→        if (!existing) {
+   597→          await db.review.create({
+   598→            data: {
+   599→              locationId,
+   600→              googleReviewId,
+   601→              authorName: review.reviewer?.displayName || "Anonymous",
+   602→              authorPhoto: review.reviewer?.profilePhotoUrl || null,
+   603→              rating: review.starRating === "FIVE" ? 5 : review.starRating === "FOUR" ? 4 : review.starRating === "THREE" ? 3 : review.starRating === "TWO" ? 2 : 1,
+   604→              text: review.comment || "",
+   605→              sentiment: "neutral",
+   606→              replyText: review.reviewReply?.comment || null,
+   607→              replySource: review.reviewReply ? "manual" : null,
+   608→              replyStatus: review.reviewReply ? "replied" : "pending",
+   609→              repliedAt: review.reviewReply ? new Date(review.reviewReply.updateTime) : null,
+   610→              createdAt: new Date(review.createTime),
+   611→            },
+   612→          });
+   613→          result.reviews++;
+   614→        }
+   615→      }
+   616→    } catch (e: any) {
+   617→      errors.push(`Reviews sync: ${e.message}`);
+   618→    }
+   619→
+   620→    // ─── 6. Sync Photos (metadata only — URLs from Google) ──────────────
+   621→    try {
+   622→      const mediaRes = await fetch(`${GBP_API_BASE}/${locationName}/media`, {
+   623→        headers: { Authorization: `Bearer ${accessToken}` },
+   624→      });
+   625→      if (mediaRes.ok) {
+   626→        const mediaData = await mediaRes.json();
+   627→        for (const photo of mediaData.media || []) {
+   628→          const existing = await db.businessPhoto.findFirst({ where: { googlePhotoId: photo.name } });
+   629→          if (!existing) {
+   630→            await db.businessPhoto.create({
+   631→              data: {
+   632→                locationId,
+   633→                googlePhotoId: photo.name,
+   634→                imageUrl: photo.googleUrl || photo.locationUri || "",
+   635→                thumbnailUrl: null,
+   636→                source: "google",
+   637→                status: "active",
+   638→              },
+   639→            });
+   640→            result.photos++;
+   641→          }
+   642→        }
+   643→      }
+   644→    } catch (e: any) {
+   645→      errors.push(`Photos sync: ${e.message}`);
+   646→    }
+   647→
+   648→    // ─── 7. Sync Business Information (description, website, appointment URL) ──
+   649→    try {
+   650→      const description = profile.profile?.description || profile.metadata?.description || null;
+   651→      const website = profile.websiteUri || null;
+   652→      const appointmentUrl = profile.profile?.appointmentUrl || null;
+   653→
+   654→      if (gbp) {
+   655→        const existingInfo = await db.businessInformation.findFirst({ where: { profileId: gbp.id } });
+   656→        if (existingInfo) {
+   657→          await db.businessInformation.update({
+   658→            where: { id: existingInfo.id },
+   659→            data: { description, website, appointmentUrl },
+   660→          });
+   661→        } else {
+   662→          await db.businessInformation.create({
+   663→            data: { profileId: gbp.id, locationId, description, website, appointmentUrl },
+   664→          });
+   665→        }
+   666→      }
+   667→    } catch (e: any) {
+   668→      errors.push(`Business info sync: ${e.message}`);
+   669→    }
+   670→
+   671→    // ─── 8. Sync Attributes (wheelchair accessible, appointments, etc.) ────
+   672→    try {
+   673→      if (profile.attributes?.length > 0) {
+   674→        await db.businessAttribute.deleteMany({ where: { locationId } });
+   675→        for (const attr of profile.attributes) {
+   676→          await db.businessAttribute.create({
+   677→            data: {
+   678→              locationId,
+   679→              attributeName: attr.name || attr.displayName || "Attribute",
+   680→              attributeValue: Array.isArray(attr.value) ? attr.value.join(", ") : String(attr.value ?? "true"),
+   681→            },
+   682→          });
+   683→        }
+   684→      }
+   685→    } catch (e: any) {
+   686→      errors.push(`Attributes sync: ${e.message}`);
+   687→    }
+   688→
+   689→    // ─── 9. Sync Special Hours (holidays) ─────────────────────────────────
+   690→    try {
+   691→      if (profile.specialHours?.specialHourRanges?.length > 0) {
+   692→        await db.specialHour.deleteMany({ where: { locationId } });
+   693→        for (const range of profile.specialHours.specialHourRanges) {
+   694→          const startDate = range.startDate ? new Date(`${range.startDate.year}-${String(range.startDate.month).padStart(2, "0")}-${String(range.startDate.day).padStart(2, "0")}`) : new Date();
+   695→          await db.specialHour.create({
+   696→            data: {
+   697→              locationId,
+   698→              date: startDate,
+   699→              openTime: range.openTime ? `${String(range.openTime.hours).padStart(2, "0")}:${String(range.openTime.minutes).padStart(2, "0")}` : null,
+   700→              closeTime: range.closeTime ? `${String(range.closeTime.hours).padStart(2, "0")}:${String(range.closeTime.minutes).padStart(2, "0")}` : null,
+   701→              isClosed: !range.openTime,
+   702→            },
+   703→          });
+   704→        }
+   705→      }
+   706→    } catch (e: any) {
+   707→      errors.push(`Special hours sync: ${e.message}`);
+   708→    }
+   709→
+   710→    // ─── 10. Sync Analytics (real Google Business Performance API) ────────
+   711→    try {
+   712→      const analyticsResult = await syncLocationAnalytics(locationId, 30);
+   713→      if (analyticsResult.errors.length > 0) {
+   714→        errors.push(`Analytics sync: ${analyticsResult.errors.join("; ")}`);
+   715→      }
+   716→    } catch (e: any) {
+   717→      errors.push(`Analytics sync: ${e.message}`);
+   718→    }
+   719→
+   720→    return { success: true, synced: result, errors };
+   721→  } catch (e: any) {
+   722→    return { success: false, synced: result, errors: [e.message] };
+   723→  }
+   724→}
+   725→
+   726→function formatAddress(addr: any): string {
+   727→  if (!addr) return "";
+   728→  const parts = [
+   729→    addr.addressLines?.join(", "),
+   730→    addr.locality,
+   731→    addr.administrativeArea,
+   732→    addr.postalCode,
+   733→  ].filter(Boolean);
+   734→  return parts.join(", ");
+   735→}
+   736→
+   737→export const googleServiceStatus = {
+   738→  isConfigured: IS_CONFIGURED,
+   739→  hasClientSecret: !!GOOGLE_CLIENT_SECRET,
+   740→  redirectUri: GOOGLE_REDIRECT_URI,
+   741→  mode: IS_CONFIGURED ? "production" : "not_configured",
+   742→};
+   743→
