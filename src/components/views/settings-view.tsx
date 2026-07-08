@@ -341,7 +341,7 @@ export function SettingsView() {
         icon={Settings}
       />
 
-      <div className="flex gap-6">
+      <div className="flex flex-col md:flex-row gap-4 md:gap-6">
         {/* Desktop sidebar */}
         <aside className="hidden md:block w-56 shrink-0">
           <nav className="space-y-1 sticky top-4">
@@ -367,32 +367,33 @@ export function SettingsView() {
           </nav>
         </aside>
 
-        {/* Mobile category picker */}
+        {/* Mobile category picker — horizontal scrollable pills */}
         <div className="md:hidden w-full">
-          <Select value={validActive} onValueChange={(v) => setActive(v as CategoryKey)}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {visible.map((cat) => {
-                const Icon = cat.icon;
-                return (
-                  <SelectItem key={cat.key} value={cat.key}>
-                    <span className="flex items-center gap-2">
-                      <Icon className="size-3.5" />
-                      {cat.label}
-                    </span>
-                  </SelectItem>
-                );
-              })}
-            </SelectContent>
-          </Select>
+          <div className="flex gap-2 overflow-x-auto scroll-area pb-2 -mx-1 px-1">
+            {visible.map((cat) => {
+              const isActive = validActive === cat.key;
+              const Icon = cat.icon;
+              return (
+                <button
+                  key={cat.key}
+                  onClick={() => setActive(cat.key)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors shrink-0 whitespace-nowrap",
+                    isActive
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "bg-muted text-muted-foreground hover:bg-accent",
+                  )}
+                >
+                  <Icon className="size-3.5 shrink-0" />
+                  {cat.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Right content area */}
-        <div className="flex-1 min-w-0">
-          {/* On desktop, render after sidebar; on mobile, render below select */}
-          <div className="md:hidden h-4" />
+        <div className="flex-1 min-w-0 w-full">
           <CategoryContent active={validActive} />
         </div>
       </div>
