@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { updateGoogleBusinessProfile, getValidAccessToken, googleServiceStatus } from "@/lib/google-service";
 
 export const dynamic = "force-dynamic";
 
@@ -212,6 +213,58 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
   }
 
-  await logAudit({ userId: user.id, userName: user.name, action: "location.update", entity: "location", entityId: id, previousValue: prev, newValue: data, ip: req.headers.get("x-forwarded-for") ?? undefined });
-  return ok({ id }, "Location updated. Changes will sync to Google Business Profile.");
+  // ─── Push changes to REAL Google Business Profile ──────────────────────
+  const googleErrors: string[] = [];
+  if (gbp && googleServiceStatus.isConfigured) {
+    const accessToken = await getValidAccessToken();
+    if (accessToken) {
+      try {
+        // Build Google update payload from what changed
+        const googleUpdates: any = {};
+
+        if (body.name) googleUpdates.title = body.name;
+        if (body.phone !== undefined) googleUpdates.phone = body.phone;
+        if (body.website !== undefined) googleUpdates.website = body.website;
+        if (body.businessInfo?.description !== undefined) googleUpdates.description = body.businessInfo.description;
+        if (body.businessInfo?.appointmentUrl !== undefined) googleUpdates.appointmentUrl = body.businessInfo.appointmentUrl;
+
+        // Convert hours to Google format
+        if (body.hours && Array.isArray(body.hours)) {
+          const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+          googleUpdates.hours = body.hours
+            .filter((h: any) => !h.isClosed && h.openTime && h.closeTime)
+            .map((h: any) => {
+              const [oh, om] = h.openTime.split(":").map(Number);
+              const [ch, cm] = h.closeTime.split(":").map(Number);
+              return {
+                dayOfWeek: dayNames[h.dayOfWeek] || "MONDAY",
+                openTime: { hours: oh, minutes: om },
+                closeTime: { hours: ch, minutes: cm },
+              };
+            });
+        }
+
+        // Only call Google API if there are fields to update
+        if (Object.keys(googleUpdates).length > 0) {
+          await updateGoogleBusinessProfile(accessToken, gbp.googleLocationId, googleUpdates);
+        }
+      } catch (e: any) {
+        googleErrors.push(e.message);
+      }
+    }
+  }
+
+  await logAudit({
+    userId: user.id, userName: user.name, action: "location.update", entity: "location", entityId: id,
+    previousValue: prev, newValue: data,
+    ip: req.headers.get("x-forwarded-for") ?? undefined,
+  });
+
+  const message = googleErrors.length > 0
+    ? `Location updated locally. Failed to sync to Google: ${googleErrors.join("; ")}`
+    : (gbp && googleServiceStatus.isConfigured
+      ? "Location updated and synced to Google Business Profile."
+      : "Location updated locally. Connect Google to sync changes to GMB.");
+
+  return ok({ id, googleSynced: googleErrors.length === 0, googleErrors }, message);
 }

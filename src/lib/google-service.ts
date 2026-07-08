@@ -314,6 +314,70 @@ export async function syncLocationAnalytics(locationId: string, daysBack: number
   }
 }
 
+// ─── Update Google Business Profile (push changes TO Google) ───────────────
+
+export async function updateGoogleBusinessProfile(
+  accessToken: string,
+  locationName: string,
+  updates: {
+    title?: string;
+    phone?: string;
+    website?: string;
+    description?: string;
+    appointmentUrl?: string;
+    hours?: { dayOfWeek: string; openTime?: { hours: number; minutes: number }; closeTime?: { hours: number; minutes: number }; isClosed?: boolean }[];
+    categories?: { primaryCategory: string; additionalCategories?: string[] };
+  }
+): Promise<any> {
+  const body: any = {};
+  const fieldMask: string[] = [];
+
+  if (updates.title !== undefined) { body.title = updates.title; fieldMask.push("title"); }
+  if (updates.phone !== undefined) { body.phoneNumbers = { primaryPhone: updates.phone }; fieldMask.push("phoneNumbers"); }
+  if (updates.website !== undefined) { body.websiteUri = updates.website; fieldMask.push("websiteUri"); }
+  if (updates.description !== undefined) {
+    body.profile = { ...(body.profile || {}), description: updates.description };
+    fieldMask.push("profile.description");
+  }
+  if (updates.appointmentUrl !== undefined) {
+    body.profile = { ...(body.profile || {}), appointmentUrl: updates.appointmentUrl };
+    fieldMask.push("profile.appointmentUrl");
+  }
+  if (updates.hours?.length > 0) {
+    body.regularHours = {
+      periods: updates.hours.map(h => ({
+        openDay: h.dayOfWeek,
+        openTime: h.openTime,
+        closeDay: h.dayOfWeek,
+        closeTime: h.closeTime,
+      })),
+    };
+    fieldMask.push("regularHours");
+  }
+  if (updates.categories) {
+    body.categories = {
+      primaryCategory: { displayName: updates.categories.primaryCategory },
+      additionalCategories: (updates.categories.additionalCategories || []).map(c => ({ displayName: c })),
+    };
+    fieldMask.push("categories");
+  }
+
+  const res = await fetch(`${GBP_API_BASE}/${locationName}?updateMask=${fieldMask.join(",")}&validateOnly=false`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Failed to update Google Business Profile: ${res.status} ${errText}`);
+  }
+  return res.json();
+}
+
 // ─── Sync Engine ──────────────────────────────────────────────────────────
 
 export async function syncGoogleProfiles(): Promise<{ synced: number; errors: string[] }> {

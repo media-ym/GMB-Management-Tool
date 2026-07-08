@@ -1865,3 +1865,35 @@ Stage Summary:
   * Filter bar stacks vertically on mobile
   * Reply editor dialog scrolls on mobile, textarea shorter, side panel stacks below, buttons full-width
   * All touch targets ≥ 44px
+
+---
+Task ID: 34-update-push-to-google
+Agent: main (orchestrator)
+Task: Push location updates (Business Info, Hours, etc.) to REAL Google Business Profile API.
+
+Work Log:
+- Added updateGoogleBusinessProfile() to google-service.ts:
+  * PATCH request to Google Business Information API
+  * Uses fieldMask to specify which fields to update
+  * Supports: title, phone, website, description, appointmentUrl, regularHours, categories
+  * Proper error handling with response text
+- Updated PUT /api/locations/[id] route:
+  * After updating DB, checks if Google OAuth is configured
+  * Gets valid access token
+  * Builds Google update payload from changed fields:
+    - name → title
+    - phone → phoneNumbers.primaryPhone
+    - website → websiteUri
+    - businessInfo.description → profile.description
+    - businessInfo.appointmentUrl → profile.appointmentUrl
+    - hours → regularHours.periods (converted from dayOfWeek int to Google's SUNDAY/MONDAY format + time objects)
+  * Calls updateGoogleBusinessProfile() to push to Google
+  * If Google API fails: saves locally, returns error message
+  * If Google API succeeds: returns "Location updated and synced to Google Business Profile"
+  * If Google not configured: saves locally only, returns "Connect Google to sync changes to GMB"
+- Lint: 0 errors, 0 warnings.
+
+Stage Summary:
+- When user updates Business Info, Hours, Phone, Website, Description from Location Detail page → changes pushed to REAL Google Business Profile API.
+- Google's Business Information API allows PATCH updates via OAuth — this is officially supported.
+- Flow: Edit in dashboard → Save → DB updated + Google API PATCH called → changes appear on Google Business Profile.
