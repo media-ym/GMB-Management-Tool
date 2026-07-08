@@ -581,7 +581,69 @@ export async function syncLocationFull(locationId: string): Promise<{
       errors.push(`Photos sync: ${e.message}`);
     }
 
-    // ─── 7. Sync Analytics (real Google Business Performance API) ────────
+    // ─── 7. Sync Business Information (description, website, appointment URL) ──
+    try {
+      const description = profile.profile?.description || profile.metadata?.description || null;
+      const website = profile.websiteUri || null;
+      const appointmentUrl = profile.profile?.appointmentUrl || null;
+
+      if (gbp) {
+        const existingInfo = await db.businessInformation.findFirst({ where: { profileId: gbp.id } });
+        if (existingInfo) {
+          await db.businessInformation.update({
+            where: { id: existingInfo.id },
+            data: { description, website, appointmentUrl },
+          });
+        } else {
+          await db.businessInformation.create({
+            data: { profileId: gbp.id, locationId, description, website, appointmentUrl },
+          });
+        }
+      }
+    } catch (e: any) {
+      errors.push(`Business info sync: ${e.message}`);
+    }
+
+    // ─── 8. Sync Attributes (wheelchair accessible, appointments, etc.) ────
+    try {
+      if (profile.attributes?.length > 0) {
+        await db.businessAttribute.deleteMany({ where: { locationId } });
+        for (const attr of profile.attributes) {
+          await db.businessAttribute.create({
+            data: {
+              locationId,
+              attributeName: attr.name || attr.displayName || "Attribute",
+              attributeValue: Array.isArray(attr.value) ? attr.value.join(", ") : String(attr.value ?? "true"),
+            },
+          });
+        }
+      }
+    } catch (e: any) {
+      errors.push(`Attributes sync: ${e.message}`);
+    }
+
+    // ─── 9. Sync Special Hours (holidays) ─────────────────────────────────
+    try {
+      if (profile.specialHours?.specialHourRanges?.length > 0) {
+        await db.specialHour.deleteMany({ where: { locationId } });
+        for (const range of profile.specialHours.specialHourRanges) {
+          const startDate = range.startDate ? new Date(`${range.startDate.year}-${String(range.startDate.month).padStart(2, "0")}-${String(range.startDate.day).padStart(2, "0")}`) : new Date();
+          await db.specialHour.create({
+            data: {
+              locationId,
+              date: startDate,
+              openTime: range.openTime ? `${String(range.openTime.hours).padStart(2, "0")}:${String(range.openTime.minutes).padStart(2, "0")}` : null,
+              closeTime: range.closeTime ? `${String(range.closeTime.hours).padStart(2, "0")}:${String(range.closeTime.minutes).padStart(2, "0")}` : null,
+              isClosed: !range.openTime,
+            },
+          });
+        }
+      }
+    } catch (e: any) {
+      errors.push(`Special hours sync: ${e.message}`);
+    }
+
+    // ─── 10. Sync Analytics (real Google Business Performance API) ────────
     try {
       const analyticsResult = await syncLocationAnalytics(locationId, 30);
       if (analyticsResult.errors.length > 0) {
