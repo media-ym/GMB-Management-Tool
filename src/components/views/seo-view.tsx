@@ -432,13 +432,14 @@ export function SeoView() {
                 variant="outline"
                 onClick={handleRefresh}
                 disabled={refreshing}
+                className="w-full sm:w-auto"
               >
                 {refreshing ? (
                   <Loader2 className="size-3.5 mr-1.5 animate-spin" />
                 ) : (
                   <RefreshCw className="size-3.5 mr-1.5" />
                 )}
-                Refresh Rankings
+                <span className="hidden sm:inline">Refresh</span> Rankings
               </Button>
             )}
             {canAI && (
@@ -447,13 +448,14 @@ export function SeoView() {
                 onClick={fetchRecs}
                 disabled={recsLoading || aiDisabled}
                 title={aiDisabled ? "Select a specific location to generate recommendations" : undefined}
+                className="w-full sm:w-auto"
               >
                 {recsLoading ? (
                   <Loader2 className="size-3.5 mr-1.5 animate-spin" />
                 ) : (
                   <Sparkles className="size-3.5 mr-1.5" />
                 )}
-                AI Recommendations
+                <span className="hidden sm:inline">AI</span> Recs
               </Button>
             )}
             {canAI && (
@@ -463,13 +465,14 @@ export function SeoView() {
                 onClick={fetchSummary}
                 disabled={summaryLoading || aiDisabled}
                 title={aiDisabled ? "Select a specific location to generate summary" : undefined}
+                className="w-full sm:w-auto"
               >
                 {summaryLoading ? (
                   <Loader2 className="size-3.5 mr-1.5 animate-spin" />
                 ) : (
                   <CalendarClock className="size-3.5 mr-1.5" />
                 )}
-                AI Monthly Summary
+                <span className="hidden sm:inline">AI</span> Summary
               </Button>
             )}
           </>
@@ -804,8 +807,8 @@ function KeywordsTab({
       title="Keyword Management"
       description="Add, edit, and track keyword rankings. Click a row to select it for the geo-grid."
       action={
-        <div className="flex items-center gap-2">
-          <div className="relative">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:flex-initial">
             <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
@@ -815,7 +818,7 @@ function KeywordsTab({
             />
           </div>
           {canManage && (
-            <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Button size="sm" onClick={() => setAddOpen(true)} className="w-full sm:w-auto whitespace-nowrap">
               <Plus className="size-3.5 mr-1.5" /> Add Keyword
             </Button>
           )}
@@ -1295,7 +1298,7 @@ function GeoGridTab({
       title="Geo-Grid Ranking"
       description="Heatmap of keyword ranking at different lat/lng points around your location"
       action={
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
           <ToggleGroup
             type="single"
             value={String(gridSize)}
@@ -1308,7 +1311,7 @@ function GeoGridTab({
             <ToggleGroupItem value="7">7×7</ToggleGroupItem>
           </ToggleGroup>
           <Select value={String(radiusKm)} onValueChange={(v) => setRadiusKm(Number(v))}>
-            <SelectTrigger size="sm" className="w-[100px]">
+            <SelectTrigger size="sm" className="w-[90px] sm:w-[100px]">
               <Compass className="size-3.5 mr-1.5 text-muted-foreground" />
               <SelectValue />
             </SelectTrigger>

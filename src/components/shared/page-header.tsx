@@ -40,12 +40,12 @@ export function CardSection({
 }) {
   return (
     <div className={cn("kt-card", className)}>
-      <div className="kt-card-header">
-        <div className="min-w-0">
+      <div className="kt-card-header flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="min-w-0 w-full sm:w-auto">
           <h3 className="kt-card-title">{title}</h3>
           {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
         </div>
-        {action && <div className="shrink-0">{action}</div>}
+        {action && <div className="shrink-0 w-full sm:w-auto">{action}</div>}
       </div>
       <div className={cn(!noPadding && "kt-card-body")}>{children}</div>
     </div>
