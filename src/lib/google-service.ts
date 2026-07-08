@@ -4,6 +4,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { db } from "./db";
+import { encryptToken, decryptToken } from "./token-crypto";
+import { withRetry, sanitizeGoogleError } from "./google-rate-limit";
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
@@ -58,7 +60,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Google token exchange failed: ${res.status} ${err}`);
+    throw new Error(sanitizeGoogleError(`Google token exchange failed: ${res.status} ${err}`));
   }
 
   const tokens = await res.json();
@@ -87,7 +89,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
     body,
   });
 
-  if (!res.ok) throw new Error(`Token refresh failed: ${res.status}`);
+  if (!res.ok) throw new Error(sanitizeGoogleError(`Token refresh failed: ${res.status}`));
   const tokens = await res.json();
   return {
     accessToken: tokens.access_token,
@@ -99,20 +101,37 @@ export async function getValidAccessToken(): Promise<string | null> {
   const account = await db.googleAccount.findFirst();
   if (!account) return null;
 
+  // Defensive: if the stored token is the legacy "no_token" placeholder, treat as no token.
+  if (account.accessToken === "no_token") return null;
+
   // Check if token is still valid (5 min buffer)
   if (account.tokenExpiry && new Date(account.tokenExpiry) > new Date(Date.now() + 5 * 60 * 1000)) {
-    return account.accessToken;
+    const decrypted = decryptToken(account.accessToken);
+    if (!decrypted) {
+      await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
+      return null;
+    }
+    return decrypted;
   }
 
-  // Try to refresh
+  // Try to refresh — decrypt the refresh token first
   if (account.refreshToken) {
+    const decryptedRefresh = decryptToken(account.refreshToken);
+    if (!decryptedRefresh) {
+      await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
+      return null;
+    }
     try {
-      const { accessToken, expiryDate } = await refreshAccessToken(account.refreshToken);
+      const { accessToken, expiryDate } = await refreshAccessToken(decryptedRefresh);
       await db.googleAccount.update({
         where: { id: account.id },
-        data: { accessToken, tokenExpiry: new Date(expiryDate), status: "active" },
+        data: {
+          accessToken: encryptToken(accessToken), // ENCRYPT before saving
+          tokenExpiry: new Date(expiryDate),
+          status: "active",
+        },
       });
-      return accessToken;
+      return accessToken; // return decrypted
     } catch (e) {
       console.error("Token refresh failed:", e);
       await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
@@ -121,6 +140,19 @@ export async function getValidAccessToken(): Promise<string | null> {
   }
 
   return null;
+}
+
+/** Revoke a Google OAuth token (access or refresh) — called on disconnect. */
+export async function revokeGoogleToken(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Google Business Profile API Calls ────────────────────────────────────
@@ -132,29 +164,91 @@ const GBP_ACCOUNTS_BASE = "https://mybusinessaccountmanagement.googleapis.com/v1
 const GBP_V4_BASE = "https://mybusiness.googleapis.com/v4";
 
 export async function listGoogleAccounts(accessToken: string): Promise<any[]> {
-  const res = await fetch(`${GBP_ACCOUNTS_BASE}/accounts`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Failed to list accounts: ${res.status}`);
-  const data = await res.json();
+  const data = await withRetry<{ accounts?: any[] }>(() =>
+    fetch(`${GBP_ACCOUNTS_BASE}/accounts`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
   return data.accounts ?? [];
 }
 
 export async function listGoogleLocations(accessToken: string, accountName: string): Promise<any[]> {
-  const res = await fetch(`${GBP_API_BASE}/${accountName}/locations?readMask=name,title,storeCode,latlng,metadata,profile,regularHours,specialHours,serviceItems,categories,phoneNumbers,websiteUri,openInfo`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Failed to list locations: ${res.status}`);
-  const data = await res.json();
-  return data.locations ?? [];
+  const all: any[] = [];
+  let pageToken: string | undefined;
+  const maxPages = 20; // safety limit (2000 locations max)
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = new URL(`${GBP_API_BASE}/${accountName}/locations`);
+    url.searchParams.set("pageSize", "100");
+    url.searchParams.set("readMask", "name,title,storeCode,latlng,metadata,profile,regularHours,specialHours,serviceItems,categories,phoneNumbers,websiteUri,openInfo");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+    const data = await withRetry<any>(() =>
+      fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } })
+        .then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+    );
+    if (Array.isArray(data.locations)) all.push(...data.locations);
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+  return all;
 }
 
 export async function getBusinessProfile(accessToken: string, locationName: string): Promise<any> {
-  const res = await fetch(`${GBP_API_BASE}/${locationName}?readMask=title,storeCode,latlng,metadata,profile,regularHours,categories,phoneNumbers,websiteUri,openInfo,serviceItems,attributes`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Failed to get profile: ${res.status}`);
-  return res.json();
+  const data = await withRetry<any>(() =>
+    fetch(`${GBP_API_BASE}/${locationName}?readMask=title,storeCode,latlng,metadata,profile,regularHours,categories,phoneNumbers,websiteUri,openInfo,serviceItems,attributes`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
+  return data;
+}
+
+/**
+ * Search Google's category database by name. Returns matching categories
+ * with their gcid IDs (e.g. "gcid:interior_designer"). Used to resolve a
+ * human-readable category display name into the stable categoryId required
+ * by the Location patch endpoint.
+ */
+export async function searchGoogleCategories(
+  accessToken: string,
+  searchTerm: string,
+  regionCode: string = "IN",
+  languageCode: string = "en"
+): Promise<{ categoryId: string; displayName: string }[]> {
+  const url = new URL(`${GBP_API_BASE}/categories:search`);
+  url.searchParams.set("searchTerm", searchTerm);
+  url.searchParams.set("regionCode", regionCode);
+  url.searchParams.set("languageCode", languageCode);
+
+  const data = await withRetry<any>(() =>
+    fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
+  return (data.categories || []).map((c: any) => ({
+    categoryId: c.name, // e.g. "gcid:interior_designer"
+    displayName: c.displayName,
+  }));
+}
+
+/**
+ * Resolve a category display name to its stable gcid by searching Google's
+ * category DB. Prefers an exact (case-insensitive) display-name match and
+ * falls back to the first search hit. Returns null if no match is found so
+ * the caller can decide whether to skip that category entirely (Google
+ * rejects null/empty categoryId values, so we must not send one).
+ */
+export async function resolveCategoryId(
+  accessToken: string,
+  displayName: string,
+  regionCode: string = "IN"
+): Promise<string | null> {
+  const results = await searchGoogleCategories(accessToken, displayName, regionCode);
+  // Exact match first (case-insensitive)
+  const exact = results.find(r => r.displayName.toLowerCase() === displayName.toLowerCase());
+  if (exact) return exact.categoryId;
+  // Fall back to first result, if any
+  return results[0]?.categoryId ?? null;
 }
 
 export async function listReviews(accessToken: string, locationName: string, pageSize = 50): Promise<any[]> {
@@ -169,11 +263,11 @@ export async function listReviews(accessToken: string, locationName: string, pag
     url.searchParams.set("pageSize", String(pageSize));
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-    const res = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) throw new Error(`Failed to list reviews: ${res.status}`);
-    const data = await res.json();
+    const data = await withRetry<any>(() =>
+      fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+    );
     if (Array.isArray(data.reviews)) allReviews.push(...data.reviews);
     pageToken = data.nextPageToken;
     if (!pageToken) break;
@@ -183,44 +277,48 @@ export async function listReviews(accessToken: string, locationName: string, pag
 }
 
 export async function replyToReview(accessToken: string, reviewName: string, replyText: string): Promise<any> {
-  const res = await fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ comment: replyText }),
-  });
-  if (!res.ok) throw new Error(`Failed to publish reply: ${res.status}`);
-  return res.json();
+  const data = await withRetry<any>(() =>
+    fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: replyText }),
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
+  return data;
 }
 
 export async function deleteReviewReply(accessToken: string, reviewName: string): Promise<boolean> {
   // Deletes the owner reply from a Google review. reviewName is the full Google
   // review name like "accounts/{aid}/locations/{lid}/reviews/{rid}".
-  const res = await fetch(`${GBP_V4_BASE}/${reviewName}/reply`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Failed to delete review reply: ${res.status}`);
+  await withRetry<any>(() =>
+    fetch(`${GBP_V4_BASE}/${reviewName}/reply`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
   return true;
 }
 
 export async function createGooglePost(accessToken: string, locationName: string, post: any): Promise<any> {
   // Local posts remain exclusively on v4 — Business Information API v1 has no /localPosts endpoint.
-  const res = await fetch(`${GBP_V4_BASE}/${locationName}/localPosts`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify(post),
-  });
-  if (!res.ok) throw new Error(`Failed to create post: ${res.status}`);
-  return res.json();
+  const data = await withRetry<any>(() =>
+    fetch(`${GBP_V4_BASE}/${locationName}/localPosts`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(post),
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
+  return data;
 }
 
 export async function deleteGooglePost(accessToken: string, postName: string): Promise<boolean> {
   // postName is the full Google post name like "accounts/{aid}/locations/{lid}/localPosts/{pid}"
-  const res = await fetch(`${GBP_V4_BASE}/${postName}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Failed to delete Google post: ${res.status}`);
+  await withRetry<any>(() =>
+    fetch(`${GBP_V4_BASE}/${postName}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
   return true;
 }
 
@@ -232,13 +330,133 @@ export async function patchGooglePost(
 ): Promise<any> {
   // PATCH existing local post on Google. topicType is immutable and is NOT included
   // in the updateMask (only sent via fieldMask=topicType per Google docs, but ignored on update).
-  const res = await fetch(`${GBP_V4_BASE}/${postName}?updateMask=${fieldMask}&fieldMask=topicType`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify(updates),
-  });
-  if (!res.ok) throw new Error(`Failed to patch Google post: ${res.status}`);
-  return res.json();
+  const data = await withRetry<any>(() =>
+    fetch(`${GBP_V4_BASE}/${postName}?updateMask=${fieldMask}&fieldMask=topicType`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
+  return data;
+}
+
+// ─── Media / Photos (push TO Google + delete FROM Google) ──────────────────
+//
+// Google's Business Information API supports two upload flows for photos:
+//   (1) 2-step byte upload: startUpload → PUT raw bytes to media upload endpoint
+//       → POST {parent}/media with the resulting dataRef. Required when the
+//       image only exists locally as a binary blob.
+//   (2) sourceUrl method (single step): POST {parent}/media with body
+//       `{ mediaFormat: { photo: { sourceUrl } }, locationAssociation: { category } }`.
+//       Google fetches the image from the public URL itself. Simpler and
+//       sufficient when the asset is already hosted at a publicly reachable URL.
+//
+// We use method (2) — every upload is first persisted to /public/uploads/media
+// and exposed via NEXTAUTH_URL, then handed to Google as a sourceUrl. This
+// keeps our upload path single-step and avoids the fragile media-upload
+// endpoint, while still satisfying Google's requirement that the photo be
+// reachable at the time of indexing.
+
+export type GooglePhotoCategory =
+  | "COVER"
+  | "PROFILE"
+  | "INTERIOR"
+  | "EXTERIOR"
+  | "PRODUCT"
+  | "TEAM"
+  | "FOOD_AND_DRINK"
+  | "MENU"
+  | "AT_WORK"
+  | "COMMON_AREA"
+  | "ROOMS"
+  | "LANDSCAPE";
+
+export interface UploadGooglePhotoInput {
+  /** Publicly reachable URL Google can fetch the image bytes from. */
+  sourceUrl: string;
+  /** Optional caption / description shown on the Business Profile. */
+  description?: string;
+  /** Association category — controls where on the profile the photo appears. */
+  category?: GooglePhotoCategory;
+}
+
+export interface UploadGooglePhotoResult {
+  /** Full Google media item name, e.g. "accounts/{aid}/locations/{lid}/media/{mid}". */
+  name: string;
+  /** Google-hosted URL of the published photo (may be null until Google finishes processing). */
+  googleUrl?: string;
+}
+
+/**
+ * Upload a photo to a Google Business Profile location using the sourceUrl
+ * method. `locationName` is the Google-side location name like
+ * "accounts/{aid}/locations/{lid}". Throws on any non-2xx response (sanitized
+ * by withRetry). Callers should wrap in try/catch and treat failures as
+ * best-effort — the local MediaLibrary record remains the source of truth.
+ */
+export async function uploadGooglePhoto(
+  accessToken: string,
+  locationName: string,
+  photo: UploadGooglePhotoInput,
+): Promise<UploadGooglePhotoResult> {
+  const body: any = {
+    mediaFormat: {
+      photo: {
+        sourceUrl: photo.sourceUrl,
+      },
+    },
+  };
+  if (photo.description) {
+    body.mediaFormat.photo.description = photo.description;
+  }
+  if (photo.category) {
+    body.locationAssociation = { category: photo.category };
+  }
+
+  const data = await withRetry<any>(() =>
+    fetch(`${GBP_API_BASE}/${locationName}/media`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
+
+  return {
+    name: data.name,
+    googleUrl: data.googleUrl ?? undefined,
+  };
+}
+
+/**
+ * Delete a media item from a Google Business Profile location. `mediaName` is
+ * the full Google media name like "accounts/{aid}/locations/{lid}/media/{mid}".
+ *
+ * A 404 response is treated as success (the photo was already deleted on
+ * Google's side — common during sync drift). All other non-2xx responses throw
+ * via withRetry. Callers should treat the throw as best-effort and still
+ * remove the local record so the operator sees a consistent state.
+ */
+export async function deleteGooglePhoto(
+  accessToken: string,
+  mediaName: string,
+): Promise<boolean> {
+  await withRetry<any>(() =>
+    fetch(`${GBP_API_BASE}/${mediaName}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (r) => {
+      // Idempotent: 404 means the photo is already gone on Google's side.
+      // Normalize to a success-shape so withRetry doesn't throw.
+      if (r.status === 404) {
+        return { ok: true, status: 200, body: () => Promise.resolve("{}") };
+      }
+      return { ok: r.ok, status: r.status, body: () => r.text() };
+    })
+  );
+  return true;
 }
 
 // ─── Performance Metrics (real Google Business Performance API) ───────────
@@ -259,11 +477,11 @@ export async function getPerformanceMetrics(
   url.searchParams.set("dailyRange.endDate.date.day", String(endDate.day));
   url.searchParams.set("dailyMetrics", metricType);
 
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Failed to get performance metrics: ${res.status} ${await res.text()}`);
-  const data = await res.json();
+  const data = await withRetry<any>(() =>
+    fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
   return data.timeSeries?.datedValues ?? [];
 }
 
@@ -388,7 +606,20 @@ export async function updateGoogleBusinessProfile(
     description?: string;
     appointmentUrl?: string;
     hours?: { dayOfWeek: string; openTime?: { hours: number; minutes: number }; closeTime?: { hours: number; minutes: number }; isClosed?: boolean }[];
-    categories?: { primaryCategory: string; additionalCategories?: string[] };
+    /**
+     * Categories to push to Google. Callers may supply either the stable
+     * gcid (preferred — e.g. "gcid:interior_designer") OR a display name
+     * (fallback — will be resolved to a gcid via searchGoogleCategories).
+     * Display-name resolution is best-effort: if a name cannot be resolved
+     * to a gcid, that category is silently dropped from the patch (Google
+     * rejects null/empty categoryId values).
+     */
+    categories?: {
+      primaryCategoryId?: string;
+      primaryDisplayName?: string;
+      additionalCategoryIds?: string[];
+      additionalDisplayNames?: string[];
+    };
   }
 ): Promise<any> {
   const body: any = {};
@@ -417,27 +648,163 @@ export async function updateGoogleBusinessProfile(
     fieldMask.push("regularHours");
   }
   if (updates.categories) {
+    const cat = updates.categories;
+    // Resolve primary category — prefer an explicit gcid, else resolve the
+    // display name via Google's category search.
+    let primaryId = cat.primaryCategoryId;
+    if (!primaryId && cat.primaryDisplayName) {
+      primaryId = await resolveCategoryId(accessToken, cat.primaryDisplayName);
+    }
+    // Resolve additional categories — explicit gcids first, then resolve
+    // display names. Skip any that can't be resolved (Google rejects null
+    // categoryId values, so dropping is safer than sending one).
+    const additionalIds: string[] = [];
+    if (cat.additionalCategoryIds) {
+      additionalIds.push(...cat.additionalCategoryIds.filter(Boolean));
+    }
+    if (cat.additionalDisplayNames) {
+      for (const name of cat.additionalDisplayNames) {
+        if (!name) continue;
+        const id = await resolveCategoryId(accessToken, name);
+        if (id) additionalIds.push(id);
+      }
+    }
+
     body.categories = {
-      primaryCategory: { displayName: updates.categories.primaryCategory },
-      additionalCategories: (updates.categories.additionalCategories || []).map(c => ({ displayName: c })),
+      ...(primaryId ? { primaryCategory: { categoryId: primaryId } } : {}),
+      additionalCategories: additionalIds.map(id => ({ categoryId: id })),
     };
     fieldMask.push("categories");
   }
 
-  const res = await fetch(`${GBP_API_BASE}/${locationName}?updateMask=${fieldMask.join(",")}&validateOnly=false`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  const data = await withRetry<any>(() =>
+    fetch(`${GBP_API_BASE}/${locationName}?updateMask=${fieldMask.join(",")}&validateOnly=false`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  );
+  return data;
+}
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Failed to update Google Business Profile: ${res.status} ${errText}`);
+// ─── Google Business Profile Verifications API ─────────────────────────────
+// Uses a separate base URL from the rest of the GBP APIs. See:
+// https://developers.google.com/my-business/reference/verifications/v1/rest
+const GBP_VERIFY_BASE = "https://mybusinessverifications.googleapis.com/v1";
+
+/**
+ * Fetch the verification options available for a location.
+ * The optional `dispatchMethod` lets the caller pre-select the channel they
+ * intend to use (ADDRESS | EMAIL | PHONE_CALL | SMS) so Google can return
+ * channel-specific metadata (e.g. the masked phone number for SMS).
+ */
+export async function fetchVerificationOptions(
+  accessToken: string,
+  locationName: string,
+  dispatchMethod?: string,
+): Promise<any> {
+  const body: any = {};
+  if (dispatchMethod) {
+    body.context = { dispatchMethod };
   }
-  return res.json();
+  const data = await withRetry<any>(() =>
+    fetch(`${GBP_VERIFY_BASE}/${locationName}:fetchVerificationOptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() })),
+  );
+  return data;
+}
+
+/**
+ * Initiate a verification flow for a location. Google will dispatch the PIN
+ * (postcard for ADDRESS, SMS for SMS, automated call for PHONE_CALL, email
+ * for EMAIL) and return a `verification` resource the client must later
+ * complete via {@link completeVerification}.
+ *
+ * `input` shape depends on `method`:
+ *   - ADDRESS → { mailerContactName: string }
+ *   - PHONE_CALL | SMS → { phoneNumber: string }
+ *   - EMAIL → { emailAddress: string }
+ */
+export async function initiateVerification(
+  accessToken: string,
+  locationName: string,
+  method: string,
+  input: any,
+): Promise<any> {
+  const body: any = { method };
+  if (method === "ADDRESS") {
+    body.addressInput = input;
+  } else if (method === "PHONE_CALL" || method === "SMS") {
+    body.phoneInput = input;
+  } else if (method === "EMAIL") {
+    body.emailInput = input;
+  }
+  const data = await withRetry<any>(() =>
+    fetch(`${GBP_VERIFY_BASE}/${locationName}:verify`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() })),
+  );
+  return data;
+}
+
+/**
+ * List the verification history for a location. Paginates through all
+ * available pages (capped at 5 pages = 250 records) and returns the merged
+ * `verifications` array.
+ */
+export async function listVerifications(
+  accessToken: string,
+  locationName: string,
+  pageSize = 50,
+): Promise<any[]> {
+  const all: any[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 5; page++) {
+    const url = new URL(`${GBP_VERIFY_BASE}/${locationName}/verifications`);
+    url.searchParams.set("pageSize", String(pageSize));
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const data = await withRetry<any>(() =>
+      fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() })),
+    );
+    if (Array.isArray(data.verifications)) all.push(...data.verifications);
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+  return all;
+}
+
+/**
+ * Complete a PIN-based verification by submitting the PIN the user received
+ * (postcard in the mail, SMS code, etc.). Returns true on success.
+ * A 404 response is treated as success — the verification may have already
+ * been completed or expired, and the user-facing outcome is the same.
+ */
+export async function completeVerification(
+  accessToken: string,
+  verificationName: string,
+  pin: string,
+): Promise<boolean> {
+  await withRetry<any>(() =>
+    fetch(`${GBP_VERIFY_BASE}/${verificationName}:complete`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+    }).then(async (r) => {
+      if (r.status === 404) return { ok: true, status: 200, body: () => "{}" };
+      return { ok: r.ok, status: r.status, body: () => r.text() };
+    }),
+  );
+  return true;
 }
 
 // ─── Sync Engine ──────────────────────────────────────────────────────────
@@ -681,26 +1048,25 @@ export async function syncLocationFull(locationId: string): Promise<{
 
     // ─── 6. Sync Photos (metadata only — URLs from Google) ──────────────
     try {
-      const mediaRes = await fetch(`${GBP_API_BASE}/${locationName}/media`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (mediaRes.ok) {
-        const mediaData = await mediaRes.json();
-        for (const photo of mediaData.media || []) {
-          const existing = await db.businessPhoto.findFirst({ where: { googlePhotoId: photo.name } });
-          if (!existing) {
-            await db.businessPhoto.create({
-              data: {
-                locationId,
-                googlePhotoId: photo.name,
-                imageUrl: photo.googleUrl || photo.locationUri || "",
-                thumbnailUrl: null,
-                source: "google",
-                status: "active",
-              },
-            });
-            result.photos++;
-          }
+      const mediaData = await withRetry<{ media?: any[] }>(() =>
+        fetch(`${GBP_API_BASE}/${locationName}/media`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+      );
+      for (const photo of mediaData.media || []) {
+        const existing = await db.businessPhoto.findFirst({ where: { googlePhotoId: photo.name } });
+        if (!existing) {
+          await db.businessPhoto.create({
+            data: {
+              locationId,
+              googlePhotoId: photo.name,
+              imageUrl: photo.googleUrl || photo.locationUri || "",
+              thumbnailUrl: null,
+              source: "google",
+              status: "active",
+            },
+          });
+          result.photos++;
         }
       }
     } catch (e: any) {

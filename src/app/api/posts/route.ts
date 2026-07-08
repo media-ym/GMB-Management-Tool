@@ -5,6 +5,7 @@ import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import { createGooglePost, getValidAccessToken } from "@/lib/google-service";
 import { aiGeneratePost } from "@/lib/ai";
+import { requireClientAuth } from "@/lib/client-auth";
 import type { PostWithLocation } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +78,12 @@ export async function POST(req: NextRequest) {
   // ─── If publishing: push to REAL Google Business Profile ───────────────
   let googlePostId: string | null = null;
   if (status === "published") {
+    // End-client authorization gate (Google Third-Party Policy). The
+    // location's linked client must have an active authorization with the
+    // "post.create" scope before we push the new post to Google.
+    const authCheck = await requireClientAuth(locationId, "post.create");
+    if (!authCheck.ok) return authCheck.response;
+
     const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
     if (gbp) {
       const accessToken = await getValidAccessToken();

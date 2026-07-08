@@ -4,6 +4,7 @@ import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import { updateGoogleBusinessProfile, getValidAccessToken, googleServiceStatus } from "@/lib/google-service";
+import { requireClientAuth } from "@/lib/client-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -214,8 +215,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   // ─── Push changes to REAL Google Business Profile ──────────────────────
+  // End-client authorization gate (Google Third-Party Policy). The location's
+  // linked client must hold the "profile.update" scope before we push any
+  // changes to their Google Business Profile. The local DB has already been
+  // updated by this point — that's intentional, the local record is the
+  // source of truth for non-Google data. If auth fails, we surface a 403 so
+  // the user can re-establish authorization and re-PUT to retry the sync.
   const googleErrors: string[] = [];
   if (gbp && googleServiceStatus.isConfigured) {
+    const authCheck = await requireClientAuth(id, "profile.update");
+    if (!authCheck.ok) return authCheck.response;
+
     const accessToken = await getValidAccessToken();
     if (accessToken) {
       try {
@@ -227,6 +237,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         if (body.website !== undefined) googleUpdates.website = body.website;
         if (body.businessInfo?.description !== undefined) googleUpdates.description = body.businessInfo.description;
         if (body.businessInfo?.appointmentUrl !== undefined) googleUpdates.appointmentUrl = body.businessInfo.appointmentUrl;
+
+        // Categories — body.categories is an array of display-name strings.
+        // The first entry is the primary category; the rest are additional.
+        // updateGoogleBusinessProfile() will resolve each name to its stable
+        // gcid via Google's category search before patching.
+        if (body.categories && Array.isArray(body.categories) && body.categories.length > 0) {
+          googleUpdates.categories = {
+            primaryDisplayName: body.categories[0],
+            additionalDisplayNames: body.categories.slice(1),
+          };
+        }
 
         // Convert hours to Google format
         if (body.hours && Array.isArray(body.hours)) {

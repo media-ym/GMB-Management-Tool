@@ -35,7 +35,8 @@ export type ViewKey =
   | "roadmap"
   | "design-system"
   | "wireframes"
-  | "settings";
+  | "settings"
+  | "clients";
 
 export interface SessionUser {
   id: string;

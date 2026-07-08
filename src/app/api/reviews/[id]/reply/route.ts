@@ -5,6 +5,7 @@ import { ok, unauthorized, forbidden, fail, notFound } from "@/lib/api-response"
 import { can } from "@/lib/permissions";
 import { replyToReview, deleteReviewReply, getValidAccessToken } from "@/lib/google-service";
 import { aiReviewReply } from "@/lib/ai";
+import { requireClientAuth } from "@/lib/client-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const review = await db.review.findUnique({ where: { id }, include: { location: { include: { googleProfiles: true } } } });
   if (!review) return notFound("Review not found");
+
+  // ─── End-client authorization gate (Google Third-Party Policy) ──────────
+  // The location's linked client must have an active authorization that
+  // includes the "review.reply" scope before we can push the reply to Google.
+  const authCheck = await requireClientAuth(review.locationId, "review.reply");
+  if (!authCheck.ok) return authCheck.response;
 
   // ─── Push reply to REAL Google Business Profile ────────────────────────
   const gbp = review.location?.googleProfiles?.[0];

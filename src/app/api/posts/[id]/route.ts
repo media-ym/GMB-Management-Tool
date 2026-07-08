@@ -4,6 +4,7 @@ import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import { createGooglePost, deleteGooglePost, patchGooglePost, getValidAccessToken } from "@/lib/google-service";
+import { requireClientAuth } from "@/lib/client-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   // ─── If publishing: push to REAL Google Business Profile ───────────────
   if (body.status === "published" && post.status !== "published") {
+    // End-client authorization gate — must hold "post.create" scope before
+    // we can publish to Google on behalf of the linked client.
+    const authCheck = await requireClientAuth(post.locationId, "post.create");
+    if (!authCheck.ok) return authCheck.response;
+
     const gbp = post.location?.googleProfiles?.[0];
     if (gbp) {
       const accessToken = await getValidAccessToken();
@@ -77,6 +83,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   let googlePatchError: string | null = null;
   if (editingPublished) {
+    // End-client authorization gate — must hold "post.update" scope before
+    // we push edits to an already-published Google post.
+    const authCheck = await requireClientAuth(post.locationId, "post.update");
+    if (!authCheck.ok) return authCheck.response;
+
     const gbp = post.location?.googleProfiles?.[0];
     const accessToken = gbp ? await getValidAccessToken() : null;
     if (gbp && accessToken) {
@@ -124,6 +135,18 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     include: { location: { include: { googleProfiles: true } } },
   });
   if (!post) return notFound("Post not found");
+
+  // ─── End-client authorization gate ─────────────────────────────────────
+  // Deleting a post that has been pushed to Google requires the
+  // "post.delete" scope. If the client's authorization has been revoked, we
+  // block the entire delete (local + Google) so the user can re-establish
+  // authorization or contact support — silently deleting only locally would
+  // leave a published post live on Google indefinitely, which is the worst
+  // outcome for the client's reputation.
+  if (post.googlePostId) {
+    const authCheck = await requireClientAuth(post.locationId, "post.delete");
+    if (!authCheck.ok) return authCheck.response;
+  }
 
   // ─── Best-effort Google delete — never block local delete ──────────────
   let googleDeleted = false;

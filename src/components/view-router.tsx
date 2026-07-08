@@ -22,6 +22,7 @@ import { RoadmapView } from "@/components/views/roadmap-view";
 import { DesignSystemView } from "@/components/views/design-system-view";
 import { WireframesView } from "@/components/views/wireframes-view";
 import { SettingsView } from "@/components/views/settings-view";
+import { ClientsView } from "@/components/views/clients-view";
 import { useAppStore as useStore } from "@/lib/store";
 import { ShieldAlert } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -67,6 +68,7 @@ export function ViewRouter() {
     case "design-system": return <DesignSystemView />;
     case "wireframes": return <WireframesView />;
     case "settings": return <SettingsView />;
+    case "clients": return <ClientsView />;
     default: return <DashboardView />;
   }
 }

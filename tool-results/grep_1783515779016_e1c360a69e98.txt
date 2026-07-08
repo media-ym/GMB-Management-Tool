@@ -1,0 +1,252 @@
+103:    - Action: Badge colored by category — auth=slate, review=emerald, post=amber, ai=teal, sync=cyan (NO blue), settings=rose, user=rose — with category icon prefix and human-readable label map.
+104-    - Entity: entity name + entityId (font-mono text-[10px], truncated max-w-160).
+105-    - Status: emerald dot + "OK" for success; rose dot + "Failed" for failed.
+106-    - IP: font-mono text-xs, em-dash when null.
+107-    - Details: expandable row (click to toggle). When expanded, shows newValue pretty-printed (attempts JSON.parse → JSON.stringify with 2-space indent; falls back to raw string) in a bordered pre block with scroll-area, max-h-64.
+108-    - Failed rows get a subtle rose tint (bg-rose-500/[0.04]).
+--
+369:- Rewrote prisma/seed.ts with full data for all 49 tables: 5 roles + 19 permissions + role mappings, 5 users, 1 google account, 15 locations + 15 GBPs + 15 business info + categories/services/products/attributes/hours/special-hours/photos per location, ~150 reviews + replies + labels, 5 reply templates, ~45 posts, 30 media files, 20 reports, 25 AI jobs, 5 AI suggestions, 7-day AI usage, 25 sync logs, 20 background jobs, 7 scheduled cron jobs, 3 error logs, 4 API tokens, 15 storage files, 7 dashboard widgets, 5 user preferences, 6 notifications, 30 audit + activity logs, 3 settings.
+370-- Added new API routes: /api/system (schema inventory with row counts for all 49 tables, sync logs, scheduled jobs, background jobs, error logs, api logs, dashboard widgets, storage buckets, AI usage), /api/media, /api/reports (GET + POST generate), /api/competitors, /api/seo-audits.
+371-- Updated types.ts (added media/reports/system ViewKeys), permissions.ts (added media.view/manage, reports.view/generate, system.view permissions + role matrix), app-shell.tsx nav (13 modules now: dashboard, locations, reviews, posts, analytics, seo, ai, media, reports, notifications, audit, system, settings), view-router.tsx (3 new view imports + cases).
+372-- Next: dispatch parallel subagents for the 3 new view components (Media, Reports, System).
+373-
+374-Stage Summary:
+375:- Schema fully expanded to match the 03_Supabase_Database spec. 49 models covering all 16 categories from the spec.
+376-- All new API routes working. Nav updated to 13 modules.
+377-- Seed data comprehensive across all new tables.
+378-- Ready for UI subagents to build Media Library, Reports, and System views.
+379-
+380----
+--
+466:- Read worklog.md (foundation + 4 sibling view records in /agent-ctx) and inspected the foundation: src/app/api/system/route.ts (full response shape: schema inventory with 49 tables + categories, syncLogs, scheduledJobs, backgroundJobs, errorLogs, apiLogs (recent audit), dashboardWidgets, storageBuckets, storageFiles, aiUsage with 7-day totals + daily).
+467-- Reviewed shared components: PageHeader/CardSection (page-header.tsx), StatCard (4 accent colors), badges (SyncStatusBadge/StatusBadge/ScoreBadge), all shadcn ui (Card, Button, Badge, Input, Switch, Tabs, Table, Tooltip, Skeleton, Progress).
+468-- Reviewed conventions from sibling views (audit-view, dashboard-view, notifications-view, seo-view): scroll-area class for custom scrollbar, max-h-[calc(100vh-Xrem)] overflow-y-auto pattern, emerald/amber/teal/rose/slate/cyan palette only, RBAC via can(user.role, ...), useUser() from React Context, api() envelope wrapper, formatDistanceToNow for relative time, toast from sonner.
+469-- Built src/components/views/system-view.tsx (~1590 LOC, single self-contained client component file). Exports named `SystemView` (matches the import already wired in view-router.tsx).
+470-- PageHeader: Database icon, title "System", description "Database, jobs, logs & integrations", "Refresh" button (invalidates ['system'] query + toast).
+471-- Overview stat row (4 StatCards): Total Tables (Table2, emerald), Total Rows (ListTree, teal), Active Jobs (Activity, amber — counts backgroundJobs with status=queued|processing), Unresolved Errors (AlertTriangle, rose if >0 else emerald). Skeletons during load.
+--
+473:  • Schema tab: CardSection with summary "X tables · Y total rows", category-breakdown badge row (16 categories color-coded, tooltip with count + row total), search Input, sortable Table (Table Name / Category / Row Count) — clicking headers cycles asc/desc, SortIcon component extracted to module scope to satisfy react-hooks/static-components lint rule. Sortable columns: name (alphabetical), category (alphabetical then name), count (numeric). Table wrapped in max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area with sticky header. Category colors cycle through emerald/amber/teal/rose/slate/cyan across 16 categories.
+474-  • Sync Logs tab: Table (Module badge | Location name+city | Status badge (success=emerald, failed=rose, running/partial=amber) | Started (relative + absolute mono) | Duration (Xm Ys / Xs / Xms computed from startedAt-completedAt) | Records (mono row: P:+I:↻U:✕F color-coded) | Error (line-clamp-2 + tooltip)). max-h-[calc(100vh-24rem)] scroll-area, sticky header.
+475-  • Jobs tab: two CardSections. Scheduled Jobs as card grid (md:grid-cols-2) — each card has jobName, monospace cronExpression badge, Switch toggle (mock — toasts "X enabled/disabled" with note about deployment-managed cron), lastRun + nextRun relative times. Background Jobs as Table with sticky header inside max-h-96 overflow-y-auto — queueName color-coded per spec (google-sync=emerald, review-sync=amber, analytics-sync=teal, ai-processing=rose, notifications=slate, reports=cyan), status badge with colored dot, attempts (mono), timing (Queued X ago / Running Xm Ys / Started + Done in), error (line-clamp + tooltip).
+476-  • Error Logs tab: Table (Module badge | Error Code (mono rose) | Message (line-clamp-2) | Status badge (Resolved=emerald with CheckCheck, Unresolved=rose with AlertCircle) | Created (relative) | Action). Unresolved rows get border-l-2 border-l-rose-500 + bg-rose-500/[0.02] accent. "Resolve" button per unresolved row — mock toast "Marked as resolved" with code + short id. Empty state shows green CheckCircle2 "All clear!". max-h-[calc(100vh-24rem)] scroll-area.
+477-  • Storage tab: Storage Buckets grid (1/2/3 cols) of cards — each shows bucket name (mono), file count, Public/Private label (Public=emerald, Private=slate, based on PUBLIC_BUCKETS set: business-photos/post-images/profile-images), total size formatted (formatBytes: B/KB/MB/GB/TB), and a colored progress bar showing relative size vs largest bucket (Public=emerald, Private=cyan). Recent Files Table (bucket badge | file name with mime icon | mimeType mono | size | uploaded relative) inside max-h-[28rem] scroll-area.
+478-  • AI Usage tab: 4 summary StatCards (Requests 7d / Tokens 7d / Est. Cost 7d in ₹ via Intl.NumberFormat en-IN / Avg tokens per request). Daily Usage BarChart (recharts, dual Y-axis — left=requests in chart-1 emerald, right=tokens in chart-2 amber, CartesianGrid, XAxis date dd MMM, RTooltip with card colors, Legend). Model Breakdown card with deterministic mock distribution (glm-4.6=78%, glm-4-air=16%, glm-4-flash=6%) as horizontal bars + totals footer. Daily Breakdown table.
+--
+494:- All 7 tabs implemented per spec: Schema (sortable + searchable + category color-coded), Sync Logs (with duration + record flow), Jobs (Scheduled card list + Background table), Error Logs (rose left-border for unresolved + Resolve action), Storage (bucket grid + recent files), AI Usage (stat cards + dual-axis bar chart + model breakdown + daily table), Integrations (5 integration cards + API tokens table + health mini-cards).
+495-- RBAC enforced via can(user.role, 'system.view') — super_admin + marketing_manager have full access; others see an access-restricted card (defensive — view-router already gates this).
+496-- Palette strictly emerald/amber/teal/rose/slate/cyan. Zero indigo/blue.
+497-
+498----
+499-Task ID: 6-auth-google
+--
+592:- Created /api/locations/[id] (GET: full detail with business info, hours, services, categories, attributes, photos, timeline, health breakdown, profile completeness, SEO audit; PUT: update location + business info + hours with audit logging).
+593-- Created /api/locations/[id]/sync (POST: trigger single-location sync with module param: reviews|posts|profile|analytics|photos|full, creates sync_log).
+594-- Created /api/locations/bulk (POST: bulk sync, archive, activate for multiple locations).
+595-- Created /api/reviews/stats (GET: total, pending, negative, positive, avg rating, response rate, avg response time, SLA compliance (negative 2h / positive 24h), rating distribution, 30-day trend, top complaints, top appreciation, sentiment counts, AI suggested count).
+596-- Created /api/reviews/[id]/notes (GET: list internal notes; POST: add internal note — stored as review labels with "note:" prefix).
+597-- Created /api/review-templates (GET/POST/PATCH/DELETE: full CRUD for reply templates by rating + topic with variables).
+--
+623:    - Posts by Location Card: horizontal bar chart via recharts BarChart with layout="vertical" + XAxis number + YAxis category (truncated to 16 chars). Emerald fill var(--chart-1). Top 10 locations. RTooltip. Empty state. Domain padded to 1.15x max for visual breathing room.
+624-
+625-  * NEW: Multi-Location Publishing — "Publish to" section in PostEditorDialog (only shown on create, hidden in edit mode). 3 mode toggle buttons: Single (MapPin icon), Multiple (Layers icon), All Active (CheckCheck icon).
+626-    - Single mode: existing location Select (unchanged behavior, single POST /api/posts).
+627-    - Multiple mode: scrollable checkbox list of all locations (max-h-44, scroll-area), per-row label + city. "Select all" helper link.
+628-    - All Active mode: emerald-tinted confirmation box showing count of active (non-paused) locations.
+--
+675:- Reviewed the existing src/components/views/locations-view.tsx (was a 677-LOC grid + Sheet drawer with mock services/hours). Reviewed the new API endpoints created by orchestrator §8: GET /api/locations/[id] (full detail with location + googleProfile + categories + services + products + attributes + hours + specialHours + photos + completeness + healthBreakdown + timeline + analytics30d + seoAudit), PUT /api/locations/[id] (updates location + businessInfo + hours array), POST /api/locations/[id]/sync (module: full|reviews|posts|profile|analytics|photos), POST /api/locations/bulk (action: sync|archive|activate).
+676-- Rewrote src/components/views/locations-view.tsx (~2370 LOC, single self-contained client component). Exports named `LocationsView` (matches the import already wired in src/components/view-router.tsx).
+677-- KEPT the existing location grid + filters (search + status Tabs + sort Select) + the 4 StatCards summary row + the Sync-all header button — they all still work.
+678-- ADDED bulk operations: each LocationCard now has a Checkbox in the top-left corner (with stopPropagation so clicks don't trigger card open). Select-all Checkbox in the result-count row. When selectedIds.size > 0, a bulk action bar Card slides in at the top (emerald-tinted) showing the count + "Sync selected" / "Archive selected" / "Activate selected" buttons + "Clear" — calls POST /api/locations/bulk with the selected IDs. Permission gated: Sync visible only if canSync, Archive/Activate only if canManage. Loading state disables all bulk buttons while running.
+679-- CONVERTED the detail view from a Sheet to a FULL-PAGE detail dashboard (replaces the grid when a location is selected, with a "Back to locations" ghost button). Detail is fetched via TanStack Query key ["location-detail", id] using the new GET /api/locations/[id] endpoint.
+680-- Detail dashboard layout (top-to-bottom):
+--
+688:- Services tab: services list (each as a Card with name + status Badge + description + category tag) inside max-h-96 scroll-area + "Add Service" button (mock — toast "coming soon"). Below: Products table (image thumbnail + name + description, category, price formatted with currency symbol, status Badge).
+689-- Photos tab: responsive grid (2/3/4 cols) of aspect-square photos with source Badge (google=emerald, ai=amber, manual=teal) in top-left, hover overlay showing date. Header has Upload Photo button (mock — toast "Upload queued"). Shows count + last updated relative time.
+690-- Timeline tab: vertical timeline with absolute-positioned 1px line + colored dots per event (review=emerald, post=amber, sync=teal, default=slate). Each item shows type icon + title + subtitle + relative timestamp. Read-only. Empty state when no events.
+691-- SEO Audit tab: when no audit exists, shows empty state with "Run New Audit" button (mock toast). When audit exists: 2-column radial gauges (Audit Score + Profile Strength via ScoreRing), 4-stat row (Missing Photos, Missing Services, Completeness %, Recommendations count — color-coded), and numbered recommendations list with amber chips.
+692-- EditLocationDialog: shadcn Dialog with form for Name, Phone, Email, Website, Address (Textarea), Status (active/paused/error Select). "Save Changes" calls PUT /api/locations/[id] with { name, phone, email, website, address, status } then invalidates ["location-detail", id] + ["locations"] + ["dashboard-summary"]. Re-syncs form state when dialog opens.
+693-- Loading skeleton: LocationDetailSkeleton renders 1 hero + 6 mini + 2 large + tabs bar + content skeletons. Error state: rose AlertTriangle + Retry button. Empty/error states use consistent EmptyRow helper.
+--
+840:  * GET /api/seo-audits?locationId= → audits with profile strength, missing categories/photos/services, recommendations
+841-  * GET /api/competitors?locationId= → real competitors with per-keyword rankings + avgRank
+842-  * POST /api/ai action=seo (recommendations) + action=summary (monthly summary)
+843-- Rewrote src/components/views/seo-view.tsx (~1300 LOC) — kept the overview stat row (4 cards: Total Keywords, Avg Rank, Top 3, Top 10) and Health & Visibility radial gauges; moved everything else into a 6-tab layout.
+844-- PageHeader actions: location Select (existing) + "Refresh Rankings" outline button (gated on seo.manage, calls POST /api/seo/refresh, invalidates seo/audits/competitors queries) + "AI Recommendations" primary button (gated on ai.use+seo.manage, calls POST /api/ai action=seo, switches to AI tab on success) + "AI Monthly Summary" outline button (calls POST /api/ai action=summary, switches to AI tab).
+845-- Tab "Keywords" — Keyword management table with sortable columns (Keyword, City, Current, Previous, Best, Worst, Change, Trend, Actions). Rank change badge: green ArrowUp (improved, rankChange>0), red ArrowDown (dropped), gray Minus (no change). Trend column shows a mini LineChart sparkline using embedded rankHistory (Y-axis reversed). Actions per row: View History (opens dialog with full rank LineChart + current/best/worst/avg stats + Top 3 / Top 10 reference lines), Edit (dialog), Delete (AlertDialog confirm). "Add Keyword" button (gated on seo.manage) opens KeywordFormDialog with keyword/location/city/state inputs. Search filter by keyword text or city. Clicking a row selects the keyword for the geo-grid tab. max-h-[calc(100vh-24rem)] scroll-area for long lists.
+--
+849:- Tab "Audit" — SEO audits list for all locations (filtered by location if set). Sortable table with expandable rows. Columns: Location, Audit Score (color-coded), Profile Strength (with Progress bar + %), Missing Photos (amber badge or green CheckCircle2), Missing Services (same), Recommendations count, Audited date. Expand reveals missing categories as badges + full numbered recommendations list. "Run Audit" button (gated on seo.manage) shows toast "Audit queued".
+850-- Tab "AI Insights" — 2-column grid with two CardSections side by side: (1) AI SEO Recommendations panel (existing recs with regenerate button, 5 Lightbulb-styled recommendation cards), (2) AI Monthly SEO Summary panel (new, CalendarClock-styled amber-accented card showing the summary text in whitespace-pre-line format). Both show loading skeletons (~5 cards / paragraph skeleton) during AI generation, error states in rose-tinted alert boxes, and empty states with appropriate icons. Permission-gated on canAI (ai.use AND seo.manage).
+851-- Rank History Dialog: sm:max-w-2xl, shows 4 StatTiles (Current/Best/Worst/Average) at top, then a 72px-height LineChart with X=date (dd MMM), Y=rank (REVERSED so #1 at top, domain=[0, maxRank+2]), ReferenceLine at y=3 (Top 3, amber dashed) and y=10 (Top 10, rose dashed), tooltip showing "#X Rank". Footer note explains the inverted Y-axis + tracking count.
+852-- KeywordFormDialog: controlled Dialog that initializes form state in onOpenChange handler (not useEffect) to avoid react-hooks/set-state-in-effect lint rule. Fields: keyword (Input), location (Select with "No specific location" option), city (Input), state (Input default "Maharashtra"). Validates keyword required (toast error if empty). Submit button shows Loader2 spinner while submitting.
+853-- Loading skeletons: stat row (4 skeletons), health/visibility (1 skeleton), keyword table (1 large skeleton), geo-grid (centered skeleton), competitor/comparison/audit tables (1 large skeleton), AI recs/summary (multiple smaller skeletons matching content shape).
+854-- Permission gating: Add/Edit/Delete keywords + Refresh rankings + Run Audit + Add Competitor → can(user.role, 'seo.manage') (super_admin, marketing_manager). AI recommendations/summary → can(user.role, 'ai.use') AND can(user.role, 'seo.manage'). Other tabs (geo-grid, comparison, competitors read, audit read) → just seo.view (which is the view-level gate).
+--
+912:  * /api/api-docs (GET) — full API documentation with all 70+ endpoints grouped by category, HTTP status codes, rate limiting, pagination, response format (doc 13).
+913-- Added "API Docs" as 15th nav module (icon: Code2). Updated types.ts, permissions.ts, app-shell.tsx, view-router.tsx.
+914:- Created API Docs view: fetches /api/api-docs, displays endpoints grouped by category with method-colored badges (GET=emerald, POST=amber, PUT=teal, PATCH=blue, DELETE=rose), search/filter, copy-to-clipboard, response format card, rate limiting card, HTTP status codes reference.
+915-- Lint: 0 errors, 0 warnings.
+916-- Total API routes: 54. Total nav modules: 15.
+917-
+918-Stage Summary:
+919-- All admin/system API routes for docs 12/13/14 created and lint-clean.
+--
+930:- Read existing `settings-view.tsx` (1532 LOC) — 5 horizontal Tabs (Users & Roles, Brand, AI Assistant, Sync Schedule, API & Integrations) with user CRUD dialog, role legend, brand form, AI form (assistant name, model, max tokens, auto-approve), sync intervals (4 modules), and integration status cards (Google OAuth, MiSA AI). All well-built but only 5 of the 16 required categories.
+931-- Inspected all new admin API routes to confirm exact response shapes:
+932-  * GET /api/admin/system-health → `{ overall, summary: { total, healthy, warnings, critical }, checks: [{ service, status, latency?, message, details? }] }` (gated on system.view OR settings.view)
+933-  * GET /api/admin/jobs?status=&queue= → `{ stats: { queued, processing, completed, failed, retrying }, jobs: [{ id, queueName, jobName, status, attempts, payload, startedAt, completedAt, errorMessage, createdAt }] }` (gated on system.view OR settings.view)
+934-  * POST /api/admin/jobs/[id]/retry → `{ id, status: "queued" }` (gated on system.view OR settings.view)
+935-  * POST /api/admin/test-email body `{ to, host?, port?, username?, senderName?, senderEmail? }` → `{ sent, to, from, subject, timestamp }` (gated on settings.view)
+--
+942:- **Top-level SettingsView**: flex layout `flex gap-6`. Left desktop sidebar (`hidden md:block w-56 shrink-0`) with sticky nav of 16 category buttons (icon + label, active = `bg-primary text-primary-foreground shadow-sm`). Mobile category picker (`md:hidden w-full` Select). Right content area (`flex-1 min-w-0`) renders the selected category component via a `CategoryContent` switch.
+943:- **Permission gating per category** (16 categories with role-based visibility via `canSee` predicate):
+944-  * Overview, Storage, Backup: `system.view` OR `settings.view` (visible to super_admin + marketing_manager)
+945-  * Users & Roles, General, Google, AI, Notifications, SMTP, Sync, Security, Environment: `settings.view`
+946-  * Health Checks, Background Jobs, Error Monitoring: `system.view`
+947-  * API Documentation: visible to all (just a link card)
+948-- **Category 1: Overview** — 8 StatCards (Total Users, Active Locations, Google Accounts, System Health, Failed Jobs, Pending AI Jobs, Storage Used, Database Status) with color-coded accents based on live values. System Health Summary card with overall badge + Healthy/Warnings/Critical stat grid + per-service health rows (with latency). Latest System Alerts card listing up to 8 recent errorLogs (color-coded by resolved status, with module/code/unresolved badge + relative time). Fetches from /api/users, /api/locations, /api/admin/system-health, /api/admin/jobs, /api/system (gated on system.view).
+--
+971:  * `HealthStat`, `HealthCheckCard`, `JobStat`, `UsageStat`, `BackupStat`, `InfoTile`, `PackageCard`, `FeatureTile`, `ChannelCard`, `PolicyItem`, `FutureFeature` — small presentational components used within their respective categories.
+972-- **Color coding**: healthColor() (healthy=emerald, warning=amber, critical=rose), healthDot() (matching dot), jobStatusColor() (5 statuses), queueColor() (6 queue names with palette per task spec). All using emerald/amber/teal/rose/slate/cyan — NO indigo/blue.
+973-- **Lint iteration 1**: `bun run lint` flagged 2 errors:
+974:  1. `react-hooks/set-state-in-effect` at line 334 — useEffect in SettingsView that fell back to first visible category if active became hidden. **Fixed** by replacing with a computed `validActive` value during render: `const validActive = active && visible.find((c) => c.key === active) ? active : (visible[0]?.key ?? "overview")`. Removed the useEffect entirely.
+975-  2. `react-hooks/set-state-in-effect` at line 1878 — useEffect in PromptEditDialog that synced `text` state when `prompt` prop changed. **Fixed** by extracting `PromptEditForm` as a child component with `useState(prompt.template)` initializer and keying it by `prompt.id` in the parent (`<PromptEditForm key={prompt.id} prompt={prompt} onClose={...} />`). Form remounts fresh on each new prompt; the parent only renders it when `prompt` is non-null, so dialog-close → dialog-open cycle correctly resets the textarea.
+976-- **Lint final**: `cd /home/z/my-project && bun run lint 2>&1 | tail -30` → clean (exit 0, no output, no warnings).
+977-- **Type-check**: `bunx tsc --noEmit` → 0 errors in settings-view.tsx (all TS errors shown are in unrelated files: dashboard-view, api routes, examples/, skills/ — explicitly out of scope per task instructions).
+978-- Did NOT touch any other file. Did NOT start the dev server.
+979-
+--
+983:- All doc 12 admin sub-modules implemented as sidebar categories (16 total):
+984-  1. Overview (8 stat cards + system health summary + latest alerts)
+985-  2. Users & Roles (preserved existing user CRUD + role legend)
+986-  3. General (extended brand form: company name, logo URL, support email/phone, timezone, language, date format, currency)
+987-  4. Google Integration (OAuth status card + sync frequency + default sync options + re-authorize/test connection buttons)
+988-  5. AI Provider (MiSA card + config form with temperature slider + prompt management section with 6 prompt types + edit dialog)
+--
+1014:- Dispatched subagent to restructure Settings view from 5 horizontal tabs → 16-category sidebar-within-settings layout:
+1015-  1. Overview (admin dashboard widgets: Total Users, Active Locations, System Health, Failed Jobs, Storage, etc.)
+1016-  2. Users & Roles (existing user CRUD preserved)
+1017-  3. General (company name, logo, timezone, language, currency)
+1018-  4. Google Integration (OAuth status, sync frequency, default sync options)
+1019-  5. AI Provider (model config, temperature, max tokens, timeout, retry + AI Prompt Management with 6 prompt types)
+--
+1033:  * Settings: sidebar layout with 16 categories, Overview shows Total Users/Active Locations/System Health/Failed Jobs ✓
+1034-  * Health endpoint: Overall critical (Google OAuth token expired — expected), Database healthy (3ms), MiSA AI healthy, Storage healthy, SMTP warning, Cron Jobs healthy, Background Workers warning ✓
+1035-  * Lint: 0 errors, 0 warnings ✓
+1036-  * Dev log: only 200 responses after initial compile ✓
+1037-  * 15 nav modules all present ✓
+1038-
+--
+1041:- Admin Settings (doc 12): 16-category sidebar layout with admin overview dashboard, user management, general settings, Google integration config, AI provider + prompt management, notification settings, SMTP email config with test, sync settings, security settings, storage management, health checks, background jobs, error monitoring, backup & restore, environment info.
+1042-- API Documentation (doc 13): API Docs view with 71 searchable endpoints, response format, rate limiting, HTTP status codes, pagination docs.
+1043-- Deployment/DevOps (doc 14): Public /api/health endpoint with 7 service checks, /api/system-info environment info, /api/admin/backup backup management.
+1044-- 15 nav modules, 49 Prisma models, 53 API routes. Demo password: MyFNG@2025.
+1045-- Ready for next batch of MD files.
+1046-
+--
+1053:- Read docs 15 (Project Roadmap — 10 phases, 24 weeks, sprints, risks, success metrics), 16 (UI/UX Design System — colors, typography, components, grid, breakpoints), 17 (Screen Wireframes — 50+ screens across 8 categories).
+1054-- Created /api/roadmap (GET) — returns 10 phases with implementation status computed from actual database state (user count, location count, review count, etc.). Each phase has deliverables with done/pending status. Also returns 12 sprints, 6 risks, 7 success metrics with current progress.
+1055-- Created /api/design-system (GET) — returns full design system spec: philosophy, grid, breakpoints, layout, color palette (with note that doc specifies blue #0057FF but platform uses emerald per design rules), typography (Inter, 5 heading sizes), border radius, shadows, buttons, inputs, cards, tables, charts, icons, modals, toasts, loading/empty/error states, animations, accessibility, dark mode, component naming, theme variables, final rules.
+1056-- Added 3 new nav modules: Roadmap (icon: Map), Design System (icon: Palette), Wireframes (icon: Monitor). Updated types.ts (18 ViewKeys), permissions.ts (all 3 use dashboard.view permission — accessible to all authenticated users), app-shell.tsx nav (18 modules), view-router.tsx (3 new view imports + cases).
+1057-- Total: 18 nav modules, 55 API routes, 49 Prisma models.
+1058-
+--
+1093:Task: Build the Screen Wireframes catalog view with all 50+ screens organized by category.
+1094-
+1095-Work Log:
+1096-- Read worklog.md + existing foundation (store/useAppStore with setView, PageHeader, StatCard, shadcn New York, ViewKey union including "wireframes").
+1097-- Verified ViewRouter already imports `WireframesView` from `@/components/views/wireframes-view` (case "wireframes") — file did not yet exist; this task creates it.
+1098-- Confirmed ViewKey union (no "login" key — Login screen marked implemented with no Open button).
+--
+1101:- Authored static SCREENS array with all 52 screens from doc 17 §1: Auth(3) + Dashboard(5) + Locations(9) + Reviews(6) + Posts(6) + SEO(6) + Analytics(5) + AI(6) + Admin(6). Each entry: id, name, category, description (layout from doc), widgets (string[]), status (implemented|wireframe), optional view (ViewKey) + viewLabel, and a WireframeLayout type.
+1102-- Implemented status mapping per task spec: Login = implemented (no view — can't navigate to login while logged in); Dashboard screens → dashboard/analytics/reviews/seo; Locations screens → locations (Photos → media); Reviews → reviews; Posts → posts (Media Library → media); SEO → seo; Analytics → analytics (Reports → reports); AI → ai/reviews/posts/seo/reports per spec; Admin → settings/notifications/audit/system. Calendar View + Publishing Queue + Forgot Password + Reset Password = wireframe.
+1103-- Built MiniWireframe component with 14 distinct CSS layout variants: auth (centered card), kpi-grid (4 top cards + 2-col chart row), tabbed-content (tab strip + 2 panels), detail-tabs (tabs + 1/3-2/3 split), table-list (search bar + 4 rows w/ actions), master-detail (2/3 list + 3/3 detail with active highlight), form-stack (3 labeled fields + primary CTA), photo-grid (4×2 with first cell tinted), editor-split (input+CTA / preview), chat-bubbles (left/right alternating w/ amber AI bubble), calendar (7×4 grid with scheduled cells tinted), queue-list (4 rows w/ colored status dots), sidebar-settings (1/4 nav + 3/4 content), health-grid (4×2 cards w/ emerald/rose status dots). All boxes use bg-muted-foreground/15-35 + primary/30 for accent zones.
+1104:- Built ScreenCard: top 112px (h-28) wireframe preview zone with bg-muted/30, then CardContent p-4 with name (font-semibold), category badge (color-coded icon+label), implementation badge (emerald "Implemented" w/ dot or slate "Wireframe" outline), description (text-sm muted leading-relaxed), widgets as small muted chips. CardFooter border-t bg-muted/20 with: emerald "Open" button (ArrowRight) calling setView(view) when view present; "Available in-app" hint w/ CheckCircle2 when implemented but no view (Login); "Spec only — not yet built" hint w/ PencilRuler when wireframe.
+1105-- PageHeader: title "Screen Wireframes", description "Complete screen specifications & layouts", Monitor icon, actions = search Input (with leading Search icon, pl-8, aria-label) filtering by name/description/widgets.
+1106-- Stat row: 4 StatCards (Total Screens=emerald LayoutGrid, Categories=teal Layers, Implemented=emerald CheckCircle2, Wireframe Only=slate PencilRuler) computed via useMemo from SCREENS.
+1107:- Category filter: Tabs (value=category) with "All" + 9 category triggers, each showing icon + label + count badge. TabsList uses h-auto w-full flex-wrap overflow-x-auto so it wraps on desktop and scrolls horizontally on mobile.
+1108-- Brief mount skeleton (120ms timeout) renders 9 skeleton cards matching the card layout (h-28 preview + name + 2 lines + 2 badges + footer) to satisfy the loading-skeleton requirement without blocking real interaction.
+1109:- Empty state: centered Card with MonitorOff icon in muted circle, "No screens found" message, Clear-filters button that resets search + category.
+1110-- Footer hint line: "Showing X of Y screens [in Category] [matching "q"]."
+1111-- Responsive: grid-cols-1 md:grid-cols-2 xl:grid-cols-3. Mobile: search input full-width, tabs horizontally scrollable, cards stack.
+1112-- Palette strictly emerald/amber/teal/rose/slate/cyan — NO indigo/blue. shadcn components throughout (Card, CardContent, CardFooter, Badge, Button, Input, Skeleton, Tabs). Lucide icons.
+1113-- Lint: `bunx eslint src/components/views/wireframes-view.tsx` → 0 errors / 0 warnings. Full `bun run lint` → clean (0 errors). `bunx tsc --noEmit` → 0 errors in this file. Did not touch any other files.
+1114-
+--
+1118:- All 52 screens from doc 17 §1 cataloged with name, color-coded category badge, implementation status (46 implemented / 6 wireframe), layout description, widgets, mini wireframe preview, and Open button that navigates via Zustand setView(viewKey) for implemented screens with a route.
+1119-- 14 distinct mini wireframe layout variants give each screen a recognizable visual signature.
+1120-- Lint + tsc clean. Ready for end-to-end viewing once dev server resolves sibling view imports.
+1121-
+1122----
+1123-Task ID: 11-b
+--
+1180:- Wireframes view: 52 screens from doc 17 organized into 9 categories, each with mini CSS wireframe preview, category badge, implementation status badge, layout description, widget chips, "Open" button to navigate to implemented screens. Category filter tabs + search. 4 stat cards (Total Screens, Categories, Implemented, Wireframe Only).
+1181-- Agent Browser verification:
+1182-  * Roadmap: "Project Roadmap" heading, Overall Progress/Completed Phases/In Progress stats visible ✓
+1183-  * Design System: "Design System" heading, philosophy, "Emerald primary · Amber AI accent · Zero indigo/blue" banner ✓
+1184-  * Wireframes: "Screen Wireframes" heading, Total Screens/Implemented stats visible ✓
+1185-  * Lint: 0 errors, 0 warnings ✓
+--
+1193:- Screen Wireframes (doc 17): 52-screen catalog with mini wireframe previews, category filtering, implementation status, navigation to live screens.
+1194-- 18 nav modules, 49 Prisma models, 55 API routes. Demo password: MyFNG@2025.
+1195-- Complete documentation set (docs 01-17) now implemented. Ready for any additional docs (18-23 recommended in doc 15).
+1196-
+1197----
+1198-Task ID: 12-google-api-mapping
+--
+1472:- Added POST handler to /api/locations route: validates required fields (name, city, address), checks duplicate location code, creates Location record with all fields, then auto-creates default business hours (7 days), 3 categories, 4 services, and 4 attributes. Logs to audit_logs.
+1473-- Added "Add Location" button in Locations view PageHeader (only visible if canManage = locations.manage permission).
+1474-- Created AddLocationDialog component: full form with Location Name*, Location Code, City*, Pincode, Address*, Phone, Email, Website, Latitude, Longitude. Field validation, loading state, success toast, auto-refreshes location list. Info card explaining default data will be added.
+1475-- Lint: 0 errors, 0 warnings.
+1476-- Agent Browser verification:
+1477-  * "Add Location" button visible in Locations header ✓
+--
+1486:- New locations get default business hours, categories, services, and attributes automatically.
+1487-- Audit logged. Demo password: MyFNG@2025.
+1488-
+1489----
+1490-Task ID: 20-gmb-import-locations
+1491-Agent: main (orchestrator)
+--
+1496:- Created /api/locations/import (POST): imports selected GMB locations with real data — creates Location + GoogleBusinessProfile records with actual GMB name, address, phone, coordinates, categories, rating, review count, verification status. Also creates default business hours, categories, and attributes.
+1497-- Rewrote AddLocationDialog → Import from Google flow:
+1498-  1. Dialog opens → auto-fetches available GMB locations from /api/google/available-locations
+1499-  2. If Google not connected → shows "Connect Google Business Profile" prompt with OAuth button
+1500:  3. If connected → shows list of available GMB locations with checkboxes (name, address, phone, rating, reviews, category, verified badge)
+1501-  4. User selects locations → clicks "Import (N) Location(s)"
+1502-  5. POST /api/locations/import → creates records with real GMB data → toast success → list refreshes
+1503-- Fixed export: made getValidAccessToken() exported from google-service.ts
+1504-- Lint: 0 errors, 0 warnings.
+1505-- Agent Browser verification:
+--
+1603:Task: Fix location sync to fetch REAL GMB data — reviews, ratings, business info, hours, services, photos, categories.
+1604-
+1605-Work Log:
+1606-- Created syncLocationFull() in google-service.ts — fetches ALL real GMB data for a single location:
+1607-  1. Business Profile (name, address, phone, website, coordinates, rating, review count, verification)
+1608-  2. Business Hours (regular hours from Google — day, open time, close time)
+--
+1623:- When user clicks "Sync" on a location → REAL Google Business Profile API is called → real reviews, real ratings, real business hours, real services, real photos, real categories all fetched and stored.
+1624-- Location detail page ("View Details") shows this real synced data: Reviews, Avg Rating, Response Rate, Business Information, Business Hours, Services, Business Photos.
+1625-- Flow: Connect Google → Import locations → Click Sync → View Details → See REAL GMB data.
+1626-
+1627----
+1628-Task ID: 25-login-redesign
+--
+1878:  * Supports: title, phone, website, description, appointmentUrl, regularHours, categories
+1879-  * Proper error handling with response text
+1880-- Updated PUT /api/locations/[id] route:
+1881-  * After updating DB, checks if Google OAuth is configured
+1882-  * Gets valid access token
+1883-  * Builds Google update payload from changed fields:
+--
+1946:- **URL**: `https://mybusinessbusinessinformation.googleapis.com/v1/{parent}/locations?readMask=name,title,storeCode,latlng,metadata,profile,regularHours,specialHours,serviceItems,categories,phoneNumbers,websiteUri,openInfo` (google-service.ts:137)
+1947-- **Status**: ✅ Correct
+1948-- **Evidence**: Official Business Information API v1 `locations.list`. `parent` = `accounts/{accountId}`, `readMask` is required (Google returns 400 without it). Field list is valid per `Location` resource spec.
+1949-- ⚠️ Minor: `pageSize` not set (defaults to Google's 100). Accounts with > 100 locations will silently lose data — see §D.8.
+1950-
+1951-### Endpoint 5 — Get business profile
+1952:- **URL**: `https://mybusinessbusinessinformation.googleapis.com/v1/{name}?readMask=title,storeCode,latlng,metadata,profile,regularHours,categories,phoneNumbers,websiteUri,openInfo,serviceItems,attributes` (google-service.ts:146)
+1953-- **Status**: ✅ Correct
+1954-- **Evidence**: Business Information API v1 `locations.get`. `name` = `accounts/{accountId}/locations/{locationId}`. Read mask is required and includes the right fields (including `attributes`, which is excluded from `list` for performance — correctly fetched here).
+
+[Showing results with pagination = limit: 250]

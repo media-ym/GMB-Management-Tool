@@ -1,0 +1,2002 @@
+     1→"use client";
+     2→
+     3→import { useEffect, useMemo, useState } from "react";
+     4→import { useQuery, useQueryClient } from "@tanstack/react-query";
+     5→import { format, formatDistanceToNow, parseISO } from "date-fns";
+     6→import { toast } from "sonner";
+     7→import {
+     8→  MapPin, RefreshCw, Search, Building2, Activity, HeartPulse,
+     9→  AlertTriangle, Phone, Globe, Star, Clock, Navigation, ArrowRight,
+    10→  ArrowLeft, MessageSquare, Loader2, MapPinned, FileText, MoreVertical,
+    11→  ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon, CalendarClock,
+    12→  ShieldCheck, Eye, MousePointerClick, PhoneCall, TrendingUp, Target,
+    13→  ListChecks, Tag, Camera, History, Search as SeoIcon, Sparkles,
+    14→  Lock, ChevronDown, CircleCheck, CircleAlert, Inbox,
+    15→} from "lucide-react";
+    16→import {
+    17→  RadialBarChart, RadialBar, ResponsiveContainer, PolarAngleAxis,
+    18→} from "recharts";
+    19→
+    20→import { cn } from "@/lib/utils";
+    21→import { api } from "@/lib/api-client";
+    22→import { useAppStore } from "@/lib/store";
+    23→import { useUser } from "@/lib/user-context";
+    24→import { can } from "@/lib/permissions";
+    25→import type { DashboardSummary, LocationWithStats, SyncStatus, LocationStatus } from "@/lib/types";
+    26→
+    27→import { PageHeader } from "@/components/shared/page-header";
+    28→import { StatCard } from "@/components/shared/stat-card";
+    29→import {
+    30→  RatingStars, StatusBadge, SyncStatusBadge, ScoreBadge,
+    31→} from "@/components/shared/badges";
+    32→
+    33→import { Button } from "@/components/ui/button";
+    34→import { Card, CardContent } from "@/components/ui/card";
+    35→import { Input } from "@/components/ui/input";
+    36→import { Textarea } from "@/components/ui/textarea";
+    37→import { Label } from "@/components/ui/label";
+    38→import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+    39→import {
+    40→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    41→} from "@/components/ui/select";
+    42→import { Skeleton } from "@/components/ui/skeleton";
+    43→import { Progress } from "@/components/ui/progress";
+    44→import { Separator } from "@/components/ui/separator";
+    45→import { Badge } from "@/components/ui/badge";
+    46→import { Switch } from "@/components/ui/switch";
+    47→import { Checkbox } from "@/components/ui/checkbox";
+    48→import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+    49→import {
+    50→  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+    51→} from "@/components/ui/table";
+    52→import {
+    53→  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+    54→  DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuLabel,
+    55→} from "@/components/ui/dropdown-menu";
+    56→import {
+    57→  Dialog, DialogContent, DialogDescription, DialogFooter,
+    58→  DialogHeader, DialogTitle,
+    59→} from "@/components/ui/dialog";
+    60→
+    61→// ────────────────────────────────────────────────────────────────────────────
+    62→// Types matching /api/locations/[id] response
+    63→// ────────────────────────────────────────────────────────────────────────────
+    64→
+    65→type SyncModule = "full" | "reviews" | "posts" | "profile" | "analytics" | "photos";
+    66→
+    67→interface LocationDetailLocation {
+    68→  id: string;
+    69→  locationCode: string;
+    70→  name: string;
+    71→  city: string;
+    72→  region: string;
+    73→  state: string;
+    74→  pincode: string | null;
+    75→  address: string;
+    76→  phone: string | null;
+    77→  email: string | null;
+    78→  website: string | null;
+    79→  timezone: string;
+    80→  latitude: number | null;
+    81→  longitude: number | null;
+    82→  status: LocationStatus;
+    83→  syncStatus: SyncStatus;
+    84→  lastSyncedAt: string | null;
+    85→  avgRating: number;
+    86→  reviewCount: number;
+    87→  healthScore: number;
+    88→  visibilityScore: number;
+    89→  createdAt: string;
+    90→  updatedAt: string;
+    91→}
+    92→
+    93→interface GoogleProfile {
+    94→  id: string;
+    95→  googleLocationId: string;
+    96→  profileName: string;
+    97→  primaryCategory: string | null;
+    98→  additionalCategories: string[];
+    99→  averageRating: number;
+   100→  totalReviews: number;
+   101→  verificationState: string;
+   102→  profileStatus: string;
+   103→  mapUrl: string | null;
+   104→  businessInfo: {
+   105→    description: string | null;
+   106→    website: string | null;
+   107→    appointmentUrl: string | null;
+   108→  } | null;
+   109→}
+   110→
+   111→interface CategoryRow { id: string; name: string; isPrimary: boolean; }
+   112→interface ServiceRow {
+   113→  id: string; name: string; description: string | null;
+   114→  category: string | null; status: string;
+   115→}
+   116→interface ProductRow {
+   117→  id: string; name: string; description: string | null;
+   118→  category: string | null; price: number | null; currency: string;
+   119→  imageUrl: string | null; status: string;
+   120→}
+   121→interface AttributeRow { id: string; name: string; value: string | null; }
+   122→interface HourRow {
+   123→  id: string; dayOfWeek: number; openTime: string | null;
+   124→  closeTime: string | null; isClosed: boolean;
+   125→}
+   126→interface SpecialHourRow {
+   127→  id: string; date: string; openTime: string | null;
+   128→  closeTime: string | null; isClosed: boolean;
+   129→}
+   130→interface PhotoRow {
+   131→  id: string; imageUrl: string; thumbnailUrl: string | null;
+   132→  source: string; createdAt: string;
+   133→}
+   134→interface TimelineRow {
+   135→  type: string; title: string; subtitle: string; timestamp: string;
+   136→}
+   137→
+   138→interface CompletenessChecklist {
+   139→  businessName: boolean; phone: boolean; website: boolean;
+   140→  description: boolean; categories: boolean; services: boolean;
+   141→  photos: boolean; businessHours: boolean; attributes: boolean;
+   142→  verified: boolean;
+   143→}
+   144→interface Completeness { score: number; checklist: CompletenessChecklist; }
+   145→
+   146→interface HealthBreakdown {
+   147→  googleRating: number;
+   148→  reviewResponseRate: number;
+   149→  profileCompleteness: number;
+   150→  photos: number;
+   151→  businessHoursAccuracy: number;
+   152→  servicesAdded: number;
+   153→  recentPosts: number;
+   154→  seoScore: number;
+   155→}
+   156→
+   157→interface Analytics30d {
+   158→  searchViews: number | null;
+   159→  mapsViews: number | null;
+   160→  websiteClicks: number | null;
+   161→  phoneCalls: number | null;
+   162→  directionRequests: number | null;
+   163→}
+   164→
+   165→interface SeoAudit {
+   166→  auditScore: number;
+   167→  profileStrength: number;
+   168→  missingPhotos: number;
+   169→  missingServices: number;
+   170→  recommendations: string[];
+   171→  auditedAt: string;
+   172→}
+   173→
+   174→interface LocationDetailResponse {
+   175→  location: LocationDetailLocation;
+   176→  googleProfile: GoogleProfile | null;
+   177→  categories: CategoryRow[];
+   178→  services: ServiceRow[];
+   179→  products: ProductRow[];
+   180→  attributes: AttributeRow[];
+   181→  hours: HourRow[];
+   182→  specialHours: SpecialHourRow[];
+   183→  photos: PhotoRow[];
+   184→  completeness: Completeness;
+   185→  healthBreakdown: HealthBreakdown;
+   186→  timeline: TimelineRow[];
+   187→  analytics30d: Analytics30d;
+   188→  seoAudit: SeoAudit | null;
+   189→}
+   190→
+   191→// ────────────────────────────────────────────────────────────────────────────
+   192→// Static metadata
+   193→// ────────────────────────────────────────────────────────────────────────────
+   194→
+   195→const DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+   196→
+   197→const COMPLETENESS_ITEMS: { key: keyof CompletenessChecklist; label: string }[] = [
+   198→  { key: "businessName", label: "Business Name" },
+   199→  { key: "phone", label: "Phone" },
+   200→  { key: "website", label: "Website" },
+   201→  { key: "description", label: "Description" },
+   202→  { key: "categories", label: "Categories" },
+   203→  { key: "services", label: "Services" },
+   204→  { key: "photos", label: "Photos" },
+   205→  { key: "businessHours", label: "Business Hours" },
+   206→  { key: "attributes", label: "Attributes" },
+   207→  { key: "verified", label: "Verified" },
+   208→];
+   209→
+   210→const HEALTH_FACTORS: { key: keyof HealthBreakdown; label: string }[] = [
+   211→  { key: "googleRating", label: "Google Rating" },
+   212→  { key: "reviewResponseRate", label: "Review Response Rate" },
+   213→  { key: "profileCompleteness", label: "Profile Completeness" },
+   214→  { key: "photos", label: "Photos" },
+   215→  { key: "businessHoursAccuracy", label: "Business Hours Accuracy" },
+   216→  { key: "servicesAdded", label: "Services Added" },
+   217→  { key: "recentPosts", label: "Recent Posts" },
+   218→  { key: "seoScore", label: "SEO Score" },
+   219→];
+   220→
+   221→const SYNC_MODULES: { value: SyncModule; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+   222→  { value: "full", label: "Full Sync", icon: RefreshCw },
+   223→  { value: "reviews", label: "Reviews", icon: MessageSquare },
+   224→  { value: "posts", label: "Posts", icon: FileText },
+   225→  { value: "profile", label: "Profile", icon: Building2 },
+   226→  { value: "analytics", label: "Analytics", icon: TrendingUp },
+   227→  { value: "photos", label: "Photos", icon: ImageIcon },
+   228→];
+   229→
+   230→const TIMELINE_META: Record<string, { color: string; dot: string; icon: React.ComponentType<{ className?: string }> }> = {
+   231→  review: { color: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500", icon: Star },
+   232→  post: { color: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500", icon: FileText },
+   233→  sync: { color: "text-teal-600 dark:text-teal-400", dot: "bg-teal-500", icon: RefreshCw },
+   234→  default: { color: "text-slate-600 dark:text-slate-400", dot: "bg-slate-500", icon: Activity },
+   235→};
+   236→
+   237→// ────────────────────────────────────────────────────────────────────────────
+   238→// Helpers
+   239→// ────────────────────────────────────────────────────────────────────────────
+   240→
+   241→function relativeTime(iso: string | null): string {
+   242→  if (!iso) return "Never";
+   243→  try { return formatDistanceToNow(new Date(iso), { addSuffix: true }); }
+   244→  catch { return "—"; }
+   245→}
+   246→
+   247→function fullTime(iso: string | null): string {
+   248→  if (!iso) return "—";
+   249→  try { return format(new Date(iso), "d MMM yyyy, h:mm a"); }
+   250→  catch { return "—"; }
+   251→}
+   252→
+   253→function scoreColor(score: number): string {
+   254→  if (score >= 75) return "#10b981";
+   255→  if (score >= 50) return "#f59e0b";
+   256→  return "#f43f5e";
+   257→}
+   258→
+   259→function scoreColorClass(score: number): string {
+   260→  if (score >= 75) return "text-emerald-600 dark:text-emerald-400";
+   261→  if (score >= 50) return "text-amber-600 dark:text-amber-400";
+   262→  return "text-rose-600 dark:text-rose-400";
+   263→}
+   264→
+   265→function progressIndicatorClass(score: number): string {
+   266→  if (score >= 75) return "[&>[data-slot=progress-indicator]]:bg-emerald-500";
+   267→  if (score >= 50) return "[&>[data-slot=progress-indicator]]:bg-amber-500";
+   268→  return "[&>[data-slot=progress-indicator]]:bg-rose-500";
+   269→}
+   270→
+   271→function currencySymbol(code: string): string {
+   272→  return code === "INR" ? "₹" : code === "USD" ? "$" : code === "EUR" ? "€" : code + " ";
+   273→}
+   274→
+   275→function formatPrice(price: number | null, currency: string): string {
+   276→  if (price == null) return "—";
+   277→  try {
+   278→    return currencySymbol(currency) + price.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+   279→  } catch {
+   280→    return String(price);
+   281→  }
+   282→}
+   283→
+   284→function formatAnalytics(n: number | null | undefined): string {
+   285→  if (n == null) return "0";
+   286→  return n.toLocaleString("en-IN");
+   287→}
+   288→
+   289→// ────────────────────────────────────────────────────────────────────────────
+   290→// Top-level view
+   291→// ────────────────────────────────────────────────────────────────────────────
+   292→
+   293→export function LocationsView() {
+   294→  const user = useUser();
+   295→  const setView = useAppStore((s) => s.setView);
+   296→  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+   297→  const qc = useQueryClient();
+   298→
+   299→  const canSync = can(user.role, "system.sync");
+   300→  const canManage = can(user.role, "locations.manage");
+   301→
+   302→  const [search, setSearch] = useState("");
+   303→  const [statusFilter, setStatusFilter] = useState<"all" | LocationStatus>("all");
+   304→  const [sort, setSort] = useState<"city" | "rating" | "health" | "reviews">("city");
+   305→  const [detailId, setDetailId] = useState<string | null>(null);
+   306→  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+   307→  const [syncingId, setSyncingId] = useState<string | null>(null);
+   308→  const [bulkRunning, setBulkRunning] = useState<"sync" | "archive" | "activate" | null>(null);
+   309→  const [addOpen, setAddOpen] = useState(false);
+   310→
+   311→  const { data: locations, isLoading } = useQuery<LocationWithStats[]>({
+   312→    queryKey: ["locations"],
+   313→    queryFn: () => api<LocationWithStats[]>("/api/locations"),
+   314→  });
+   315→
+   316→  const { data: summary } = useQuery<DashboardSummary>({
+   317→    queryKey: ["dashboard-summary"],
+   318→    queryFn: () => api<DashboardSummary>("/api/dashboard"),
+   319→  });
+   320→
+   321→  // Reset detail when locations list refetches & detail no longer exists
+   322→  useEffect(() => {
+   323→    if (detailId && locations && !locations.some((l) => l.id === detailId)) {
+   324→      setDetailId(null);
+   325→    }
+   326→  }, [detailId, locations]);
+   327→
+   328→  const filtered = useMemo(() => {
+   329→    if (!locations) return [];
+   330→    const q = search.trim().toLowerCase();
+   331→    let list = locations.filter((l) => {
+   332→      if (statusFilter !== "all" && l.status !== statusFilter) return false;
+   333→      if (!q) return true;
+   334→      return (
+   335→        l.name.toLowerCase().includes(q) ||
+   336→        l.city.toLowerCase().includes(q) ||
+   337→        l.region.toLowerCase().includes(q)
+   338→      );
+   339→    });
+   340→    list = list.slice().sort((a, b) => {
+   341→      switch (sort) {
+   342→        case "rating": return b.avgRating - a.avgRating;
+   343→        case "health": return b.healthScore - a.healthScore;
+   344→        case "reviews": return b.reviewCount - a.reviewCount;
+   345→        case "city":
+   346→        default: return a.city.localeCompare(b.city) || a.name.localeCompare(b.name);
+   347→      }
+   348→    });
+   349→    return list;
+   350→  }, [locations, search, statusFilter, sort]);
+   351→
+   352→  const avgHealth = useMemo(() => {
+   353→    if (!locations || locations.length === 0) return 0;
+   354→    return Math.round(locations.reduce((a, l) => a + l.healthScore, 0) / locations.length);
+   355→  }, [locations]);
+   356→
+   357→  const syncErrors = useMemo(
+   358→    () => (locations ?? []).filter((l) => l.syncStatus === "error").length,
+   359→    [locations],
+   360→  );
+   361→
+   362→  const activeCount = useMemo(
+   363→    () => (locations ?? []).filter((l) => l.status === "active").length,
+   364→    [locations],
+   365→  );
+   366→
+   367→  async function handleSyncAll() {
+   368→    try {
+   369→      toast.loading("Triggering Google sync for all locations…", { id: "sync-all" });
+   370→      await api("/api/dashboard", { method: "POST", body: JSON.stringify({}) });
+   371→      await qc.invalidateQueries({ queryKey: ["locations"] });
+   372→      await qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
+   373→      toast.success("Sync complete — all locations updated.", { id: "sync-all" });
+   374→    } catch (e: unknown) {
+   375→      const msg = e instanceof Error ? e.message : "Sync failed";
+   376→      toast.error(msg, { id: "sync-all" });
+   377→    }
+   378→  }
+   379→
+   380→  async function handleSyncOne(loc: LocationWithStats, module: SyncModule = "full") {
+   381→    const toastId = `sync-${loc.id}-${module}`;
+   382→    try {
+   383→      setSyncingId(loc.id);
+   384→      toast.loading(`Syncing ${module === "full" ? "everything" : module} for ${loc.name}…`, { id: toastId });
+   385→      await api(`/api/locations/${loc.id}/sync`, {
+   386→        method: "POST",
+   387→        body: JSON.stringify({ module }),
+   388→      });
+   389→      await qc.invalidateQueries({ queryKey: ["locations"] });
+   390→      await qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
+   391→      if (detailId === loc.id) await qc.invalidateQueries({ queryKey: ["location-detail", loc.id] });
+   392→      toast.success(`${loc.name} ${module === "full" ? "synced" : `${module} synced`}.`, { id: toastId });
+   393→    } catch (e: unknown) {
+   394→      const msg = e instanceof Error ? e.message : "Sync failed";
+   395→      toast.error(msg, { id: toastId });
+   396→    } finally {
+   397→      setSyncingId(null);
+   398→    }
+   399→  }
+   400→
+   401→  function openReviews(loc: LocationWithStats) {
+   402→    setActiveLocationId(loc.id);
+   403→    setView("reviews");
+   404→  }
+   405→
+   406→  function toggleSelected(id: string) {
+   407→    setSelectedIds((prev) => {
+   408→      const next = new Set(prev);
+   409→      if (next.has(id)) next.delete(id);
+   410→      else next.add(id);
+   411→      return next;
+   412→    });
+   413→  }
+   414→
+   415→  function toggleSelectAll() {
+   416→    if (!filtered) return;
+   417→    if (selectedIds.size === filtered.length) setSelectedIds(new Set());
+   418→    else setSelectedIds(new Set(filtered.map((l) => l.id)));
+   419→  }
+   420→
+   421→  function clearSelection() {
+   422→    setSelectedIds(new Set());
+   423→  }
+   424→
+   425→  async function handleBulk(action: "sync" | "archive" | "activate") {
+   426→    if (selectedIds.size === 0) return;
+   427→    const ids = Array.from(selectedIds);
+   428→    const labels = {
+   429→      sync: "Syncing",
+   430→      archive: "Archiving",
+   431→      activate: "Activating",
+   432→    } as const;
+   433→    try {
+   434→      setBulkRunning(action);
+   435→      toast.loading(`${labels[action]} ${ids.length} location${ids.length === 1 ? "" : "s"}…`, { id: "bulk-locations" });
+   436→      await api("/api/locations/bulk", {
+   437→        method: "POST",
+   438→        body: JSON.stringify({ action, locationIds: ids }),
+   439→      });
+   440→      await qc.invalidateQueries({ queryKey: ["locations"] });
+   441→      await qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
+   442→      toast.success(`Done — ${ids.length} location${ids.length === 1 ? "" : "s"} ${action === "sync" ? "synced" : action === "archive" ? "archived" : "activated"}.`, { id: "bulk-locations" });
+   443→      clearSelection();
+   444→    } catch (e: unknown) {
+   445→      const msg = e instanceof Error ? e.message : "Bulk action failed";
+   446→      toast.error(msg, { id: "bulk-locations" });
+   447→    } finally {
+   448→      setBulkRunning(null);
+   449→    }
+   450→  }
+   451→
+   452→  // ─── Detail view ──────────────────────────────────────────────────────────
+   453→  if (detailId) {
+   454→    const loc = (locations ?? []).find((l) => l.id === detailId) ?? null;
+   455→    return (
+   456→      <LocationDetail
+   457→        locationId={detailId}
+   458→        fallbackLoc={loc}
+   459→        canSync={canSync}
+   460→        canManage={canManage}
+   461→        syncing={syncingId === detailId}
+   462→        onBack={() => setDetailId(null)}
+   463→        onSync={(module) => loc ? handleSyncOne(loc, module) : undefined}
+   464→        onViewReviews={() => loc ? openReviews(loc) : undefined}
+   465→      />
+   466→    );
+   467→  }
+   468→
+   469→  // ─── Grid view ────────────────────────────────────────────────────────────
+   470→  return (
+   471→    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+   472→      <PageHeader
+   473→        title="Locations"
+   474→        description="Manage all MyFNG Google Business Profiles across cities"
+   475→        icon={MapPin}
+   476→        actions={
+   477→          <>
+   478→            {canManage && (
+   479→              <Button size="sm" onClick={() => setAddOpen(true)}>
+   480→                <Plus className="size-3.5 mr-1.5" /> Add Location
+   481→              </Button>
+   482→            )}
+   483→            {canSync ? (
+   484→              <Button size="sm" variant="outline" onClick={handleSyncAll} disabled={isLoading}>
+   485→                <RefreshCw className="size-3.5 mr-1.5" /> Sync all
+   486→              </Button>
+   487→            ) : null}
+   488→          </>
+   489→        }
+   490→      />
+   491→
+   492→      {/* Summary stat row */}
+   493→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+   494→        {isLoading || !locations ? (
+   495→          Array.from({ length: 4 }).map((_, i) => (
+   496→            <Skeleton key={i} className="h-28 rounded-xl" />
+   497→          ))
+   498→        ) : (
+   499→          <>
+   500→            <StatCard
+   501→              label="Total Locations"
+   502→              value={locations.length}
+   503→              icon={Building2}
+   504→              hint={`${activeCount} active`}
+   505→              accent="emerald"
+   506→            />
+   507→            <StatCard
+   508→              label="Active"
+   509→              value={activeCount}
+   510→              icon={Activity}
+   511→              hint={`${locations.length - activeCount} paused / error`}
+   512→              accent="teal"
+   513→            />
+   514→            <StatCard
+   515→              label="Avg Health Score"
+   516→              value={avgHealth}
+   517→              icon={HeartPulse}
+   518→              hint="Across all locations"
+   519→              accent="amber"
+   520→            />
+   521→            <StatCard
+   522→              label="Sync Errors"
+   523→              value={syncErrors}
+   524→              icon={AlertTriangle}
+   525→              hint={syncErrors === 0 ? "All healthy" : "Needs attention"}
+   526→              accent={syncErrors > 0 ? "rose" : "emerald"}
+   527→            />
+   528→          </>
+   529→        )}
+   530→      </div>
+   531→
+   532→      {/* Bulk action bar */}
+   533→      {selectedIds.size > 0 && (
+   534→        <Card className="border-primary/30 bg-primary/[0.03]">
+   535→          <CardContent className="p-3 flex flex-wrap items-center gap-2 sm:gap-3">
+   536→            <div className="flex items-center gap-2 text-sm font-medium">
+   537→              <span className="inline-flex items-center justify-center size-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold tabular-nums">
+   538→                {selectedIds.size}
+   539→              </span>
+   540→              <span>selected</span>
+   541→            </div>
+   542→            <Separator orientation="vertical" className="hidden sm:block h-6" />
+   543→            <div className="flex flex-wrap items-center gap-2 ml-auto">
+   544→              {canSync && (
+   545→                <Button
+   546→                  size="sm" variant="secondary"
+   547→                  onClick={() => handleBulk("sync")}
+   548→                  disabled={bulkRunning !== null}
+   549→                >
+   550→                  {bulkRunning === "sync" ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="size-3.5 mr-1.5" />}
+   551→                  Sync selected
+   552→                </Button>
+   553→              )}
+   554→              {canManage && (
+   555→                <>
+   556→                  <Button
+   557→                    size="sm" variant="outline"
+   558→                    onClick={() => handleBulk("archive")}
+   559→                    disabled={bulkRunning !== null}
+   560→                  >
+   561→                    {bulkRunning === "archive" ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <AlertTriangle className="size-3.5 mr-1.5" />}
+   562→                    Archive selected
+   563→                  </Button>
+   564→                  <Button
+   565→                    size="sm" variant="outline"
+   566→                    onClick={() => handleBulk("activate")}
+   567→                    disabled={bulkRunning !== null}
+   568→                  >
+   569→                    {bulkRunning === "activate" ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <CircleCheck className="size-3.5 mr-1.5" />}
+   570→                    Activate selected
+   571→                  </Button>
+   572→                </>
+   573→              )}
+   574→              <Button size="sm" variant="ghost" onClick={clearSelection} disabled={bulkRunning !== null}>
+   575→                <X className="size-3.5 mr-1.5" /> Clear
+   576→              </Button>
+   577→            </div>
+   578→          </CardContent>
+   579→        </Card>
+   580→      )}
+   581→
+   582→      {/* Filter bar */}
+   583→      <Card>
+   584→        <CardContent className="p-4 flex flex-col lg:flex-row lg:items-center gap-3">
+   585→          <div className="relative flex-1 min-w-0">
+   586→            <Search className="size-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+   587→            <Input
+   588→              placeholder="Search by location name or city…"
+   589→              value={search}
+   590→              onChange={(e) => setSearch(e.target.value)}
+   591→              className="pl-9"
+   592→              aria-label="Search locations"
+   593→            />
+   594→          </div>
+   595→
+   596→          <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | LocationStatus)}>
+   597→            <TabsList className="w-full lg:w-auto">
+   598→              <TabsTrigger value="all">All</TabsTrigger>
+   599→              <TabsTrigger value="active">Active</TabsTrigger>
+   600→              <TabsTrigger value="paused">Paused</TabsTrigger>
+   601→              <TabsTrigger value="error">Error</TabsTrigger>
+   602→            </TabsList>
+   603→          </Tabs>
+   604→
+   605→          <div className="flex items-center gap-2">
+   606→            <span className="text-xs text-muted-foreground hidden sm:inline">Sort by</span>
+   607→            <Select value={sort} onValueChange={(v) => setSort(v as "city" | "rating" | "health" | "reviews")}>
+   608→              <SelectTrigger size="sm" className="w-[150px]">
+   609→                <SelectValue />
+   610→              </SelectTrigger>
+   611→              <SelectContent>
+   612→                <SelectItem value="city">City</SelectItem>
+   613→                <SelectItem value="rating">Rating</SelectItem>
+   614→                <SelectItem value="health">Health</SelectItem>
+   615→                <SelectItem value="reviews">Reviews</SelectItem>
+   616→              </SelectContent>
+   617→            </Select>
+   618→          </div>
+   619→        </CardContent>
+   620→      </Card>
+   621→
+   622→      {/* Result count */}
+   623→      <div className="flex items-center justify-between -mt-2">
+   624→        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+   625→          {filtered.length > 0 && (
+   626→            <Checkbox
+   627→              checked={filtered.length > 0 && selectedIds.size === filtered.length}
+   628→              onCheckedChange={toggleSelectAll}
+   629→              aria-label="Select all visible locations"
+   630→            />
+   631→          )}
+   632→          <span>
+   633→            Showing <span className="font-medium text-foreground">{filtered.length}</span>
+   634→            {filtered.length !== (locations?.length ?? 0) && (
+   635→              <> of <span className="font-medium text-foreground">{locations?.length ?? 0}</span></>
+   636→            )} location{(locations?.length ?? 0) === 1 ? "" : "s"}
+   637→          </span>
+   638→        </div>
+   639→        {summary && (
+   640→          <p className="text-xs text-muted-foreground hidden sm:block">
+   641→            Last sync run:{" "}
+   642→            <span className="font-medium">
+   643→              {locations?.[0]?.lastSyncedAt
+   644→                ? relativeTime(locations[0].lastSyncedAt)
+   645→                : "never"}
+   646→            </span>
+   647→          </p>
+   648→        )}
+   649→      </div>
+   650→
+   651→      {/* Grid */}
+   652→      {isLoading ? (
+   653→        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+   654→          {Array.from({ length: 6 }).map((_, i) => (
+   655→            <Skeleton key={i} className="h-64 rounded-xl" />
+   656→          ))}
+   657→        </div>
+   658→      ) : filtered.length === 0 ? (
+   659→        <Card>
+   660→          <CardContent className="p-12 text-center">
+   661→            <div className="mx-auto size-12 rounded-full bg-muted flex items-center justify-center mb-3">
+   662→              <MapPin className="size-6 text-muted-foreground" />
+   663→            </div>
+   664→            <h3 className="text-base font-semibold">No locations found</h3>
+   665→            <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">
+   666→              {locations && locations.length > 0
+   667→                ? "Try adjusting your search or filters to find what you're looking for."
+   668→                : "No locations are assigned to your account. Contact your administrator if this seems wrong."}
+   669→            </p>
+   670→            {(search || statusFilter !== "all") && (
+   671→              <Button
+   672→                variant="outline"
+   673→                size="sm"
+   674→                className="mt-4"
+   675→                onClick={() => {
+   676→                  setSearch("");
+   677→                  setStatusFilter("all");
+   678→                  setSort("city");
+   679→                }}
+   680→              >
+   681→                Clear filters
+   682→              </Button>
+   683→            )}
+   684→          </CardContent>
+   685→        </Card>
+   686→      ) : (
+   687→        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+   688→          {filtered.map((loc) => (
+   689→            <LocationCard
+   690→              key={loc.id}
+   691→              loc={loc}
+   692→              canSync={canSync}
+   693→              canManage={canManage}
+   694→              selected={selectedIds.has(loc.id)}
+   695→              onSelect={() => toggleSelected(loc.id)}
+   696→              syncing={syncingId === loc.id}
+   697→              onSync={() => handleSyncOne(loc, "full")}
+   698→              onViewDetails={() => setDetailId(loc.id)}
+   699→              onViewReviews={() => openReviews(loc)}
+   700→            />
+   701→          ))}
+   702→        </div>
+   703→      )}
+   704→
+   705→      {/* Add Location Dialog */}
+   706→      <AddLocationDialog open={addOpen} onOpenChange={setAddOpen} />
+   707→    </div>
+   708→  );
+   709→}
+   710→
+   711→/* ----------------------------- Location Card ----------------------------- */
+   712→
+   713→function LocationCard({
+   714→  loc, canSync, canManage, selected, onSelect, syncing, onSync, onViewDetails, onViewReviews,
+   715→}: {
+   716→  loc: LocationWithStats;
+   717→  canSync: boolean;
+   718→  canManage: boolean;
+   719→  selected: boolean;
+   720→  onSelect: () => void;
+   721→  syncing: boolean;
+   722→  onSync: () => void;
+   723→  onViewDetails: () => void;
+   724→  onViewReviews: () => void;
+   725→}) {
+   726→  return (
+   727→    <Card
+   728→      className={cn(
+   729→        "flex flex-col hover:shadow-md transition-shadow relative",
+   730→        selected && "border-primary ring-1 ring-primary/30",
+   731→      )}
+   732→    >
+   733→      {/* Selection checkbox — top-left corner */}
+   734→      <div className="absolute top-3 left-3 z-10">
+   735→        <Checkbox
+   736→          checked={selected}
+   737→          onCheckedChange={onSelect}
+   738→          aria-label={`Select ${loc.name}`}
+   739→          onClick={(e) => e.stopPropagation()}
+   740→        />
+   741→      </div>
+   742→
+   743→      <CardContent className="p-4 flex flex-col gap-3 flex-1">
+   744→        {/* Header: name + city */}
+   745→        <div className="flex items-start justify-between gap-2 pl-6">
+   746→          <div className="min-w-0">
+   747→            <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+   748→              <MapPin className="size-3.5 shrink-0" />
+   749→              <span className="truncate">{loc.city}, {loc.region}</span>
+   750→            </div>
+   751→            <h3 className="text-base font-semibold mt-0.5 truncate">{loc.name}</h3>
+   752→          </div>
+   753→          <div className="flex flex-col items-end gap-1 shrink-0">
+   754→            <StatusBadge status={loc.status} />
+   755→            <SyncStatusBadge status={loc.syncStatus} />
+   756→          </div>
+   757→        </div>
+   758→
+   759→        {/* Rating + reviews */}
+   760→        <div className="flex items-center justify-between">
+   761→          <RatingStars rating={loc.avgRating} />
+   762→          <span className="text-xs text-muted-foreground">
+   763→            {loc.reviewCount.toLocaleString("en-IN")} review{loc.reviewCount === 1 ? "" : "s"}
+   764→          </span>
+   765→        </div>
+   766→
+   767→        {/* Score pills */}
+   768→        <div className="grid grid-cols-2 gap-2">
+   769→          <div className="rounded-lg border bg-muted/30 p-2.5">
+   770→            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Health</div>
+   771→            <div className="mt-1 flex items-center gap-1.5">
+   772→              <HeartPulse className="size-3.5 text-muted-foreground" />
+   773→              <ScoreBadge score={loc.healthScore} />
+   774→            </div>
+   775→          </div>
+   776→          <div className="rounded-lg border bg-muted/30 p-2.5">
+   777→            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Visibility</div>
+   778→            <div className="mt-1 flex items-center gap-1.5">
+   779→              <Navigation className="size-3.5 text-muted-foreground" />
+   780→              <ScoreBadge score={loc.visibilityScore} />
+   781→            </div>
+   782→          </div>
+   783→        </div>
+   784→
+   785→        {/* Address + phone */}
+   786→        <div className="space-y-1.5 text-xs text-muted-foreground">
+   787→          <div className="flex items-start gap-1.5">
+   788→            <Building2 className="size-3.5 shrink-0 mt-0.5" />
+   789→            <span className="line-clamp-2">{loc.address}</span>
+   790→          </div>
+   791→          <div className="flex items-center gap-1.5">
+   792→            <Phone className="size-3.5 shrink-0" />
+   793→            <span>{loc.phone ?? "—"}</span>
+   794→          </div>
+   795→          <div className="flex items-center gap-1.5">
+   796→            <Clock className="size-3.5 shrink-0" />
+   797→            <span>
+   798→              {loc.lastSyncedAt
+   799→                ? `Synced ${relativeTime(loc.lastSyncedAt)}`
+   800→                : "Never synced"}
+   801→            </span>
+   802→          </div>
+   803→        </div>
+   804→
+   805→        {/* Actions */}
+   806→        <div className="flex items-center gap-2 mt-auto pt-2">
+   807→          <Button
+   808→            size="sm"
+   809→            variant="outline"
+   810→            className="flex-1"
+   811→            onClick={onViewDetails}
+   812→          >
+   813→            View details <ArrowRight className="size-3.5 ml-1" />
+   814→          </Button>
+   815→          {canSync && (
+   816→            <Button
+   817→              size="sm"
+   818→              variant="secondary"
+   819→              onClick={onSync}
+   820→              disabled={syncing || loc.syncStatus === "syncing"}
+   821→            >
+   822→              {syncing || loc.syncStatus === "syncing" ? (
+   823→                <Loader2 className="size-3.5 mr-1 animate-spin" />
+   824→              ) : (
+   825→                <RefreshCw className="size-3.5 mr-1" />
+   826→              )}
+   827→              Sync
+   828→            </Button>
+   829→          )}
+   830→        </div>
+   831→
+   832→        {/* Secondary action: jump to reviews (compact) */}
+   833→        <Button
+   834→          size="sm"
+   835→          variant="ghost"
+   836→          className="text-xs h-7 text-muted-foreground"
+   837→          onClick={onViewReviews}
+   838→        >
+   839→          <MessageSquare className="size-3.5 mr-1" /> View reviews
+   840→        </Button>
+   841→      </CardContent>
+   842→    </Card>
+   843→  );
+   844→}
+   845→
+   846→/* ----------------------------- Location Detail ----------------------------- */
+   847→
+   848→function LocationDetail({
+   849→  locationId, fallbackLoc, canSync, canManage, syncing, onBack, onSync, onViewReviews,
+   850→}: {
+   851→  locationId: string;
+   852→  fallbackLoc: LocationWithStats | null;
+   853→  canSync: boolean;
+   854→  canManage: boolean;
+   855→  syncing: boolean;
+   856→  onBack: () => void;
+   857→  onSync: (module: SyncModule) => void;
+   858→  onViewReviews: () => void;
+   859→}) {
+   860→  const qc = useQueryClient();
+   861→  const [editOpen, setEditOpen] = useState(false);
+   862→
+   863→  const { data: detail, isLoading, isError, refetch } = useQuery<LocationDetailResponse>({
+   864→    queryKey: ["location-detail", locationId],
+   865→    queryFn: () => api<LocationDetailResponse>(`/api/locations/${locationId}`),
+   866→    enabled: !!locationId,
+   867→  });
+   868→
+   869→  // Quick-fail UI
+   870→  if (isError) {
+   871→    return (
+   872→      <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+   873→        <Button variant="ghost" size="sm" onClick={onBack}>
+   874→          <ArrowLeft className="size-4 mr-1.5" /> Back to locations
+   875→        </Button>
+   876→        <Card>
+   877→          <CardContent className="p-12 text-center">
+   878→            <div className="mx-auto size-12 rounded-full bg-rose-500/10 flex items-center justify-center mb-3">
+   879→              <AlertTriangle className="size-6 text-rose-500" />
+   880→            </div>
+   881→            <h3 className="text-base font-semibold">Couldn&apos;t load location details</h3>
+   882→            <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">
+   883→              Something went wrong fetching this location. Try again.
+   884→            </p>
+   885→            <Button size="sm" className="mt-4" onClick={() => refetch()}>
+   886→              <RefreshCw className="size-4 mr-1.5" /> Retry
+   887→            </Button>
+   888→          </CardContent>
+   889→        </Card>
+   890→      </div>
+   891→    );
+   892→  }
+   893→
+   894→  return (
+   895→    <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+   896→      {/* Back button */}
+   897→      <div>
+   898→        <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
+   899→          <ArrowLeft className="size-4 mr-1.5" /> Back to locations
+   900→        </Button>
+   901→      </div>
+   902→
+   903→      {isLoading || !detail ? (
+   904→        <LocationDetailSkeleton />
+   905→      ) : (
+   906→        <>
+   907→          {/* Header card */}
+   908→          <LocationDetailHeader
+   909→            detail={detail}
+   910→            canSync={canSync}
+   911→            canManage={canManage}
+   912→            syncing={syncing}
+   913→            onSync={onSync}
+   914→            onEdit={() => setEditOpen(true)}
+   915→          />
+   916→
+   917→          {/* Mini stats row */}
+   918→          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+   919→            <MiniStat
+   920→              label="Reviews"
+   921→              value={detail.location.reviewCount.toLocaleString("en-IN")}
+   922→              icon={MessageSquare}
+   923→              accent="emerald"
+   924→            />
+   925→            <MiniStat
+   926→              label="Avg Rating"
+   927→              value={detail.location.avgRating.toFixed(1)}
+   928→              icon={Star}
+   929→              accent="amber"
+   930→              hint={<RatingStars rating={detail.location.avgRating} size={12} showValue={false} />}
+   931→            />
+   932→            <MiniStat
+   933→              label="Response Rate"
+   934→              value={`${detail.healthBreakdown.reviewResponseRate}%`}
+   935→              icon={RefreshCw}
+   936→              accent="teal"
+   937→            />
+   938→            <MiniStat
+   939→              label="Search Views (30d)"
+   940→              value={formatAnalytics(detail.analytics30d.searchViews)}
+   941→              icon={Eye}
+   942→              accent="emerald"
+   943→            />
+   944→            <MiniStat
+   945→              label="Website Clicks (30d)"
+   946→              value={formatAnalytics(detail.analytics30d.websiteClicks)}
+   947→              icon={MousePointerClick}
+   948→              accent="amber"
+   949→            />
+   950→            <MiniStat
+   951→              label="Phone Calls (30d)"
+   952→              value={formatAnalytics(detail.analytics30d.phoneCalls)}
+   953→              icon={PhoneCall}
+   954→              accent="rose"
+   955→            />
+   956→          </div>
+   957→
+   958→          {/* Completeness + Health breakdown */}
+   959→          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+   960→            <ProfileCompletenessCard completeness={detail.completeness} />
+   961→            <HealthBreakdownCard
+   962→              score={detail.location.healthScore}
+   963→              breakdown={detail.healthBreakdown}
+   964→            />
+   965→          </div>
+   966→
+   967→          {/* Tabs */}
+   968→          <Tabs defaultValue="business" className="space-y-4">
+   969→            <TabsList className="w-full lg:w-auto overflow-x-auto justify-start h-auto flex-wrap">
+   970→              <TabsTrigger value="business"><Building2 className="size-3.5 mr-1.5" />Business Info</TabsTrigger>
+   971→              <TabsTrigger value="hours"><Clock className="size-3.5 mr-1.5" />Hours</TabsTrigger>
+   972→              <TabsTrigger value="services"><ListChecks className="size-3.5 mr-1.5" />Services</TabsTrigger>
+   973→              <TabsTrigger value="photos"><Camera className="size-3.5 mr-1.5" />Photos</TabsTrigger>
+   974→              <TabsTrigger value="timeline"><History className="size-3.5 mr-1.5" />Timeline</TabsTrigger>
+   975→              <TabsTrigger value="seo"><SeoIcon className="size-3.5 mr-1.5" />SEO Audit</TabsTrigger>
+   976→            </TabsList>
+   977→
+   978→            <TabsContent value="business" className="mt-0">
+   979→              <BusinessInfoTab detail={detail} canManage={canManage} />
+   980→            </TabsContent>
+   981→            <TabsContent value="hours" className="mt-0">
+   982→              <HoursTab detail={detail} canManage={canManage} />
+   983→            </TabsContent>
+   984→            <TabsContent value="services" className="mt-0">
+   985→              <ServicesTab detail={detail} />
+   986→            </TabsContent>
+   987→            <TabsContent value="photos" className="mt-0">
+   988→              <PhotosTab detail={detail} />
+   989→            </TabsContent>
+   990→            <TabsContent value="timeline" className="mt-0">
+   991→              <TimelineTab timeline={detail.timeline} />
+   992→            </TabsContent>
+   993→            <TabsContent value="seo" className="mt-0">
+   994→              <SeoAuditTab detail={detail} />
+   995→            </TabsContent>
+   996→          </Tabs>
+   997→
+   998→          {/* Reviews CTA at bottom */}
+   999→          <Card className="bg-primary/[0.03] border-primary/20">
+  1000→            <CardContent className="p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
+  1001→              <div>
+  1002→                <h3 className="text-sm font-semibold flex items-center gap-1.5">
+  1003→                  <MessageSquare className="size-4 text-primary" /> View & reply to reviews
+  1004→                </h3>
+  1005→                <p className="text-xs text-muted-foreground mt-0.5">
+  1006→                  {detail.location.reviewCount.toLocaleString("en-IN")} total reviews · avg {detail.location.avgRating.toFixed(1)} stars
+  1007→                </p>
+  1008→              </div>
+  1009→              <Button size="sm" onClick={onViewReviews}>
+  1010→                Open reviews <ArrowRight className="size-3.5 ml-1" />
+  1011→              </Button>
+  1012→            </CardContent>
+  1013→          </Card>
+  1014→        </>
+  1015→      )}
+  1016→
+  1017→      {/* Edit dialog */}
+  1018→      {detail && (
+  1019→        <EditLocationDialog
+  1020→          open={editOpen}
+  1021→          onOpenChange={setEditOpen}
+  1022→          detail={detail}
+  1023→          canManage={canManage}
+  1024→          onSaved={() => qc.invalidateQueries({ queryKey: ["location-detail", locationId] })}
+  1025→        />
+  1026→      )}
+  1027→
+  1028→      {/* Fallback to base list for legacy refresh */}
+  1029→      {!detail && fallbackLoc && (
+  1030→        <p className="sr-only">Loading detail for {fallbackLoc.name}</p>
+  1031→      )}
+  1032→    </div>
+  1033→  );
+  1034→}
+  1035→
+  1036→/* ----------------------------- Detail Header ----------------------------- */
+  1037→
+  1038→function LocationDetailHeader({
+  1039→  detail, canSync, canManage, syncing, onSync, onEdit,
+  1040→}: {
+  1041→  detail: LocationDetailResponse;
+  1042→  canSync: boolean;
+  1043→  canManage: boolean;
+  1044→  syncing: boolean;
+  1045→  onSync: (module: SyncModule) => void;
+  1046→  onEdit: () => void;
+  1047→}) {
+  1048→  const { location, googleProfile } = detail;
+  1049→  const [menuOpen, setMenuOpen] = useState(false);
+  1050→
+  1051→  return (
+  1052→    <Card>
+  1053→      <CardContent className="p-4 sm:p-5">
+  1054→        <div className="flex flex-col lg:flex-row lg:items-start gap-4">
+  1055→          {/* Identity */}
+  1056→          <div className="flex-1 min-w-0">
+  1057→            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+  1058→              <MapPin className="size-3.5" />
+  1059→              <span className="truncate">{location.city}, {location.region}, {location.state}</span>
+  1060→              <span className="text-muted-foreground/50">·</span>
+  1061→              <span className="font-mono">{location.locationCode}</span>
+  1062→            </div>
+  1063→            <h1 className="text-xl sm:text-2xl font-bold tracking-tight mt-1 break-words">
+  1064→              {location.name}
+  1065→            </h1>
+  1066→            <div className="flex flex-wrap items-center gap-2 mt-2">
+  1067→              <StatusBadge status={location.status} />
+  1068→              <SyncStatusBadge status={location.syncStatus} />
+  1069→              {location.lastSyncedAt && (
+  1070→                <TooltipProvider>
+  1071→                  <Tooltip>
+  1072→                    <TooltipTrigger asChild>
+  1073→                      <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+  1074→                        <Clock className="size-3.5" />
+  1075→                        Synced {relativeTime(location.lastSyncedAt)}
+  1076→                      </span>
+  1077→                    </TooltipTrigger>
+  1078→                    <TooltipContent>{fullTime(location.lastSyncedAt)}</TooltipContent>
+  1079→                  </Tooltip>
+  1080→                </TooltipProvider>
+  1081→              )}
+  1082→            </div>
+  1083→
+  1084→            {/* Score badges */}
+  1085→            <div className="flex flex-wrap items-center gap-2 mt-3">
+  1086→              <RatingStars rating={location.avgRating} size={16} />
+  1087→              <Separator orientation="vertical" className="h-4" />
+  1088→              <div className="inline-flex items-center gap-1 text-xs">
+  1089→                <HeartPulse className="size-3.5 text-muted-foreground" />
+  1090→                <span className="text-muted-foreground">Health:</span>
+  1091→                <span className={cn("font-semibold", scoreColorClass(location.healthScore))}>{location.healthScore}/100</span>
+  1092→              </div>
+  1093→              <Separator orientation="vertical" className="h-4" />
+  1094→              <div className="inline-flex items-center gap-1 text-xs">
+  1095→                <Navigation className="size-3.5 text-muted-foreground" />
+  1096→                <span className="text-muted-foreground">Visibility:</span>
+  1097→                <span className={cn("font-semibold", scoreColorClass(location.visibilityScore))}>{location.visibilityScore}/100</span>
+  1098→              </div>
+  1099→              {googleProfile && (
+  1100→                <>
+  1101→                  <Separator orientation="vertical" className="h-4" />
+  1102→                  <Badge variant="outline" className={cn(
+  1103→                    "text-xs",
+  1104→                    googleProfile.verificationState === "verified"
+  1105→                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+  1106→                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+  1107→                  )}>
+  1108→                    <ShieldCheck className="size-3 mr-1" />
+  1109→                    {googleProfile.verificationState === "verified" ? "Verified" : "Unverified"}
+  1110→                  </Badge>
+  1111→                </>
+  1112→              )}
+  1113→            </div>
+  1114→          </div>
+  1115→
+  1116→          {/* Action buttons */}
+  1117→          <div className="flex flex-wrap items-center gap-2 shrink-0">
+  1118→            {canSync && (
+  1119→              <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+  1120→                <DropdownMenuTrigger asChild>
+  1121→                  <Button size="sm" disabled={syncing}>
+  1122→                    {syncing ? (
+  1123→                      <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+  1124→                    ) : (
+  1125→                      <RefreshCw className="size-3.5 mr-1.5" />
+  1126→                    )}
+  1127→                    Sync
+  1128→                    <ChevronDown className="size-3.5 ml-1" />
+  1129→                  </Button>
+  1130→                </DropdownMenuTrigger>
+  1131→                <DropdownMenuContent align="end" className="w-48">
+  1132→                  <DropdownMenuLabel className="text-xs text-muted-foreground">Sync module</DropdownMenuLabel>
+  1133→                  <DropdownMenuSeparator />
+  1134→                  {SYNC_MODULES.map((m) => (
+  1135→                    <DropdownMenuItem
+  1136→                      key={m.value}
+  1137→                      onSelect={() => { setMenuOpen(false); onSync(m.value); }}
+  1138→                    >
+  1139→                      <m.icon className="size-4 mr-2 text-muted-foreground" />
+  1140→                      {m.label}
+  1141→                    </DropdownMenuItem>
+  1142→                  ))}
+  1143→                </DropdownMenuContent>
+  1144→              </DropdownMenu>
+  1145→            )}
+  1146→
+  1147→            {canManage && (
+  1148→              <Button size="sm" variant="outline" onClick={onEdit}>
+  1149→                <Pencil className="size-3.5 mr-1.5" /> Edit
+  1150→              </Button>
+  1151→            )}
+  1152→
+  1153→            {googleProfile?.mapUrl && (
+  1154→              <Button
+  1155→                size="sm"
+  1156→                variant="outline"
+  1157→                asChild
+  1158→              >
+  1159→                <a href={googleProfile.mapUrl} target="_blank" rel="noopener noreferrer">
+  1160→                  <ExternalLink className="size-3.5 mr-1.5" /> View on Maps
+  1161→                </a>
+  1162→              </Button>
+  1163→            )}
+  1164→
+  1165→            {/* Mobile-friendly overflow menu for non-permitted actions */}
+  1166→            {!canSync && !canManage && !googleProfile?.mapUrl && (
+  1167→              <DropdownMenu>
+  1168→                <DropdownMenuTrigger asChild>
+  1169→                  <Button size="sm" variant="ghost">
+  1170→                    <MoreVertical className="size-4" />
+  1171→                  </Button>
+  1172→                </DropdownMenuTrigger>
+  1173→                <DropdownMenuContent align="end">
+  1174→                  <DropdownMenuItem disabled>
+  1175→                    <Lock className="size-4 mr-2 text-muted-foreground" /> No actions available
+  1176→                  </DropdownMenuItem>
+  1177→                </DropdownMenuContent>
+  1178→              </DropdownMenu>
+  1179→            )}
+  1180→          </div>
+  1181→        </div>
+  1182→      </CardContent>
+  1183→    </Card>
+  1184→  );
+  1185→}
+  1186→
+  1187→/* ----------------------------- Mini Stat ----------------------------- */
+  1188→
+  1189→function MiniStat({
+  1190→  label, value, icon: Icon, accent = "emerald", hint,
+  1191→}: {
+  1192→  label: string;
+  1193→  value: string | number;
+  1194→  icon: React.ComponentType<{ className?: string }>;
+  1195→  accent?: "emerald" | "amber" | "teal" | "rose" | "slate";
+  1196→  hint?: React.ReactNode;
+  1197→}) {
+  1198→  const cls: Record<string, string> = {
+  1199→    emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  1200→    amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  1201→    teal: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  1202→    rose: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  1203→    slate: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
+  1204→  };
+  1205→  return (
+  1206→    <Card>
+  1207→      <CardContent className="p-3 sm:p-4">
+  1208→        <div className="flex items-center justify-between gap-2">
+  1209→          <div className="min-w-0">
+  1210→            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+  1211→            <div className="mt-1 text-lg sm:text-xl font-bold tabular-nums truncate">{value}</div>
+  1212→            {hint && <div className="mt-1">{hint}</div>}
+  1213→          </div>
+  1214→          <div className={cn("size-8 rounded-md flex items-center justify-center shrink-0", cls[accent])}>
+  1215→            <Icon className="size-4" />
+  1216→          </div>
+  1217→        </div>
+  1218→      </CardContent>
+  1219→    </Card>
+  1220→  );
+  1221→}
+  1222→
+  1223→/* ----------------------------- Score Ring (radial) ----------------------------- */
+  1224→
+  1225→function ScoreRing({ value, label, size = 120 }: { value: number; label?: string; size?: number }) {
+  1226→  const color = scoreColor(value);
+  1227→  const data = [{ name: "score", value, fill: color }];
+  1228→  return (
+  1229→    <div className="flex flex-col items-center" style={{ width: size }}>
+  1230→      <div className="relative w-full" style={{ height: size * 0.78 }}>
+  1231→        <ResponsiveContainer width="100%" height="100%">
+  1232→          <RadialBarChart
+  1233→            innerRadius="72%"
+  1234→            outerRadius="100%"
+  1235→            data={data}
+  1236→            startAngle={90}
+  1237→            endAngle={-270}
+  1238→          >
+  1239→            <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+  1240→            <RadialBar
+  1241→              background={{ fill: "var(--muted)" }}
+  1242→              dataKey="value"
+  1243→              cornerRadius={10}
+  1244→              angleAxisId={0}
+  1245→            />
+  1246→          </RadialBarChart>
+  1247→        </ResponsiveContainer>
+  1248→        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+  1249→          <span className="text-2xl font-bold tabular-nums" style={{ color }}>{value}</span>
+  1250→          <span className="text-[10px] text-muted-foreground">/ 100</span>
+  1251→        </div>
+  1252→      </div>
+  1253→      {label && <div className="text-xs font-medium text-muted-foreground -mt-1">{label}</div>}
+  1254→    </div>
+  1255→  );
+  1256→}
+  1257→
+  1258→/* ----------------------------- Profile Completeness ----------------------------- */
+  1259→
+  1260→function ProfileCompletenessCard({ completeness }: { completeness: Completeness }) {
+  1261→  return (
+  1262→    <Card>
+  1263→      <CardContent className="p-4 sm:p-5">
+  1264→        <div className="flex items-center justify-between gap-3 mb-4">
+  1265→          <div>
+  1266→            <h3 className="text-sm font-semibold flex items-center gap-1.5">
+  1267→              <ListChecks className="size-4 text-emerald-500" /> Profile Completeness
+  1268→            </h3>
+  1269→            <p className="text-xs text-muted-foreground mt-0.5">
+  1270→              Google Business Profile optimization checklist
+  1271→            </p>
+  1272→          </div>
+  1273→        </div>
+  1274→
+  1275→        <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 items-center">
+  1276→          <div className="flex justify-center">
+  1277→            <ScoreRing value={completeness.score} label="Completeness" size={130} />
+  1278→          </div>
+  1279→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+  1280→            {COMPLETENESS_ITEMS.map((item) => {
+  1281→              const ok = completeness.checklist[item.key];
+  1282→              return (
+  1283→                <div key={item.key} className="flex items-center gap-2 text-sm">
+  1284→                  <span className={cn(
+  1285→                    "inline-flex items-center justify-center size-4 rounded-full shrink-0",
+  1286→                    ok ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+  1287→                  )}>
+  1288→                    {ok ? <Check className="size-3" /> : <X className="size-3" />}
+  1289→                  </span>
+  1290→                  <span className={cn(ok ? "text-foreground" : "text-muted-foreground line-through")}>
+  1291→                    {item.label}
+  1292→                  </span>
+  1293→                </div>
+  1294→              );
+  1295→            })}
+  1296→          </div>
+  1297→        </div>
+  1298→      </CardContent>
+  1299→    </Card>
+  1300→  );
+  1301→}
+  1302→
+  1303→/* ----------------------------- Health Breakdown ----------------------------- */
+  1304→
+  1305→function HealthBreakdownCard({
+  1306→  score, breakdown,
+  1307→}: {
+  1308→  score: number;
+  1309→  breakdown: HealthBreakdown;
+  1310→}) {
+  1311→  return (
+  1312→    <Card>
+  1313→      <CardContent className="p-4 sm:p-5">
+  1314→        <div className="flex items-center justify-between gap-3 mb-4">
+  1315→          <div>
+  1316→            <h3 className="text-sm font-semibold flex items-center gap-1.5">
+  1317→              <HeartPulse className="size-4 text-rose-500" /> Health Score Breakdown
+  1318→            </h3>
+  1319→            <p className="text-xs text-muted-foreground mt-0.5">
+  1320→              8 factors that determine profile health
+  1321→            </p>
+  1322→          </div>
+  1323→          <div className="text-right">
+  1324→            <div className="text-xs text-muted-foreground">Overall</div>
+  1325→            <div className={cn("text-2xl font-bold tabular-nums", scoreColorClass(score))}>{score}</div>
+  1326→          </div>
+  1327→        </div>
+  1328→
+  1329→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2.5">
+  1330→          {HEALTH_FACTORS.map((f) => {
+  1331→            const v = breakdown[f.key];
+  1332→            return (
+  1333→              <div key={f.key}>
+  1334→                <div className="flex items-center justify-between text-xs mb-1">
+  1335→                  <span className="text-foreground/80">{f.label}</span>
+  1336→                  <span className={cn("font-semibold tabular-nums", scoreColorClass(v))}>{v}%</span>
+  1337→                </div>
+  1338→                <Progress value={v} className={cn("h-1.5 bg-muted", progressIndicatorClass(v))} />
+  1339→              </div>
+  1340→            );
+  1341→          })}
+  1342→        </div>
+  1343→      </CardContent>
+  1344→    </Card>
+  1345→  );
+  1346→}
+  1347→
+  1348→/* ----------------------------- Business Info Tab ----------------------------- */
+  1349→
+  1350→function BusinessInfoTab({ detail, canManage }: { detail: LocationDetailResponse; canManage: boolean }) {
+  1351→  const qc = useQueryClient();
+  1352→  const { location, googleProfile, categories, attributes } = detail;
+  1353→
+  1354→  const [description, setDescription] = useState(googleProfile?.businessInfo?.description ?? "");
+  1355→  const [phone, setPhone] = useState(location.phone ?? "");
+  1356→  const [website, setWebsite] = useState(location.website ?? "");
+  1357→  const [appointmentUrl, setAppointmentUrl] = useState(googleProfile?.businessInfo?.appointmentUrl ?? "");
+  1358→  const [address, setAddress] = useState(location.address ?? "");
+  1359→  const [saving, setSaving] = useState(false);
+  1360→
+  1361→  // Re-sync local form state if upstream detail changes (e.g. after invalidation)
+  1362→  useEffect(() => {
+  1363→    setDescription(googleProfile?.businessInfo?.description ?? "");
+  1364→    setPhone(location.phone ?? "");
+  1365→    setWebsite(location.website ?? "");
+  1366→    setAppointmentUrl(googleProfile?.businessInfo?.appointmentUrl ?? "");
+  1367→    setAddress(location.address ?? "");
+  1368→  }, [googleProfile, location]);
+  1369→
+  1370→  const dirty = (
+  1371→    description !== (googleProfile?.businessInfo?.description ?? "") ||
+  1372→    phone !== (location.phone ?? "") ||
+  1373→    website !== (location.website ?? "") ||
+  1374→    appointmentUrl !== (googleProfile?.businessInfo?.appointmentUrl ?? "") ||
+  1375→    address !== (location.address ?? "")
+  1376→  );
+  1377→
+  1378→  async function handleSave() {
+  1379→    try {
+  1380→      setSaving(true);
+  1381→      toast.loading("Saving business info…", { id: "save-biz" });
+  1382→      await api(`/api/locations/${location.id}`, {
+  1383→        method: "PUT",
+  1384→        body: JSON.stringify({
+  1385→          phone,
+  1386→          website,
+  1387→          address,
+  1388→          businessInfo: {
+  1389→            description,
+  1390→            website,
+  1391→            appointmentUrl,
+  1392→          },
+  1393→        }),
+  1394→      });
+  1395→      await qc.invalidateQueries({ queryKey: ["location-detail", location.id] });
+  1396→      await qc.invalidateQueries({ queryKey: ["locations"] });
+  1397→      toast.success("Business info saved. Changes will sync to Google.", { id: "save-biz" });
+  1398→    } catch (e: unknown) {
+  1399→      const msg = e instanceof Error ? e.message : "Save failed";
+  1400→      toast.error(msg, { id: "save-biz" });
+  1401→    } finally {
+  1402→      setSaving(false);
+  1403→    }
+  1404→  }
+  1405→
+  1406→  return (
+  1407→    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+  1408→      {/* Editable form */}
+  1409→      <Card className="lg:col-span-2">
+  1410→        <CardContent className="p-4 sm:p-5 space-y-4">
+  1411→          <div className="flex items-center justify-between gap-2">
+  1412→            <h3 className="text-sm font-semibold">Business Information</h3>
+  1413→            {canManage ? (
+  1414→              <Button size="sm" onClick={handleSave} disabled={!dirty || saving}>
+  1415→                {saving ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <Check className="size-3.5 mr-1.5" />}
+  1416→                Save Changes
+  1417→              </Button>
+  1418→            ) : (
+  1419→              <Badge variant="outline" className="text-xs text-muted-foreground">
+  1420→                <Lock className="size-3 mr-1" /> Read-only
+  1421→              </Badge>
+  1422→            )}
+  1423→          </div>
+  1424→
+  1425→          <div className="space-y-1.5">
+  1426→            <Label htmlFor="biz-desc" className="text-xs">Description</Label>
+  1427→            <Textarea
+  1428→              id="biz-desc"
+  1429→              value={description}
+  1430→              onChange={(e) => setDescription(e.target.value)}
+  1431→              disabled={!canManage || saving}
+  1432→              rows={4}
+  1433→              placeholder="Describe your business in 750 characters or less…"
+  1434→              className="resize-y"
+  1435→            />
+  1436→            <p className="text-[11px] text-muted-foreground">{description.length}/750 characters</p>
+  1437→          </div>
+  1438→
+  1439→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  1440→            <div className="space-y-1.5">
+  1441→              <Label htmlFor="biz-phone" className="text-xs">Phone</Label>
+  1442→              <Input
+  1443→                id="biz-phone"
+  1444→                value={phone}
+  1445→                onChange={(e) => setPhone(e.target.value)}
+  1446→                disabled={!canManage || saving}
+  1447→                placeholder="+91 98765 43210"
+  1448→              />
+  1449→            </div>
+  1450→            <div className="space-y-1.5">
+  1451→              <Label htmlFor="biz-website" className="text-xs">Website</Label>
+  1452→              <Input
+  1453→                id="biz-website"
+  1454→                value={website}
+  1455→                onChange={(e) => setWebsite(e.target.value)}
+  1456→                disabled={!canManage || saving}
+  1457→                placeholder="https://example.com"
+  1458→              />
+  1459→            </div>
+  1460→          </div>
+  1461→
+  1462→          <div className="space-y-1.5">
+  1463→            <Label htmlFor="biz-appt" className="text-xs">Appointment URL</Label>
+  1464→            <Input
+  1465→              id="biz-appt"
+  1466→              value={appointmentUrl}
+  1467→              onChange={(e) => setAppointmentUrl(e.target.value)}
+  1468→              disabled={!canManage || saving}
+  1469→              placeholder="https://example.com/book"
+  1470→            />
+  1471→          </div>
+  1472→
+  1473→          <div className="space-y-1.5">
+  1474→            <Label htmlFor="biz-addr" className="text-xs">Address</Label>
+  1475→            <Textarea
+  1476→              id="biz-addr"
+  1477→              value={address}
+  1478→              onChange={(e) => setAddress(e.target.value)}
+  1479→              disabled={!canManage || saving}
+  1480→              rows={2}
+  1481→              placeholder="Street address, city, state, pincode"
+  1482→              className="resize-y"
+  1483→            />
+  1484→          </div>
+  1485→        </CardContent>
+  1486→      </Card>
+  1487→
+  1488→      {/* Google profile + categories + attributes */}
+  1489→      <div className="space-y-4">
+  1490→        <Card>
+  1491→          <CardContent className="p-4 sm:p-5 space-y-3">
+  1492→            <h3 className="text-sm font-semibold flex items-center gap-1.5">
+  1493→              <Globe className="size-4 text-teal-500" /> Google Profile
+  1494→            </h3>
+  1495→            {googleProfile ? (
+  1496→              <div className="space-y-2.5 text-sm">
+  1497→                <DetailRow icon={Building2} label="Profile Name" value={googleProfile.profileName} />
+  1498→                <DetailRow
+  1499→                  icon={MapPin}
+  1500→                  label="Google Location ID"
+  1501→                  value={<span className="font-mono text-xs">{googleProfile.googleLocationId}</span>}
+  1502→                />
+  1503→                <DetailRow
+  1504→                  icon={Tag}
+  1505→                  label="Primary Category"
+  1506→                  value={googleProfile.primaryCategory ?? "—"}
+  1507→                />
+  1508→                <DetailRow
+  1509→                  icon={ShieldCheck}
+  1510→                  label="Verification"
+  1511→                  value={
+  1512→                    <Badge variant="outline" className={cn(
+  1513→                      "text-xs",
+  1514→                      googleProfile.verificationState === "verified"
+  1515→                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+  1516→                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+  1517→                    )}>
+  1518→                      {googleProfile.verificationState}
+  1519→                    </Badge>
+  1520→                  }
+  1521→                />
+  1522→                <DetailRow
+  1523→                  icon={Activity}
+  1524→                  label="Profile Status"
+  1525→                  value={
+  1526→                    <Badge variant="outline" className={cn(
+  1527→                      "text-xs capitalize",
+  1528→                      googleProfile.profileStatus === "active"
+  1529→                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+  1530→                        : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+  1531→                    )}>
+  1532→                      {googleProfile.profileStatus}
+  1533→                    </Badge>
+  1534→                  }
+  1535→                />
+  1536→                {googleProfile.mapUrl && (
+  1537→                  <a
+  1538→                    href={googleProfile.mapUrl}
+  1539→                    target="_blank"
+  1540→                    rel="noopener noreferrer"
+  1541→                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline pt-1"
+  1542→                  >
+  1543→                    <ExternalLink className="size-3" /> Open on Google Maps
+  1544→                  </a>
+  1545→                )}
+  1546→              </div>
+  1547→            ) : (
+  1548→              <p className="text-xs text-muted-foreground">No Google Business Profile linked.</p>
+  1549→            )}
+  1550→          </CardContent>
+  1551→        </Card>
+  1552→
+  1553→        <Card>
+  1554→          <CardContent className="p-4 sm:p-5 space-y-2">
+  1555→            <h3 className="text-sm font-semibold">Categories</h3>
+  1556→            {categories.length === 0 ? (
+  1557→              <p className="text-xs text-muted-foreground">No categories set.</p>
+  1558→            ) : (
+  1559→              <div className="flex flex-wrap gap-1.5">
+  1560→                {categories.map((c) => (
+  1561→                  <Badge
+  1562→                    key={c.id}
+  1563→                    variant={c.isPrimary ? "default" : "secondary"}
+  1564→                    className="text-xs"
+  1565→                  >
+  1566→                    {c.isPrimary && <Star className="size-3 mr-1 fill-current" />}
+  1567→                    {c.name}
+  1568→                  </Badge>
+  1569→                ))}
+  1570→              </div>
+  1571→            )}
+  1572→          </CardContent>
+  1573→        </Card>
+  1574→
+  1575→        <Card>
+  1576→          <CardContent className="p-4 sm:p-5 space-y-2">
+  1577→            <h3 className="text-sm font-semibold">Attributes</h3>
+  1578→            {attributes.length === 0 ? (
+  1579→              <p className="text-xs text-muted-foreground">No attributes set.</p>
+  1580→            ) : (
+  1581→              <div className="space-y-1.5 max-h-48 overflow-y-auto scroll-area pr-1">
+  1582→                {attributes.map((a) => (
+  1583→                  <div key={a.id} className="flex items-center justify-between text-sm gap-2">
+  1584→                    <span className="text-muted-foreground truncate">{a.name}</span>
+  1585→                    <span className="font-medium text-right truncate">{a.value ?? "—"}</span>
+  1586→                  </div>
+  1587→                ))}
+  1588→              </div>
+  1589→            )}
+  1590→          </CardContent>
+  1591→        </Card>
+  1592→      </div>
+  1593→    </div>
+  1594→  );
+  1595→}
+  1596→
+  1597→/* ----------------------------- Hours Tab ----------------------------- */
+  1598→
+  1599→function HoursTab({ detail, canManage }: { detail: LocationDetailResponse; canManage: boolean }) {
+  1600→  const qc = useQueryClient();
+  1601→  const { location, hours, specialHours } = detail;
+  1602→
+  1603→  // Build a 7-row editable table. dayOfWeek: 0=Mon .. 6=Sun (per API)
+  1604→  const [rows, setRows] = useState(() => buildHourRows(hours));
+  1605→  const [dirty, setDirty] = useState(false);
+  1606→  const [saving, setSaving] = useState(false);
+  1607→
+  1608→  useEffect(() => {
+  1609→    setRows(buildHourRows(hours));
+  1610→    setDirty(false);
+  1611→  }, [hours]);
+  1612→
+  1613→  function updateRow(idx: number, patch: Partial<{ openTime: string; closeTime: string; isClosed: boolean }>) {
+  1614→    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  1615→    setDirty(true);
+  1616→  }
+  1617→
+  1618→  async function handleSave() {
+  1619→    try {
+  1620→      setSaving(true);
+  1621→      toast.loading("Saving business hours…", { id: "save-hours" });
+  1622→      await api(`/api/locations/${location.id}`, {
+  1623→        method: "PUT",
+  1624→        body: JSON.stringify({
+  1625→          hours: rows.map((r) => ({
+  1626→            dayOfWeek: r.dayOfWeek,
+  1627→            openTime: r.isClosed ? null : (r.openTime || null),
+  1628→            closeTime: r.isClosed ? null : (r.closeTime || null),
+  1629→            isClosed: r.isClosed,
+  1630→          })),
+  1631→        }),
+  1632→      });
+  1633→      await qc.invalidateQueries({ queryKey: ["location-detail", location.id] });
+  1634→      toast.success("Business hours saved. Will sync to Google.", { id: "save-hours" });
+  1635→    } catch (e: unknown) {
+  1636→      const msg = e instanceof Error ? e.message : "Save failed";
+  1637→      toast.error(msg, { id: "save-hours" });
+  1638→    } finally {
+  1639→      setSaving(false);
+  1640→    }
+  1641→  }
+  1642→
+  1643→  return (
+  1644→    <div className="space-y-4">
+  1645→      <Card>
+  1646→        <CardContent className="p-4 sm:p-5 space-y-4">
+  1647→          <div className="flex items-center justify-between gap-2">
+  1648→            <div>
+  1649→              <h3 className="text-sm font-semibold">Regular Business Hours</h3>
+  1650→              <p className="text-xs text-muted-foreground mt-0.5">
+  1651→                Set opening hours for each day of the week
+  1652→              </p>
+  1653→            </div>
+  1654→            {canManage ? (
+  1655→              <Button size="sm" onClick={handleSave} disabled={!dirty || saving}>
+  1656→                {saving ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <Check className="size-3.5 mr-1.5" />}
+  1657→                Save Hours
+  1658→              </Button>
+  1659→            ) : (
+  1660→              <Badge variant="outline" className="text-xs text-muted-foreground">
+  1661→                <Lock className="size-3 mr-1" /> Read-only
+  1662→              </Badge>
+  1663→            )}
+  1664→          </div>
+  1665→
+  1666→          {/* Desktop: table */}
+  1667→          <div className="hidden sm:block overflow-hidden rounded-lg border">
+  1668→            <div className="overflow-x-auto scroll-area">
+  1669→              <Table>
+  1670→              <TableHeader>
+  1671→                <TableRow>
+  1672→                  <TableHead className="w-32 text-xs">Day</TableHead>
+  1673→                  <TableHead className="w-32 text-xs">Open</TableHead>
+  1674→                  <TableHead className="w-32 text-xs">Close</TableHead>
+  1675→                  <TableHead className="text-xs">Status</TableHead>
+  1676→                </TableRow>
+  1677→              </TableHeader>
+  1678→              <TableBody>
+  1679→                {rows.map((r, idx) => (
+  1680→                  <TableRow key={r.dayOfWeek}>
+  1681→                    <TableCell className="py-2 text-sm font-medium">{DAY_LABELS[r.dayOfWeek]}</TableCell>
+  1682→                    <TableCell className="py-2">
+  1683→                      <Input
+  1684→                        type="time"
+  1685→                        value={r.openTime ?? ""}
+  1686→                        onChange={(e) => updateRow(idx, { openTime: e.target.value })}
+  1687→                        disabled={!canManage || saving || r.isClosed}
+  1688→                        className="h-8 text-xs w-32"
+  1689→                      />
+  1690→                    </TableCell>
+  1691→                    <TableCell className="py-2">
+  1692→                      <Input
+  1693→                        type="time"
+  1694→                        value={r.closeTime ?? ""}
+  1695→                        onChange={(e) => updateRow(idx, { closeTime: e.target.value })}
+  1696→                        disabled={!canManage || saving || r.isClosed}
+  1697→                        className="h-8 text-xs w-32"
+  1698→                      />
+  1699→                    </TableCell>
+  1700→                    <TableCell className="py-2">
+  1701→                      <div className="flex items-center gap-2">
+  1702→                        <Switch
+  1703→                          checked={!r.isClosed}
+  1704→                          onCheckedChange={(checked) => updateRow(idx, { isClosed: !checked })}
+  1705→                          disabled={!canManage || saving}
+  1706→                          aria-label={`Open ${DAY_LABELS[r.dayOfWeek]}`}
+  1707→                        />
+  1708→                        <span className="text-xs text-muted-foreground">
+  1709→                          {r.isClosed ? "Closed" : "Open"}
+  1710→                        </span>
+  1711→                      </div>
+  1712→                    </TableCell>
+  1713→                  </TableRow>
+  1714→                ))}
+  1715→              </TableBody>
+  1716→              </Table>
+  1717→            </div>
+  1718→          </div>
+  1719→
+  1720→          {/* Mobile: cards */}
+  1721→          <div className="sm:hidden space-y-2">
+  1722→            {rows.map((r, idx) => (
+  1723→              <div key={r.dayOfWeek} className="rounded-lg border p-3 space-y-2">
+  1724→                <div className="flex items-center justify-between">
+  1725→                  <span className="text-sm font-semibold">{DAY_LABELS[r.dayOfWeek]}</span>
+  1726→                  <div className="flex items-center gap-2">
+  1727→                    <Switch
+  1728→                      checked={!r.isClosed}
+  1729→                      onCheckedChange={(checked) => updateRow(idx, { isClosed: !checked })}
+  1730→                      disabled={!canManage || saving}
+  1731→                      aria-label={`Open ${DAY_LABELS[r.dayOfWeek]}`}
+  1732→                    />
+  1733→                    <span className="text-xs text-muted-foreground">
+  1734→                      {r.isClosed ? "Closed" : "Open"}
+  1735→                    </span>
+  1736→                  </div>
+  1737→                </div>
+  1738→                {!r.isClosed && (
+  1739→                  <div className="grid grid-cols-2 gap-2">
+  1740→                    <div>
+  1741→                      <Label className="text-[10px] uppercase text-muted-foreground">Open</Label>
+  1742→                      <Input
+  1743→                        type="time"
+  1744→                        value={r.openTime ?? ""}
+  1745→                        onChange={(e) => updateRow(idx, { openTime: e.target.value })}
+  1746→                        disabled={!canManage || saving}
+  1747→                        className="h-8 text-xs"
+  1748→                      />
+  1749→                    </div>
+  1750→                    <div>
+  1751→                      <Label className="text-[10px] uppercase text-muted-foreground">Close</Label>
+  1752→                      <Input
+  1753→                        type="time"
+  1754→                        value={r.closeTime ?? ""}
+  1755→                        onChange={(e) => updateRow(idx, { closeTime: e.target.value })}
+  1756→                        disabled={!canManage || saving}
+  1757→                        className="h-8 text-xs"
+  1758→                      />
+  1759→                    </div>
+  1760→                  </div>
+  1761→                )}
+  1762→              </div>
+  1763→            ))}
+  1764→          </div>
+  1765→        </CardContent>
+  1766→      </Card>
+  1767→
+  1768→      {/* Special hours */}
+  1769→      <Card>
+  1770→        <CardContent className="p-4 sm:p-5 space-y-3">
+  1771→          <div className="flex items-center justify-between gap-2">
+  1772→            <div>
+  1773→              <h3 className="text-sm font-semibold flex items-center gap-1.5">
+  1774→                <CalendarClock className="size-4 text-amber-500" /> Special Hours
+  1775→              </h3>
+  1776→              <p className="text-xs text-muted-foreground mt-0.5">
+  1777→                Holiday hours &amp; exceptions
+  1778→              </p>
+  1779→            </div>
+  1780→            <Badge variant="outline" className="text-xs">{specialHours.length}</Badge>
+  1781→          </div>
+  1782→          {specialHours.length === 0 ? (
+  1783→            <p className="text-xs text-muted-foreground py-2">No special hours configured.</p>
+  1784→          ) : (
+  1785→            <div className="overflow-hidden rounded-lg border">
+  1786→              <div className="overflow-x-auto scroll-area">
+  1787→                <Table>
+  1788→                <TableHeader>
+  1789→                  <TableRow>
+  1790→                    <TableHead className="text-xs">Date</TableHead>
+  1791→                    <TableHead className="text-xs">Hours</TableHead>
+  1792→                    <TableHead className="text-xs">Status</TableHead>
+  1793→                  </TableRow>
+  1794→                </TableHeader>
+  1795→                <TableBody>
+  1796→                  {specialHours.map((s) => (
+  1797→                    <TableRow key={s.id}>
+  1798→                      <TableCell className="py-2 text-sm font-medium">
+  1799→                        {(() => { try { return format(parseISO(s.date), "d MMM yyyy"); } catch { return s.date; } })()}
+  1800→                      </TableCell>
+  1801→                      <TableCell className="py-2 text-xs text-muted-foreground">
+  1802→                        {s.isClosed ? "—" : `${s.openTime ?? "—"} – ${s.closeTime ?? "—"}`}
+  1803→                      </TableCell>
+  1804→                      <TableCell className="py-2">
+  1805→                        <Badge variant="outline" className={cn(
+  1806→                          "text-xs",
+  1807→                          s.isClosed
+  1808→                            ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+  1809→                            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+  1810→                        )}>
+  1811→                          {s.isClosed ? "Closed" : "Open"}
+  1812→                        </Badge>
+  1813→                      </TableCell>
+  1814→                    </TableRow>
+  1815→                  ))}
+  1816→                </TableBody>
+  1817→                </Table>
+  1818→              </div>
+  1819→            </div>
+  1820→          )}
+  1821→        </CardContent>
+  1822→      </Card>
+  1823→    </div>
+  1824→  );
+  1825→}
+  1826→
+  1827→function buildHourRows(hours: HourRow[]): { dayOfWeek: number; openTime: string | null; closeTime: string | null; isClosed: boolean }[] {
+  1828→  const byDay = new Map(hours.map((h) => [h.dayOfWeek, h]));
+  1829→  return DAY_LABELS.map((_, day) => {
+  1830→    const h = byDay.get(day);
+  1831→    return {
+  1832→      dayOfWeek: day,
+  1833→      openTime: h?.openTime ?? null,
+  1834→      closeTime: h?.closeTime ?? null,
+  1835→      isClosed: h?.isClosed ?? false,
+  1836→    };
+  1837→  });
+  1838→}
+  1839→
+  1840→/* ----------------------------- Services Tab ----------------------------- */
+  1841→
+  1842→function ServicesTab({ detail }: { detail: LocationDetailResponse }) {
+  1843→  const { services, products } = detail;
+  1844→  return (
+  1845→    <div className="space-y-4">
+  1846→      <Card>
+  1847→        <CardContent className="p-4 sm:p-5 space-y-3">
+  1848→          <div className="flex items-center justify-between gap-2">
+  1849→            <div>
+  1850→              <h3 className="text-sm font-semibold flex items-center gap-1.5">
+  1851→                <ListChecks className="size-4 text-emerald-500" /> Services
+  1852→              </h3>
+  1853→              <p className="text-xs text-muted-foreground mt-0.5">
+  1854→                {services.length} service{services.length === 1 ? "" : "s"} offered
+  1855→              </p>
+  1856→            </div>
+  1857→            <Button
+  1858→              size="sm" variant="outline"
+  1859→              onClick={() => toast.info("Add Service — coming soon. Use the Google Business Profile dashboard to add services.")}
+  1860→            >
+  1861→              <Plus className="size-3.5 mr-1.5" /> Add Service
+  1862→            </Button>
+  1863→          </div>
+  1864→          {services.length === 0 ? (
+  1865→            <EmptyRow icon={Inbox} message="No services configured." />
+  1866→          ) : (
+  1867→            <div className="space-y-2 max-h-96 overflow-y-auto scroll-area pr-1">
+  1868→              {services.map((s) => (
+  1869→                <div key={s.id} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+  1870→                  <div className="min-w-0">
+  1871→                    <div className="flex items-center gap-2">
+  1872→                      <span className="font-medium text-sm">{s.name}</span>
+  1873→                      <Badge variant="outline" className={cn(
+  1874→                        "text-[10px] capitalize",
+  1875→                        s.status === "active"
+  1876→                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+  1877→                          : "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20"
+  1878→                      )}>
+  1879→                        {s.status}
+  1880→                      </Badge>
+  1881→                    </div>
+  1882→                    {s.description && (
+  1883→                      <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>
+  1884→                    )}
+  1885→                    {s.category && (
+  1886→                      <p className="text-[11px] text-muted-foreground mt-0.5">
+  1887→                        <Tag className="size-3 inline mr-1" />
+  1888→                        {s.category}
+  1889→                      </p>
+  1890→                    )}
+  1891→                  </div>
+  1892→                </div>
+  1893→              ))}
+  1894→            </div>
+  1895→          )}
+  1896→        </CardContent>
+  1897→      </Card>
+  1898→
+  1899→      <Card>
+  1900→        <CardContent className="p-4 sm:p-5 space-y-3">
+  1901→          <div className="flex items-center justify-between gap-2">
+  1902→            <div>
+  1903→              <h3 className="text-sm font-semibold flex items-center gap-1.5">
+  1904→                <Tag className="size-4 text-amber-500" /> Products
+  1905→              </h3>
+  1906→              <p className="text-xs text-muted-foreground mt-0.5">
+  1907→                {products.length} product{products.length === 1 ? "" : "s"} listed
+  1908→              </p>
+  1909→            </div>
+  1910→          </div>
+  1911→          {products.length === 0 ? (
+  1912→            <EmptyRow icon={Inbox} message="No products configured." />
+  1913→          ) : (
+  1914→            <div className="overflow-hidden rounded-lg border">
+  1915→              <div className="overflow-x-auto scroll-area">
+  1916→                <Table>
+  1917→                <TableHeader>
+  1918→                  <TableRow>
+  1919→                    <TableHead className="text-xs">Product</TableHead>
+  1920→                    <TableHead className="text-xs hidden sm:table-cell">Category</TableHead>
+  1921→                    <TableHead className="text-xs text-right">Price</TableHead>
+  1922→                    <TableHead className="text-xs">Status</TableHead>
+  1923→                  </TableRow>
+  1924→                </TableHeader>
+  1925→                <TableBody>
+  1926→                  {products.map((p) => (
+  1927→                    <TableRow key={p.id}>
+  1928→                      <TableCell className="py-2">
+  1929→                        <div className="flex items-center gap-2">
+  1930→                          {p.imageUrl ? (
+  1931→                            <img
+  1932→                              src={p.imageUrl}
+  1933→                              alt={p.name}
+  1934→                              className="size-8 rounded object-cover bg-muted"
+  1935→                            />
+  1936→                          ) : (
+  1937→                            <div className="size-8 rounded bg-muted flex items-center justify-center">
+  1938→                              <ImageIcon className="size-4 text-muted-foreground" />
+  1939→                            </div>
+  1940→                          )}
+  1941→                          <div className="min-w-0">
+  1942→                            <div className="text-sm font-medium truncate">{p.name}</div>
+  1943→                            {p.description && (
+  1944→                              <div className="text-[11px] text-muted-foreground line-clamp-1">{p.description}</div>
+  1945→                            )}
+  1946→                          </div>
+  1947→                        </div>
+  1948→                      </TableCell>
+  1949→                      <TableCell className="py-2 text-xs text-muted-foreground hidden sm:table-cell">
+  1950→                        {p.category ?? "—"}
+  1951→                      </TableCell>
+  1952→                      <TableCell className="py-2 text-sm text-right font-medium tabular-nums">
+  1953→                        {formatPrice(p.price, p.currency)}
+  1954→                      </TableCell>
+  1955→                      <TableCell className="py-2">
+  1956→                        <Badge variant="outline" className={cn(
+  1957→                          "text-[10px] capitalize",
+  1958→                          p.status === "active"
+  1959→                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+  1960→                            : "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20"
+  1961→                        )}>
+  1962→                          {p.status}
+  1963→                        </Badge>
+  1964→                      </TableCell>
+  1965→                    </TableRow>
+  1966→                  ))}
+  1967→                </TableBody>
+  1968→                </Table>
+  1969→              </div>
+  1970→            </div>
+  1971→          )}
+  1972→        </CardContent>
+  1973→      </Card>
+  1974→    </div>
+  1975→  );
+  1976→}
+  1977→
+  1978→/* ----------------------------- Photos Tab ----------------------------- */
+  1979→
+  1980→function PhotosTab({ detail }: { detail: LocationDetailResponse }) {
+  1981→  const { photos } = detail;
+  1982→  const lastUpdated = photos[0]?.createdAt ?? null;
+  1983→
+  1984→  return (
+  1985→    <Card>
+  1986→      <CardContent className="p-4 sm:p-5 space-y-4">
+  1987→        <div className="flex items-center justify-between gap-2">
+  1988→          <div>
+  1989→            <h3 className="text-sm font-semibold flex items-center gap-1.5">
+  1990→              <Camera className="size-4 text-teal-500" /> Business Photos
+  1991→            </h3>
+  1992→            <p className="text-xs text-muted-foreground mt-0.5">
+  1993→              {photos.length} photo{photos.length === 1 ? "" : "s"}
+  1994→              {lastUpdated && (
+  1995→                <> · last updated {relativeTime(lastUpdated)}</>
+  1996→              )}
+  1997→            </p>
+  1998→          </div>
+  1999→          <Button
+  2000→            size="sm" variant="outline"
+
+[showing lines 1-2000 of 2616; use offset=2001 with limit to continue reading]

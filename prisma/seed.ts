@@ -126,7 +126,8 @@ async function main() {
     "ReviewReplyTemplate", "Review", "BusinessHour", "SpecialHour",
     "BusinessAttribute", "Service", "Product", "BusinessPhoto",
     "BusinessCategory", "BusinessInformation", "GoogleBusinessProfile",
-    "GoogleAccount", "RolePermission", "Permission", "Role",
+    "GoogleAccount", "ClientAuthorization", "Client",
+    "RolePermission", "Permission", "Role",
     "Notification", "AuditLog", "AIHistory", "Setting", "Location", "User",
   ];
   for (const t of tables) {
@@ -201,6 +202,36 @@ async function main() {
     createdUsers.push(await db.user.create({ data: { ...u, password: pw } }));
   }
 
+  // ─── Seed default end-client (for Google Third-Party Policy compliance) ────
+  const selfClient = await db.client.upsert({
+    where: { clientCode: "MYFNG-SELF" },
+    update: {},
+    create: {
+      clientCode: "MYFNG-SELF",
+      name: "MyFNG (Self)",
+      legalName: "MyFNG Interiors Pvt. Ltd.",
+      contactName: "Operations Team",
+      contactEmail: "ops@myfng.in",
+      contactPhone: "+91 90000 00000",
+      status: "active",
+      notes: "Default self-client. All MyFNG-owned locations belong to this client.",
+    },
+  });
+
+  // Create an active authorization record for the self-client
+  await db.clientAuthorization.upsert({
+    where: { id: "self-auth-default" },
+    update: { status: "active" },
+    create: {
+      id: "self-auth-default",
+      clientId: selfClient.id,
+      authorizedScopes: JSON.stringify(["review.reply", "post.create", "post.update", "post.delete", "profile.update", "analytics.sync", "media.upload", "media.delete"]),
+      status: "active",
+      grantedAt: new Date(),
+      notes: "Default authorization for self-managed locations.",
+    },
+  });
+
   // ── Google Account — NOT created in seed. Real Google OAuth connects via UI. ──
   // When user deploys and clicks "Connect Google", a real Google account record is created.
   const gAccount = { id: "seed-placeholder" }; // placeholder for GBP linking below
@@ -241,6 +272,7 @@ async function main() {
         servicesJson: JSON.stringify(SERVICES_LIST.map(s => s.name)),
         hoursJson: JSON.stringify(BUSINESS_HOURS),
         attributesJson: JSON.stringify(Object.fromEntries(ATTRIBUTES.map(a => [a.name, a.value === "true"]))),
+        clientId: selfClient.id,
       },
     });
     createdLocations.push(loc);

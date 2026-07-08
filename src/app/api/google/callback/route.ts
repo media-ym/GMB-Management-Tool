@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getGoogleAuthUrl, exchangeCodeForTokens, googleServiceStatus } from "@/lib/google-service";
+import { encryptToken } from "@/lib/token-crypto";
 import { getSessionUser, logAudit } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +65,9 @@ export async function GET(req: NextRequest) {
 
     // Upsert google account
     const existing = await db.googleAccount.findFirst();
+    // Google does not always return a new refresh_token on re-auth — preserve the
+    // existing one if missing. Encrypt both tokens at rest before saving.
+    const newRefresh = tokens.refreshToken || existing?.refreshToken || null;
     if (existing) {
       await db.googleAccount.update({
         where: { id: existing.id },
@@ -71,8 +75,8 @@ export async function GET(req: NextRequest) {
           email,
           googleUserId,
           status: "active",
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken || existing.refreshToken,
+          accessToken: encryptToken(tokens.accessToken),
+          refreshToken: encryptToken(newRefresh),
           tokenExpiry: new Date(tokens.expiryDate),
           scopesJson: JSON.stringify(grantedScopes),
         },
@@ -83,8 +87,8 @@ export async function GET(req: NextRequest) {
           email,
           googleUserId,
           status: "active",
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
+          accessToken: encryptToken(tokens.accessToken),
+          refreshToken: encryptToken(newRefresh),
           tokenExpiry: new Date(tokens.expiryDate),
           scopesJson: JSON.stringify(grantedScopes),
         },

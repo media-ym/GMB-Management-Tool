@@ -21,6 +21,7 @@ export type Permission =
   | "notifications.view"
   | "audit.view"
   | "settings.view"
+  | "settings.manage"
   | "users.manage"
   | "system.sync"
   | "system.view";
@@ -35,7 +36,7 @@ const FULL: Permission[] = [
   "media.view", "media.manage",
   "reports.view", "reports.generate",
   "notifications.view", "audit.view",
-  "settings.view", "users.manage", "system.sync", "system.view",
+  "settings.view", "settings.manage", "users.manage", "system.sync", "system.view",
 ];
 
 const MATRIX: Record<Role, Permission[]> = {
@@ -50,7 +51,7 @@ const MATRIX: Record<Role, Permission[]> = {
     "media.view", "media.manage",
     "reports.view", "reports.generate",
     "notifications.view", "audit.view",
-    "settings.view", "system.sync", "system.view",
+    "settings.view", "settings.manage", "system.sync", "system.view",
   ],
   branch_manager: [
     "dashboard.view", "locations.view",
@@ -110,6 +111,7 @@ export function canAccessView(role: Role | undefined, view: string): boolean {
     "design-system": "dashboard.view",
     "wireframes": "dashboard.view",
     settings: "settings.view",
+    clients: "settings.view",
   };
   const perm = map[view];
   return perm ? can(role, perm) : false;

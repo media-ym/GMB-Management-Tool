@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { getGoogleAuthUrl, getValidAccessToken, listGoogleAccounts, listGoogleLocations, googleServiceStatus, syncGoogleProfiles } from "@/lib/google-service";
+import { getGoogleAuthUrl, getValidAccessToken, listGoogleAccounts, listGoogleLocations, googleServiceStatus, syncGoogleProfiles, revokeGoogleToken } from "@/lib/google-service";
+import { decryptToken } from "@/lib/token-crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -133,9 +134,18 @@ export async function POST(req: NextRequest) {
 
   // ─── Disconnect: revoke tokens ─────────────────────────────────────────
   if (action === "disconnect") {
+    // Revoke tokens with Google before clearing locally — best-effort: if Google
+    // revoke fails (network, token already invalid), still clear local state.
+    const account = await db.googleAccount.findFirst();
+    if (account) {
+      const accessToken = decryptToken(account.accessToken);
+      const refreshToken = decryptToken(account.refreshToken);
+      if (accessToken) await revokeGoogleToken(accessToken);
+      if (refreshToken) await revokeGoogleToken(refreshToken);
+    }
     await db.googleAccount.updateMany({ data: { status: "revoked", accessToken: null, refreshToken: null } });
     await logAudit({ userId: user.id, userName: user.name, action: "google.disconnect", entity: "google_account", ip: req.headers.get("x-forwarded-for") ?? undefined });
-    return ok({ disconnected: true }, "Google Business Profile disconnected");
+    return ok({ disconnected: true }, "Google Business Profile disconnected and tokens revoked");
   }
 
   // ─── Sync: fetch real data from Google ─────────────────────────────────

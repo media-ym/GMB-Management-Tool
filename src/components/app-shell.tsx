@@ -52,6 +52,7 @@ const NAV: NavItem[] = [
   { key: "design-system", label: "Design" },
   { key: "wireframes", label: "Wireframes" },
   { key: "settings", label: "Settings" },
+  { key: "clients", label: "Clients" },
 ];
 
 // Primary items shown directly in top bar (text only, no icons — matching reference)
@@ -79,6 +80,7 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   "design-system": { title: "Design System", subtitle: "Colors, typography & components" },
   wireframes: { title: "Screen Wireframes", subtitle: "Screen specifications" },
   settings: { title: "Settings", subtitle: "Users, roles & configuration" },
+  clients: { title: "End-Clients", subtitle: "Authorization tracking & data export (Google compliance)" },
 };
 
 export function AppShell({ children, user }: { children: React.ReactNode; user: SessionUser }) {

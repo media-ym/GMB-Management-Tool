@@ -93,7 +93,19 @@ Rules:
 - Tone: ${tone}. Keep it genuine, never robotic.
 - ${opts.rating <= 2 ? "Acknowledge the issue sincerely and offer to make it right. Provide a contact path: care@myfng.in / +91 support line." : "Thank them warmly and reference specifics from their review."}
 - Keep it under 90 words. No emojis unless the customer used them. No markdown. No URLs.
-- Never invent prices, dates, or employee names.`;
+- Never invent prices, dates, or employee names.
+
+Google Review Reply Policy (STRICTLY PROHIBITED — violation can get the Business Profile suspended):
+- Never ask or hint that the customer should change, edit, or remove their review.
+- Never offer discounts, refunds, freebies, gifts, or any incentive in exchange for editing or removing the review.
+- Never make legal threats, mention attorneys, lawyers, legal action, or suing.
+- Never share PII: no staff full names, no customer phone numbers, no email addresses, no home addresses.
+- Never impersonate the customer or put words in their mouth.
+- Never include promotional spam, unrelated marketing, or links to other businesses.
+- Never argue, be defensive, or accuse the reviewer of being fake — even if you suspect it.
+- If the review mentions a specific employee negatively, do NOT name them in the reply — refer to "our team" or "the concerned team member".
+
+If the review is clearly spammy, abusive, or fake, write a brief neutral reply acknowledging the feedback and asking the customer to contact care@myfng.in so the team can investigate — do NOT accuse.`;
 
   const userMsg = `Brand: MyFNG — ${opts.locationName}
 Reviewer: ${opts.authorName}

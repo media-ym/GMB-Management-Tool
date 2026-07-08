@@ -117,6 +117,7 @@ model Location {
   servicesJson     String? // JSON
   hoursJson        String? // JSON (legacy; BusinessHour table is canonical now)
   attributesJson   String? // JSON
+  clientId          String?   // FK to Client — which end-client owns this location
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -139,6 +140,55 @@ model Location {
   competitors      Competitor[]
   dashboardCache   DashboardCache[]
   syncLogs         SyncLog[]
+  client           Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2B. END-CLIENT AUTHORIZATION (Google Third-Party Policy Compliance)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Client {
+  id              String    @id @default(cuid())
+  clientCode      String?   @unique // e.g. MYFNG-SELF, FRANCHISEE-001
+  name            String    // Display name (e.g. "MyFNG (Self)" or franchisee name)
+  legalName       String?   // Legal entity name
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+  status          String    @default("active") // active | paused | terminated
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  locations       Location[]
+  authorizations  ClientAuthorization[]
+}
+
+// Tracks per-client authorization for managing their Google Business Profile.
+// Google's Third-Party Policy requires explicit authorization before managing
+// GBP on behalf of an end-client. Each GBP write operation (reply, post, profile update)
+// must verify authorization.status === "active".
+model ClientAuthorization {
+  id                String    @id @default(cuid())
+  clientId          String
+  // What the client has authorized us to do on their behalf
+  authorizedScopes  String?   // JSON array: ["review.reply", "post.create", "profile.update", "analytics.sync"]
+  // Authorization lifecycle
+  status            String    @default("active") // active | revoked | expired
+  grantedAt         DateTime  @default(now())
+  revokedAt         DateTime?
+  expiresAt         DateTime? // nullable = no expiry
+  // Audit trail
+  grantedByUserId   String?   // Which MyFNG user recorded the authorization
+  authorizationDoc  String?   // URL or path to signed authorization document
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  client            Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([status])
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -153,6 +203,7 @@ model GoogleAccount {
   accessToken   String?
   tokenExpiry   DateTime?
   scopesJson    String? // JSON array
+  clientId      String?   // multi-tenant: which end-client owns this OAuth token (nullable = platform-wide)
   status        String    @default("active") // active | expired | revoked
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
