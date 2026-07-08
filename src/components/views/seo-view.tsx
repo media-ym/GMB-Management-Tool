@@ -413,7 +413,7 @@ export function SeoView() {
               value={activeLocationId}
               onValueChange={(v) => setActiveLocationId(v as string)}
             >
-              <SelectTrigger size="sm" className="w-[180px]">
+              <SelectTrigger size="sm" className="w-full sm:w-[180px]">
                 <MapPin className="size-3.5 mr-1 text-muted-foreground" />
                 <SelectValue placeholder="All locations" />
               </SelectTrigger>
@@ -811,7 +811,7 @@ function KeywordsTab({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search keywords..."
-              className="pl-8 h-8 w-[160px] sm:w-[200px]"
+              className="pl-8 h-8 w-full sm:w-[200px]"
             />
           </div>
           {canManage && (
@@ -1324,14 +1324,14 @@ function GeoGridTab({
     >
       {/* Keyword selector */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full">
           <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Keyword:</span>
           <Select
             value={gridKeywordId ?? undefined}
             onValueChange={(v) => setGridKeywordId(v)}
             disabled={keywordsLoading || keywords.length === 0 || isAllLocations}
           >
-            <SelectTrigger size="sm" className="w-[260px]">
+            <SelectTrigger size="sm" className="w-full sm:w-[260px]">
               <SelectValue placeholder={
                 isAllLocations ? "Select a location first"
                 : keywords.length === 0 ? "No keywords available"
@@ -1417,8 +1417,8 @@ function GeoGridHeatmap({
     return g;
   }, [grid, size]);
 
-  const cellSize = size === 3 ? "size-14 sm:size-16" : size === 5 ? "size-12 sm:size-14" : "size-10 sm:size-11";
-  const fontSize = size === 7 ? "text-xs" : "text-sm";
+  const cellSize = size === 3 ? "size-12 sm:size-16" : size === 5 ? "size-10 sm:size-14" : "size-8 sm:size-11";
+  const fontSize = size === 7 ? "text-[10px] sm:text-xs" : "text-xs sm:text-sm";
 
   return (
     <div className="space-y-4">
@@ -1436,8 +1436,8 @@ function GeoGridHeatmap({
         </div>
       </div>
 
-      <div className="flex justify-center">
-        <div className="flex items-stretch gap-2">
+      <div className="flex justify-center overflow-x-auto scroll-area pb-2">
+        <div className="flex items-stretch gap-2 shrink-0">
           <div className="flex flex-col items-center justify-between py-1">
             <span className="text-[10px] font-medium text-muted-foreground">N</span>
             <Compass className="size-3 text-muted-foreground/60" />
@@ -1580,7 +1580,7 @@ function CompetitorsTab({
                           <div className="flex items-center gap-2">
                             <Building2 className="size-3.5 text-muted-foreground shrink-0" />
                             <div className="min-w-0">
-                              <div className="truncate max-w-[200px]">{c.businessName}</div>
+                              <div className="truncate max-w-[150px] sm:max-w-[200px]">{c.businessName}</div>
                               {c.locationName && (
                                 <div className="text-[10px] text-muted-foreground mt-0.5">{c.locationName}</div>
                               )}
@@ -1794,7 +1794,7 @@ function LocationComparisonTab({
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-1.5">
                         {isActive && <span className="size-1.5 rounded-full bg-primary" />}
-                        <span className="truncate max-w-[160px]">{r.name}</span>
+                        <span className="truncate max-w-[120px] sm:max-w-[160px]">{r.name}</span>
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
