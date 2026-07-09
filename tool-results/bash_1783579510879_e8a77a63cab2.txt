@@ -1,0 +1,200 @@
+
+---
+Task ID: P2-A-MEDIA
+Agent: Google Media API Engineer
+Task: Photo upload to Google (sourceUrl method) + DELETE media from Google
+
+Work Log:
+- Added `uploadGooglePhoto()` to google-service.ts — uses Google's sourceUrl method (POST {parent}/media with `{ mediaFormat: { photo: { sourceUrl, description? } }, locationAssociation?: { category } }`). Returns `{ name, googleUrl? }`. Wrapped in withRetry; errors sanitized. Chose sourceUrl over the 2-step byte-upload flow because every upload is first persisted to /public/uploads/media and exposed via NEXTAUTH_URL, so Google can fetch it directly — avoids the fragile media-upload endpoint while still satisfying Google's reachability requirement.
+- Added `deleteGooglePhoto()` to google-service.ts — DELETE {GBP_API_BASE}/{mediaName}. 404 normalized to success shape inside the operation so withRetry doesn't throw (idempotent delete: photo already gone on Google's side is a successful outcome). All other non-2xx responses throw via withRetry.
+- Exported `GooglePhotoCategory` union (COVER | PROFILE | INTERIOR | EXTERIOR | PRODUCT | TEAM | FOOD_AND_DRINK | MENU | AT_WORK | COMMON_AREA | ROOMS | LANDSCAPE) + `UploadGooglePhotoInput` / `UploadGooglePhotoResult` interfaces for type-safe callers.
+- Added POST handler to /api/media/route.ts (was GET-only before). Multipart/form-data with `file` (required) + `locationId` (required) + `description?` + `category?` + `publishToGoogle?`. Flow: validate file (mime ∈ {jpeg,png,webp,gif}, ≤10MB), scope-check location, write file to /public/uploads/media/<uuid>.<ext>, create MediaLibrary record (always), then best-effort publish to Google: `requireClientAuth(locationId, "media.upload")` → getValidAccessToken → `uploadGooglePhoto(accessToken, gbp.googleLocationId, { sourceUrl, description, category })`. On Google success: also create a BusinessPhoto row with the returned googlePhotoId (source="google") so it appears in location.photos alongside Google-synced photos. On Google failure: log audit (`media.upload.google_failed`), keep local upload (best-effort). On revoked client authorization: return 403 (the local upload already succeeded, but the user must know the photo was NOT pushed to Google).
+- Created DELETE /api/media/[id]/route.ts. Handles both `?type=media` (default — deletes a MediaLibrary record) and `?type=photo` (deletes a BusinessPhoto directly, covers Google-synced photos that have no MediaLibrary entry). For type=media: looks up a linked BusinessPhoto by `locationId + imageUrl` to find any googlePhotoId to delete on Google's side. Best-effort local file removal (only deletes files under /uploads/media/, leaves external URLs untouched). Client-auth gate fires only when the photo actually exists on Google (has a googlePhotoId) — local-only deletes need no policy gate. Best-effort Google delete (never blocks local delete), audit log includes Google-side outcome.
+- All Google fetch calls go through `withRetry` (rate-limit + exponential backoff for 429/5xx). Error messages flow through `sanitizeGoogleError` (handled inside withRetry).
+- Lint: 0 errors, 0 warnings.
+
+Verification results:
+- `bun run lint` — 0 errors, 0 warnings ✅
+- `curl -s http://localhost:3000/api/health` → HTTP 200 ✅
+- `curl -s http://localhost:3000/api/media` (anonymous) → HTTP 401 (correct — auth gate fires) ✅
+- `curl -s -X DELETE http://localhost:3000/api/media/abc` (anonymous) → HTTP 401 ✅
+- `curl -s -X POST http://localhost:3000/api/media` (anonymous, no body) → HTTP 401 ✅
+- Dev log: no errors after the new routes were exercised. The only pre-existing warning is `[next-auth][warn][NEXTAUTH_URL]` (env var not set in this sandbox — unrelated to this task).
+- TypeScript strict check (`bunx tsc --noEmit`): the 4 errors reported in src/lib/google-service.ts at lines 639, 641, 656, 798 are all in PRE-EXISTING code (P1-B-GS's category-resolution block inside updateGoogleBusinessProfile, and P1-B-GS's completeVerification 404-return-shape widening issue — the same 404-normalization pattern my deleteGooglePhoto uses, but mine lives at lines 446-460 and typechecks cleanly because the inferred return type is consistent). None of the tsc errors are in my new functions.
+
+Stage Summary:
+- Files modified:
+  * `src/lib/google-service.ts` — added `uploadGooglePhoto()`, `deleteGooglePhoto()`, plus `GooglePhotoCategory` type alias + `UploadGooglePhotoInput`/`UploadGooglePhotoResult` interfaces (inserted after `patchGooglePost`, before Performance Metrics section). The new functions live alongside the other GBP write operations (post/review CRUD) for discoverability.
+  * `src/app/api/media/route.ts` — added POST handler (multipart upload + best-effort Google publish). Existing GET handler unchanged. Added imports for `uploadGooglePhoto`, `getValidAccessToken`, `googleServiceStatus`, `requireClientAuth`, `logAudit`, `fail`, plus `fs/promises` `writeFile`/`mkdir`, `path` `join`, `crypto` `randomUUID`.
+- Files created:
+  * `src/app/api/media/[id]/route.ts` — DELETE handler (best-effort Google delete via BusinessPhoto lookup; client-auth gate only fires when the photo has a googlePhotoId)
+- Key decisions:
+  * **sourceUrl over 2-step byte upload**: Google's Business Information API supports both. The 2-step flow (startUpload → PUT bytes to media upload endpoint → POST {parent}/media with dataRef) is fragile — the upload URL has its own auth quirks and the dataRef has a short TTL. Since we already persist every upload to /public/uploads/media and serve it via NEXTAUTH_URL, handing Google a sourceUrl is simpler, single-step, and avoids the upload-endpoint pitfalls. The task brief explicitly endorsed this approach.
+  * **Dual-write to MediaLibrary + BusinessPhoto when publishToGoogle=true**: MediaLibrary is the canonical asset library (the GET /api/media handler reads from it). BusinessPhoto is the table that carries the googlePhotoId linkage and shows up in `location.photos` via the locations/[id] GET include. Writing to both keeps the existing UIs (media library list + location detail photos tab) consistent without requiring schema changes to MediaLibrary.
+  * **Client-auth gate is per-write, not per-route**: The POST handler's gate only fires when `publishToGoogle=true`. If the user uploads a local-only asset, no Google-side action happens and no policy gate is needed. Same for DELETE — the gate only fires when the photo actually has a googlePhotoId (i.e. exists on Google). This matches the spec's "Before uploadGooglePhoto: requireClientAuth" and "Before deleteGooglePhoto: requireClientAuth" literally, and avoids over-blocking local-only operations.
+  * **Google upload failure is best-effort; client-auth failure is a hard 403**: Mirrors the existing posts pattern (P1-D-BACKEND). A transient Google API failure (rate limit, 5xx) shouldn't block the local upload — we log the failure and surface it in the response. But a client-authorization failure is a deliberate policy decision (the end-client has revoked consent); we 403 so the operator knows the photo was NOT pushed to Google and can re-establish authorization before retrying.
+  * **404 normalized to success inside deleteGooglePhoto's operation**: Google's DELETE can return 404 if the photo was already removed (sync drift, manual delete on Google's side, race with another DELETE). withRetry would otherwise treat 404 as a hard failure and throw — we normalize it to `{ok:true, status:200, body:"{}"}` so the caller sees a clean success. Same pattern as the pre-existing `completeVerification` function (P1-B-GS).
+  * **Local file removal is path-scoped**: DELETE only unlinks files whose URL pathname starts with `/uploads/media/`. External URLs (e.g. AI-generated images hosted elsewhere, Google-hosted URLs for synced photos) are left untouched — we never delete files we don't own.
+  * **No new packages installed** — uses built-in `fetch`, `fs/promises`, `crypto.randomUUID`, and the existing `withRetry`/`sanitizeGoogleError` infrastructure from P1-B-GS.
+
+---
+Task ID: P3-FIXES
+Agent: Backend Engineer
+Task: P3 fixes — defensive no_token check, hours edge case, ErrorLog persistence, real bulk sync, drift detection
+
+Work Log:
+- Fixed getValidAccessToken() to decrypt + reject "no_token" defensively (token is decrypted BEFORE the validity check so callers always get a raw bearer token; refresh-token "no_token" also guarded against; decrypt failures mark the account "expired")
+- Fixed hours patch in updateGoogleBusinessProfile() to skip empty arrays (permanently-closed edge case — Google rejects `regularHours.periods: []` with 400); added a doc comment explaining that the route-side `!h.isClosed` filter is intentional and that the empty-array case must NOT be sent to Google
+- Added logError() helper near the top of google-service.ts (writes module/errorCode/errorMessage/payloadJson to ErrorLog, best-effort — never throws)
+- Wired logError into every sync catch block: syncLocationAnalytics (auth/lookup/fetch), syncGoogleProfiles (auth/per-location/outer), syncGoogleReviews (auth/fetch), syncLocationFull (auth/lookup/reviews/photos/business_info/attributes/special_hours/analytics/outer) — return shape unchanged, callers still get errors[] strings
+- Rewired bulk sync route (POST /api/locations/bulk action=sync) to call real syncLocationFull per location; creates a SyncLog with actual record counts (reviews+photos=inserted, hours+services+categories=updated, errors.length=failed); records real success/fail counts in the audit log; surfaces a fail-aware message ("Synced N, M failed. Errors: ..."); catches unexpected throws as a "failed" SyncLog row
+- Added getGoogleUpdated() function — fetches the Google-updated Location resource via `${GBP_API_BASE}/${locationName}:getGoogleUpdated`; 404 is normalized to JSON null inside withRetry so it doesn't throw; transient errors are swallowed so a single failed fetch can't abort the drift sweep
+- Added detectLocationDrift() function — diffs name/phone/website between DB and Google's canonical version; on drift, writes an ErrorLog (module "google.drift", errorCode "DRIFT_DETECTED") + an AuditLog (action "google.drift_detected", userName "System (drift detector)") so it shows up in both the System error panel and the per-location audit trail
+- Created /api/cron/drift-detection/route.ts — CRON_SECRET-protected GET endpoint; iterates active locations in batches of 5 (1s pause between batches to respect Google's 10-QPS quota); upserts the "drift-detection" ScheduledJob row (uses findFirst+update/create since jobName is not @unique in the schema); returns JSON envelope with checked/driftDetected/checkedAt
+- Lint: 0 errors, 0 warnings
+- Verification: curl /api/health → 200; curl /api/cron/drift-detection (no secret) → 401; dev log shows both responses, no errors
+
+Stage Summary:
+- Files modified:
+  * `src/lib/google-service.ts` — added logError() helper + getGoogleUpdated() + detectLocationDrift(); hardened getValidAccessToken() with early decryption + "no_token" guards; added empty-hours guard + doc comment in updateGoogleBusinessProfile; wired logError into 11 catch blocks across 4 sync functions (syncLocationAnalytics, syncGoogleProfiles, syncGoogleReviews, syncLocationFull). Net +180 lines.
+  * `src/app/api/locations/bulk/route.ts` — replaced fake-sync loop with real syncLocationFull calls; per-location SyncLog with actual record counts; success/fail/error tracking; OAuth-configured guard at the top. Removed unused `now` variable.
+- Files created:
+  * `src/app/api/cron/drift-detection/route.ts` — daily drift-detection cron endpoint (CRON_SECRET protected, batched, updates ScheduledJob row)
+- Pre-existing TS errors (category-resolution `primaryId = resolveCategoryId(...)` and completeVerification's 404-return-shape union widening) remain — both are in P1-B-GS code I was instructed not to refactor, both are unrelated to my changes, and neither affects lint. `bun run lint` is clean (0/0).
+- Key decisions:
+  * `getGoogleUpdated` 404 handling: normalized to `{ ok: true, status: 200, body: () => Promise.resolve("null") }` so withRetry returns JSON null cleanly — same pattern as `deleteGooglePhoto` (404 → success) but returns null instead of `{}`. Critical to use `Promise.resolve("null")` (returns Promise<string>) instead of `"null"` (returns string) so the TS union stays compatible with withRetry's expected `{ body: () => Promise<string> }` signature — the pre-existing completeVerification TS error exists precisely because it uses `body: () => "{}"` (string) and widens the union.
+  * `detectLocationDrift` only compares name/phone/website — address intentionally omitted because Google's structured address shape (addressLines[], locality, administrativeArea, postalCode, etc.) would generate noise from formatting differences, flooding the audit log with false-positive drift entries.
+  * Drift writes to BOTH ErrorLog (for monitoring/alerts) AND AuditLog (for the per-location audit trail). The ErrorLog is the primary signal; the AuditLog entry is best-effort (try/catch swallows failures).
+  * Cron route uses `findFirst + update/create` instead of `upsert` because the ScheduledJob schema does not mark `jobName` as @unique — Prisma's upsert requires a unique identifier in the where clause. The task brief's `upsert({ where: { jobName: ... } })` would throw at runtime.
+  * Bulk sync route blocks entirely when Google OAuth isn't configured (`googleServiceStatus.isConfigured === false`) — saves the user from N identical "No valid Google access token" errors and keeps the audit log clean.
+  * Bulk sync per-location try/catch logs a "failed" SyncLog even for unexpected throws (e.g., DB write failure inside syncLocationFull that escapes its internal try/catch) so the System view's sync history always reflects reality.
+
+---
+Task ID: PROD-READY
+Agent: DevOps Engineer
+Task: Hostinger production readiness — .env.example, PG schema, deployment guide, startup script, build verification
+
+Work Log:
+- Created `.env.example` documenting every env var the platform consumes: DATABASE_URL (SQLite + PostgreSQL examples), NEXTAUTH_SECRET, NEXTAUTH_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, TOKEN_ENCRYPTION_KEY, CRON_SECRET, NODE_ENV, optional SMTP_* — each with a generation hint (openssl rand …) and a pointer to where it is used.
+- Verified the PostgreSQL schema: the existing `prisma/schema.postgresql.prisma` was a 24-line stub (header only). Generated a full 944-line copy of the SQLite schema with `provider = "postgresql"`, preserving every model, relation, index and default value. Confirmed Client + ClientAuthorization models (lines 158, 179) are present. Validated with `bunx prisma validate --schema=prisma/schema.postgresql.prisma` → "The schema is valid 🚀".
+- Rewrote `DEPLOYMENT.md` as a complete 7-phase Hostinger deployment guide: Prerequisites, Phase 1 Google Cloud Console (project + APIs + OAuth consent + credentials), Phase 2 Hostinger server setup (Node 20 + Bun + PM2 + PostgreSQL + clone + .env + schema switch + db push + seed), Phase 3 Build & Start (manual + start-production.sh + PM2), Phase 4 Reverse proxy + SSL (Caddyfile with HSTS), Phase 5 Connect Google Business Profile, Phase 6 Cron jobs (drift-detection is implemented at /api/cron/drift-detection and validates x-cron-secret), Phase 7 post-deploy checklist, Security checklist, Troubleshooting (OAuth mismatch, 403, token refresh, db conn, build errors, app not starting, quota), and Maintenance (update / backup / restore / logs).
+- Created `start-production.sh` — executable (`chmod +x`) production bootstrap. Checks for `.env`, warns on missing required env vars, runs `bun install`, auto-switches to PG schema when `DATABASE_URL` starts with `postgres`, runs `db:generate` → `db:push` → seed → `bun run build`. Syntax-checked with `bash -n`.
+- Fixed `next.config.ts` — removed the invalid `eslint` key (Next.js 16 dropped support; was producing a startup warning in dev.log) and removed `typescript.ignoreBuildErrors: true` so real TS errors surface at build time.
+- Updated `tsconfig.json` `exclude` to skip SDK sample dirs (`examples`, `mini-services`, `skills`, `upload`) so pre-existing dev errors in non-app code don't block production builds.
+- Fixed 8 real TypeScript errors that the previously-suppressed build was hiding:
+  1. `src/app/api/ai/route.ts:79` — used `reviewsNow._avg.rating` on a `count()` result (number). Changed to `reviewsPrev._avg.rating` (the aggregate). Real production bug — avgRating would have been NaN.
+  2. `src/app/api/dashboard/executive/route.ts:54` — dead `locReviews` line referencing `r.locationId` on a `select`-ed review shape that doesn't include it. Removed.
+  3. `src/app/api/posts/bulk/route.ts:58` — `const created = []` inferred `never[]`; annotated `string[]`.
+  4. `src/app/api/reports/route.ts:26` — `include: { location: … }` on a model with no `location` relation. Rewrote to fetch locations in a separate query and join in JS.
+  5. `src/lib/types.ts:66` — `DashboardSummary` missing `syncErrors` and `draftPosts` fields that the dashboard API returns and `dashboard-view.tsx` consumes. Added both.
+  6. `src/components/shared/page-header.tsx:31` — `CardSection` rejected an `icon` prop passed in 11 places in `google-api-mapping-view.tsx`. Added optional `icon?: React.ComponentType<{ className?: string }>` prop and rendered it next to the title.
+  7. `src/components/views/google-integration-view.tsx:58` — `OauthState` type missing `redirectUri` field that `/api/google/status` returns and the not-configured banner displays. Added `redirectUri: string | null`.
+  8. `src/lib/ai.ts:280` — `ratingDelta.toFixed(2)` is a string but was compared with `> 0`. Split into `ratingDeltaNum` (number) for the comparison and `ratingDelta` (string) for display.
+  9. `src/lib/google-service.ts:818` — `let primaryId = cat.primaryCategoryId` inferred `string | undefined`, then assigned `string | null` from `resolveCategoryId`. Explicitly typed `string | null | undefined` and normalized initial value with `?? null`.
+  10. `src/lib/google-service.ts:967` — `completeVerification` returned a union with incompatible `body()` return types (`string` vs `Promise<string>`). Made the 404 branch `async () => "{}"` so both branches return `Promise<string>`.
+
+Verification:
+- `bun run lint` → 0 errors, 0 warnings.
+- `bun run build` → ✓ Compiled successfully in 23.2s, ✓ TypeScript clean, ✓ Generated static pages (3/3), exit code 0. Standalone bundle copied to `.next/standalone/`.
+- `bunx prisma validate --schema=prisma/schema.postgresql.prisma` → "The schema is valid 🚀".
+- Dev server auto-restarted after the next.config.ts edit; `GET /` returns 200 and `GET /api/cron/drift-detection` correctly returns 401 (CRON_SECRET unset in dev).
+
+Stage Summary:
+Files created: `.env.example`, `start-production.sh` (executable).
+Files modified: `prisma/schema.postgresql.prisma` (stub → 944-line complete schema), `DEPLOYMENT.md` (full rewrite), `next.config.ts` (removed invalid `eslint` key + `ignoreBuildErrors`), `tsconfig.json` (exclude SDK dirs), `src/app/api/ai/route.ts`, `src/app/api/dashboard/executive/route.ts`, `src/app/api/posts/bulk/route.ts`, `src/app/api/reports/route.ts`, `src/lib/types.ts`, `src/lib/ai.ts`, `src/lib/google-service.ts` (2 fixes), `src/components/shared/page-header.tsx`, `src/components/views/google-integration-view.tsx`.
+Build status: ✅ `bun run build` exits 0. Platform is production-ready for Hostinger deploy.
+
+---
+Task ID: REBRAND-SEED
+Agent: Database Seed Engineer
+Task: Rebrand seed.ts from Home Interiors to Multi-Brand Car Service (MyFNG Autocare)
+
+Work Log:
+- Replaced legal name: MyFNG Interiors Pvt. Ltd. → MyFNG Autocare Private Limited
+- Reduced locations from 15 to 4 (Mumbai, Navi Mumbai, Thane, Pune)
+- Replaced reviews (8 positive, 4 neutral, 4 negative) with car service context
+- Replaced keywords, competitors, services, products, posts with car service content
+- Updated business info description, reply templates, notifications
+- Updated categories to Auto Repair Shop / Car Service Center
+- Updated GBP primaryCategory "Interior Designer" → "Auto Repair Shop"; additional categories → Auto Mechanic / Car Wash / Automobile Parts Store
+- Updated review reply text in seeding loop to "car service" / "Team MyFNG Autocare"
+- Replaced aiSugs: removed Vasai/Virar/Badlapur/Mira Road/Nashik references → Thane/Pune/Navi Mumbai
+- Replaced notifications: removed Bhiwandi sync error (→ Thane); "all 15 locations" → "all 4 locations"
+- Replaced error log: "Bhiwandi location" → "Thane location"
+- Updated SEO audit missing category "Kitchen Furniture Store" → "Car Wash"; recommendations "completed projects" → "completed services"
+- Updated brand settings tagline "Home Interiors & Services" → "Multi-Brand Car Service & Repair", name "MyFNG" → "MyFNG Autocare"
+- Adjusted paused-location index `i === 9` → `i === 3` (Pune paused; previously Mira Road which no longer exists)
+- Lint: 0 errors, 0 warnings
+- Grep for old terms (interiors|kitchen|wardrobe|nashik|panvel|kalyan|dombivli|bhiwandi|mira road|vasai|virar|ambernath|badlapur|raigad|living room|false ceiling|furniture|modular): 0 matches
+
+Stage Summary:
+Seed file fully rebranded to multi-brand car service context. All 4 cities (Mumbai, Navi Mumbai, Thane, Pune) consistently referenced throughout; no Home Interiors or removed-city references remain.
+
+---
+Task ID: REBRAND-CODE
+Agent: Frontend/Backend Engineer
+Task: Rebrand all source files from Home Interiors to Multi-Brand Car Service
+
+Work Log:
+- Updated src/lib/ai.ts — all 5 AI prompts (aiReviewReply, aiGeneratePost, aiSeoSuggestions, aiMonthlySummary, aiChat) now reference MyFNG Autocare as a multi-brand car service & repair brand across Mumbai, Navi Mumbai, Thane, Pune. Removed the 11 extra cities from aiChat's system prompt. Positive-tone review-reply branch now references "car model, service type, etc.". Post-generation rule now highlights value to "local car owners (Maruti, Hyundai, Honda, Tata, Mahindra, Toyota)".
+- Updated src/app/api/locations/route.ts — default new-location seed (categoriesJson, servicesJson, BusinessCategory rows, Service rows) switched from Interior Designer/Modular Kitchen/Wardrobe Design/Full Home Interiors/False Ceiling → Auto Repair Shop (primary), Car Service Station, Auto Air Conditioning Service, Periodic Service, Brake Repair, AC Service & Repair, Multi-Brand Repair.
+- Updated src/app/api/locations/import/route.ts — fallback primaryCategory "Interior Designer" → "Auto Repair Shop".
+- Updated src/lib/google-service.ts — fallback categoryName when Google's displayName is empty: "Interior Designer" → "Auto Repair Shop". Left Google API constants (INTERIOR photo category enum, gcid:interior_designer category ID examples) untouched — those are official GBP API contract values, not business-context strings.
+- Updated src/components/views/dashboard-view.tsx — SEO AI suggestion body now references "car service mumbai" and "car repair pune" instead of "modular kitchen mumbai"/"home interiors pune".
+- Updated src/components/views/settings-view.tsx — tagline placeholder "Home Interiors & Services" → "Multi-Brand Car Service & Repair".
+- Updated src/components/views/seo-view.tsx — keyword placeholder "interior designer mumbai" → "car service mumbai".
+- Updated src/components/views/posts-view.tsx — MiSA AI topic example and post title placeholder now reference "Monsoon car AC service" instead of modular kitchens.
+- Updated src/components/views/ai-view.tsx — suggestion prompts: "Thane showroom" → "Thane car service centre"; "modular kitchens in Nashik" → "car service in Pune" (also removed out-of-footprint Nashik reference).
+- Updated src/components/views/media-view.tsx — upload filename placeholder "thane_showroom_hero.jpg" → "thane_centre_hero.jpg"; stat card hint "Storefront & interior shots" → "Storefront & workshop shots".
+- Replaced "MyFNG Interiors Pvt. Ltd." references — none existed in src/ (the platform never had this exact legal string in code; seed.ts is the other agent's responsibility).
+- Login illustration (car repair scene — mechanic fixing a car with hood open) left unchanged. Verified no "interiors" references in login-screen.tsx.
+- CSS class names, component names, variable names left untouched. Google API category enums (INTERIOR photo category) and gcid examples (gcid:interior_designer) preserved as official API contract values.
+
+Verification:
+- `bun run lint` → 0 errors, 0 warnings ✅
+- `rg -i "interiors|home interiors|interior designer|MyFNG Interiors Pvt" src/` → 0 matches ✅
+- `rg -i "interiors|home interiors|interior designer|MyFNG Interiors Pvt" prisma/seed.ts` → 0 matches (as of this pass; seed.ts is the other agent's responsibility) ✅
+- `rg -i "showroom|kitchen|wardrobe|Nashik|Panvel|Kalyan|Dombivli|Bhiwandi|Mira Road|Vasai|Virar|Ambernath|Badlapur|Raigad" src/` → 0 matches ✅
+
+Stage Summary:
+All source files rebranded to multi-brand car service context. The platform's user-facing copy, AI prompts, default new-location seed data, and placeholder text now consistently describe MyFNG Autocare as a multi-brand car service & repair brand operating in Mumbai, Navi Mumbai, Thane, and Pune. Google API integration constants (photo category enums, gcid examples) preserved untouched to avoid breaking the GBP integration contract. Work record saved to /agent-ctx/REBRAND-CODE-frontend-backend-engineer.md.
+
+---
+Task ID: BULK-IMPORT-VERIFY
+Agent: Full-Stack Engineer
+Task: Enhance bulk import + add bulk GMB verification (initiate + complete with PIN)
+
+Work Log:
+- Enhanced AddLocationDialog: extracted `fetchGmbLocations(isRefresh)` callable from a new Refresh button + on-open effect; added "Refresh" button next to Select All / Deselect All and a "Refresh list" CTA in the "all already imported" empty state; added a "Sync after import" Checkbox (default ON) that runs a serial full-sync per imported location with live progress label ("Syncing 2 of 5 — MyFNG Thane…") and best-effort error swallowing per location.
+- Added `available-count` badge in Locations header: `useQuery(["available-gmb-locations"])` with 60s refetchInterval, gated on `canManage`. Renders an "N available" badge on the Add Location button only when `status === "connected" && available > 0`.
+- Created `/api/locations/bulk-verify` (NEW route):
+  * GET `?locationIds=loc1,loc2,...` — returns per-location verification state (verified/unverified/pending + pendingVerifications[], canInitiate, canComplete, linked/configured/connected). `scopeLocationIds` honors branch-manager scope. Paces Google `listVerifications` 200ms apart. Reconciles local verificationState against Google's COMPLETED flag.
+  * POST `{ action: "initiate", locationIds[], method, input }` — per-method input validated (mailerContactName/phoneNumber/emailAddress). Per-location: skip if verified/no-GBP, gate via `requireClientAuth(id, "profile.update")`, listVerifications to detect existing PENDING (skip), then initiateVerification. Returns { initiated, failed, skipped }. Logs `bulk.verify_initiated` + per-location `location.verify_initiated`.
+  * PATCH `{ pins: [{ locationId, pin }] }` — per-location: gate, listVerifications to find most-recent PENDING, completeVerification. Returns { completed, failed }. Logs `bulk.verify_completed` + per-location `location.verify_completed`.
+- Created BulkVerifyDialog component with Initiate + Complete PIN tabs:
+  * Initiate tab: table of all locations with status badges (Verified/Pending/Unverified/Not linked), only `canInitiate` rows selectable, "Select all unverified" + "Clear" helpers, method Select (ADDRESS/PHONE_CALL/SMS/EMAIL) + per-method Input, per-method validation, live progress + BulkActionResultCard with success/failed/skipped badges.
+  * Complete PIN tab: table of `canComplete` locations with per-row 6-digit PIN Input; only non-empty PINs submitted; result card.
+  * Refresh button at top auto-refetches verification status. Loading copy mentions 10 QPS pacing.
+- Added "Bulk Verify" button in Locations header (outline variant, ShieldCheck icon), gated on `canManage`. Wired to BulkVerifyDialog with all visible location IDs.
+- Added client-auth gates on initiate (`profile.update` scope per location).
+- Added rate-limit pacing (200ms between Google calls) inside both POST initiate and PATCH complete loops.
+- Added verification status section to location detail Google Profile card: `LocationVerifyActions` (Verify now + View history) shown when not verified and canManage; `LocationVerifyHistoryButton` shown when verified. Wired to:
+  * `SingleVerifyDialog` — method-select + per-method input → POST `/api/locations/[id]/verify`; auto-switches to complete-with-PIN panel when PENDING verifications exist; PATCH to complete. Same empty-state cascade (not linked / not configured / not connected) as the backend route.
+  * `VerificationHistoryDialog` — lists every verification Google has on file (COMPLETED/PENDING/FAILED) with method, badge, initiation time, and PIN expiry hint.
+- Lint: 0 errors, 0 warnings ✅
+- `bunx tsc --noEmit`: 0 errors ✅
+- Smoke tests: GET /api/locations/bulk-verify → 401; POST → 401; PATCH → 401; /api/health → 200; / → 200. Dev log: only pre-existing `[next-auth][warn][NEXTAUTH_URL]` warning (unrelated). Work record saved to /agent-ctx/BULK-IMPORT-VERIFY-full-stack-engineer.md.
+
+Stage Summary:
+- Files created:
+  * `src/app/api/locations/bulk-verify/route.ts` — GET (status), POST (initiate), PATCH (complete with PINs)
+- Files modified:
+  * `src/components/views/locations-view.tsx` — enhanced AddLocationDialog (refresh + sync-after-import), added available-count badge in Locations header, added Bulk Verify button + BulkVerifyDialog + BulkActionResultCard, added LocationVerifyActions / LocationVerifyHistoryButton / SingleVerifyDialog / VerificationHistoryDialog in location detail
+- Key decisions:
+  * Per-location `requireClientAuth(id, "profile.update")` gate — initiating a verification dispatches a postcard/SMS/call/email; completing one mutates verification state on Google. Both are profile-modifying actions. Failing the gate skips the location (failed[] bucket) rather than aborting the whole bulk job.
+  * 200ms pacing between Google calls inside bulk loops — proactive quota management on top of `withRetry`'s 429/5xx backoff.
+  * Three-bucket response (`initiated` / `failed` / `skipped`) for POST — distinguishes "tried and failed" from "didn't try because pre-conditions weren't met".
+  * Serial sync-after-import loop (not parallel) — keeps Google QPS usage predictable and the progress label ticks up 1-by-1 with the location name.
+  * `available` badge hidden when count is 0 OR status is not_configured/not_connected — per task spec.
+  * `verificationState` reconciliation: GET handler upgrades to "verified" if Google reports a COMPLETED verification even when our cached DB state hasn't caught up.
+  * No new permissions: POST/PATCH gated on `locations.manage` (super_admin only — matches the existing single-location verify route); GET on `locations.view`.

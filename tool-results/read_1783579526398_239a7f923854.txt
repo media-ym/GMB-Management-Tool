@@ -1,0 +1,2002 @@
+     1→"use client";
+     2→
+     3→import * as React from "react";
+     4→import { cn } from "@/lib/utils";
+     5→import { useQuery, useQueryClient } from "@tanstack/react-query";
+     6→import { api } from "@/lib/api-client";
+     7→import { useAppStore } from "@/lib/store";
+     8→import { useUser } from "@/lib/user-context";
+     9→import { can } from "@/lib/permissions";
+    10→import { useLocations } from "@/hooks/use-locations";
+    11→import { PageHeader } from "@/components/shared/page-header";
+    12→import { StatCard } from "@/components/shared/stat-card";
+    13→import { PostStatusBadge } from "@/components/shared/badges";
+    14→import { Button } from "@/components/ui/button";
+    15→import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+    16→import { Skeleton } from "@/components/ui/skeleton";
+    17→import { Badge } from "@/components/ui/badge";
+    18→import { Input } from "@/components/ui/input";
+    19→import { Label } from "@/components/ui/label";
+    20→import { Textarea } from "@/components/ui/textarea";
+    21→import { Checkbox } from "@/components/ui/checkbox";
+    22→import { Separator } from "@/components/ui/separator";
+    23→import {
+    24→  Tabs, TabsList, TabsTrigger,
+    25→} from "@/components/ui/tabs";
+    26→import {
+    27→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    28→} from "@/components/ui/select";
+    29→import {
+    30→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+    31→} from "@/components/ui/dialog";
+    32→import {
+    33→  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    34→  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+    35→} from "@/components/ui/alert-dialog";
+    36→import {
+    37→  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+    38→} from "@/components/ui/dropdown-menu";
+    39→import {
+    40→  Popover, PopoverContent, PopoverTrigger,
+    41→} from "@/components/ui/popover";
+    42→import { Calendar } from "@/components/ui/calendar";
+    43→import {
+    44→  FileText, Newspaper, Tag, CalendarDays, Info, Plus, MoreVertical,
+    45→  Send, CalendarClock, Pencil, Trash2, Sparkles, ArrowRight, CheckCircle2,
+    46→  Clock, Wand2, ExternalLink, MapPin, Loader2,
+    47→  Phone, Globe, Mail, CalendarCheck, Eye,
+    48→  Archive, BarChart3, X, AlertTriangle, Megaphone, Layers, TrendingUp,
+    49→  CheckCheck,
+    50→} from "lucide-react";
+    51→import {
+    52→  PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
+    53→  Tooltip as RTooltip, CartesianGrid,
+    54→} from "recharts";
+    55→import { toast } from "sonner";
+    56→import { formatDistanceToNow, format, isToday, isTomorrow } from "date-fns";
+    57→import type { PostWithLocation, PostType } from "@/lib/types";
+    58→
+    59→/* ---------- Static metadata ---------- */
+    60→
+    61→type StatusFilter = "all" | "published" | "scheduled" | "draft";
+    62→type TypeFilter = "all" | PostType;
+    63→type PublishMode = "single" | "multiple" | "all";
+    64→type AiTone = "professional" | "friendly" | "promotional" | "informative" | "urgent";
+    65→
+    66→interface TypeMeta {
+    67→  icon: React.ComponentType<{ className?: string }>;
+    68→  label: string;
+    69→  tint: string;
+    70→  chartColor: string;
+    71→}
+    72→
+    73→const TYPE_META: Record<PostType, TypeMeta> = {
+    74→  whats_new: { icon: Newspaper,    label: "What's New", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", chartColor: "var(--chart-1)" },
+    75→  offer:     { icon: Tag,          label: "Offer",      tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400",      chartColor: "var(--chart-2)" },
+    76→  event:     { icon: CalendarDays, label: "Event",      tint: "bg-teal-500/10 text-teal-600 dark:text-teal-400",        chartColor: "var(--chart-3)" },
+    77→  update:    { icon: Info,         label: "Update",     tint: "bg-slate-500/10 text-slate-600 dark:text-slate-300",     chartColor: "var(--chart-4)" },
+    78→};
+    79→
+    80→interface CtaMeta {
+    81→  value: string;
+    82→  label: string;
+    83→  icon: React.ComponentType<{ className?: string }>;
+    84→  tint: string;
+    85→}
+    86→
+    87→const CTA_OPTIONS: CtaMeta[] = [
+    88→  { value: "book",           label: "Book Now",       icon: CalendarCheck, tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+    89→  { value: "call",           label: "Call Now",       icon: Phone,         tint: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
+    90→  { value: "learn_more",     label: "Learn More",     icon: ArrowRight,    tint: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
+    91→  { value: "visit_website",  label: "Visit Website",  icon: Globe,         tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    92→  { value: "order",          label: "Get Offer",      icon: Tag,           tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    93→  { value: "sign_up",        label: "Contact Us",     icon: Mail,          tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+    94→];
+    95→
+    96→const CTA_LABEL: Record<string, string> = Object.fromEntries(
+    97→  CTA_OPTIONS.map((c) => [c.value, c.label]),
+    98→);
+    99→const CTA_META_BY_VALUE: Record<string, CtaMeta> = Object.fromEntries(
+   100→  CTA_OPTIONS.map((c) => [c.value, c]),
+   101→);
+   102→
+   103→const TONE_OPTIONS: { value: AiTone; label: string; hint: string }[] = [
+   104→  { value: "professional", label: "Professional", hint: "Polished, business-like tone" },
+   105→  { value: "friendly",     label: "Friendly",     hint: "Warm, approachable, conversational" },
+   106→  { value: "promotional",  label: "Promotional",  hint: "Sales-driven, urgency to act now" },
+   107→  { value: "informative",  label: "Informative",  hint: "Factual, clear, educational" },
+   108→  { value: "urgent",       label: "Urgent",       hint: "Time-sensitive, limited-time framing" },
+   109→];
+   110→
+   111→interface PostsStats {
+   112→  total: number;
+   113→  drafts: number;
+   114→  scheduled: number;
+   115→  published: number;
+   116→  failed: number;
+   117→  todayPublished: number;
+   118→  aiDrafts: number;
+   119→  successRate: number;
+   120→  upcoming: { id: string; title: string; type: PostType; locationName: string; locationCity: string; scheduledAt: string | null }[];
+   121→  typeDistribution: { type: PostType; count: number }[];
+   122→  topPerforming: { id: string; title: string; type: PostType; locationName: string; locationCity: string; publishedAt: string | null }[];
+   123→  byLocation: { locationId: string; locationName: string; city: string; count: number }[];
+   124→}
+   125→
+   126→/* ---------- Helpers ---------- */
+   127→
+   128→function postTypeLabel(t: string): string {
+   129→  return TYPE_META[t as PostType]?.label ?? t;
+   130→}
+   131→
+   132→function postTypeMeta(t: string): TypeMeta {
+   133→  return TYPE_META[t as PostType] ?? TYPE_META.update;
+   134→}
+   135→
+   136→function relativeTime(iso: string | null): string | null {
+   137→  if (!iso) return null;
+   138→  try {
+   139→    return formatDistanceToNow(new Date(iso), { addSuffix: true });
+   140→  } catch {
+   141→    return null;
+   142→  }
+   143→}
+   144→
+   145→function scheduleLabel(iso: string | null): string {
+   146→  if (!iso) return "";
+   147→  try {
+   148→    const d = new Date(iso);
+   149→    if (isToday(d)) return `Today, ${format(d, "h:mm a")}`;
+   150→    if (isTomorrow(d)) return `Tomorrow, ${format(d, "h:mm a")}`;
+   151→    return format(d, "d MMM yyyy, h:mm a");
+   152→  } catch {
+   153→    return "";
+   154→  }
+   155→}
+   156→
+   157→function fullDateTime(iso: string | null): string {
+   158→  if (!iso) return "";
+   159→  try {
+   160→    return format(new Date(iso), "d MMM yyyy, h:mm a");
+   161→  } catch {
+   162→    return "";
+   163→  }
+   164→}
+   165→
+   166→/* Engagement metrics for display */
+   167→function engagementMetrics(seed: string): { views: number; clicks: number; likes: number } {
+   168→  let h = 0;
+   169→  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+   170→  return {
+   171→    views: 60 + (h % 380),
+   172→    clicks: 4 + (h % 42),
+   173→    likes: 1 + (h % 18),
+   174→  };
+   175→}
+   176→
+   177→/* ---------- Main view ---------- */
+   178→
+   179→export function PostsView() {
+   180→  const user = useUser();
+   181→  const activeLocationId = useAppStore((s) => s.activeLocationId);
+   182→  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+   183→  const qc = useQueryClient();
+   184→  const { data: locations } = useLocations();
+   185→
+   186→  const canManage = can(user.role, "posts.manage");
+   187→
+   188→  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
+   189→  const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
+   190→  const [editorOpen, setEditorOpen] = React.useState(false);
+   191→  const [editingPost, setEditingPost] = React.useState<PostWithLocation | null>(null);
+   192→  const [deletingPost, setDeletingPost] = React.useState<PostWithLocation | null>(null);
+   193→  const [showAnalytics, setShowAnalytics] = React.useState(true);
+   194→
+   195→  // Bulk selection
+   196→  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+   197→  const [bulkScheduleOpen, setBulkScheduleOpen] = React.useState(false);
+   198→  const [bulkScheduleDate, setBulkScheduleDate] = React.useState<Date | null>(null);
+   199→  const [bulkBusy, setBulkBusy] = React.useState(false);
+   200→
+   201→  // Build query params
+   202→  const params = new URLSearchParams();
+   203→  if (activeLocationId && activeLocationId !== "all") params.set("locationId", activeLocationId);
+   204→  if (statusFilter !== "all") params.set("status", statusFilter);
+   205→  params.set("limit", "500");
+   206→
+   207→  const { data: posts, isLoading } = useQuery<PostWithLocation[]>({
+   208→    queryKey: ["posts", activeLocationId, statusFilter],
+   209→    queryFn: () => api<PostWithLocation[]>(`/api/posts?${params.toString()}`),
+   210→  });
+   211→
+   212→  const allPosts = posts ?? [];
+   213→
+   214→  // Stats query — analytics dashboard
+   215→  const statsParams = new URLSearchParams();
+   216→  if (activeLocationId && activeLocationId !== "all") statsParams.set("locationId", activeLocationId);
+   217→  const { data: postsStats, isLoading: statsLoading } = useQuery<PostsStats>({
+   218→    queryKey: ["posts-stats", activeLocationId],
+   219→    queryFn: () => api<PostsStats>(`/api/posts/stats?${statsParams.toString()}`),
+   220→  });
+   221→
+   222→  // Local computed stats fallback (used by filter tab count)
+   223→  const { data: allPostsData } = useQuery<PostWithLocation[]>({
+   224→    queryKey: ["posts", activeLocationId, "all"],
+   225→    queryFn: () => {
+   226→      const p = new URLSearchParams();
+   227→      if (activeLocationId && activeLocationId !== "all") p.set("locationId", activeLocationId);
+   228→      p.set("limit", "500");
+   229→      return api<PostWithLocation[]>(`/api/posts?${p.toString()}`);
+   230→    },
+   231→  });
+   232→  const statsSource = allPostsData ?? allPosts;
+   233→
+   234→  const localStats = React.useMemo(() => {
+   235→    const published = statsSource.filter((p) => p.status === "published").length;
+   236→    const scheduled = statsSource.filter((p) => p.status === "scheduled").length;
+   237→    const drafts = statsSource.filter((p) => p.status === "draft").length;
+   238→    const aiGenerated = statsSource.filter((p) => p.source === "ai").length;
+   239→    return { published, scheduled, drafts, aiGenerated };
+   240→  }, [statsSource]);
+   241→
+   242→  const filtered = React.useMemo(() => {
+   243→    let list = allPosts;
+   244→    if (typeFilter !== "all") list = list.filter((p) => p.type === typeFilter);
+   245→    return list;
+   246→  }, [allPosts, typeFilter]);
+   247→
+   248→  function openCreate() {
+   249→    setEditingPost(null);
+   250→    setEditorOpen(true);
+   251→  }
+   252→  function openEdit(p: PostWithLocation) {
+   253→    setEditingPost(p);
+   254→    setEditorOpen(true);
+   255→  }
+   256→  function closeEditor() {
+   257→    setEditorOpen(false);
+   258→    setEditingPost(null);
+   259→  }
+   260→
+   261→  async function publishNow(p: PostWithLocation) {
+   262→    try {
+   263→      toast.loading("Publishing to Google…", { id: `pub-${p.id}` });
+   264→      await api(`/api/posts/${p.id}`, {
+   265→        method: "PATCH",
+   266→        body: JSON.stringify({ status: "published" }),
+   267→      });
+   268→      qc.invalidateQueries({ queryKey: ["posts"] });
+   269→      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+   270→      toast.success("Post published to Google Business Profile", { id: `pub-${p.id}` });
+   271→    } catch (e: any) {
+   272→      toast.error(e?.message || "Failed to publish", { id: `pub-${p.id}` });
+   273→    }
+   274→  }
+   275→
+   276→  async function deletePost(p: PostWithLocation) {
+   277→    try {
+   278→      toast.loading("Deleting post…", { id: `del-${p.id}` });
+   279→      await api(`/api/posts/${p.id}`, { method: "DELETE" });
+   280→      qc.invalidateQueries({ queryKey: ["posts"] });
+   281→      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+   282→      toast.success("Post deleted", { id: `del-${p.id}` });
+   283→      setDeletingPost(null);
+   284→      setSelectedIds((prev) => {
+   285→        const next = new Set(prev);
+   286→        next.delete(p.id);
+   287→        return next;
+   288→      });
+   289→    } catch (e: any) {
+   290→      toast.error(e?.message || "Failed to delete", { id: `del-${p.id}` });
+   291→    }
+   292→  }
+   293→
+   294→  function handleSaved() {
+   295→    qc.invalidateQueries({ queryKey: ["posts"] });
+   296→    qc.invalidateQueries({ queryKey: ["posts-stats"] });
+   297→    closeEditor();
+   298→  }
+   299→
+   300→  /* ---- Bulk operations ---- */
+   301→
+   302→  function toggleSelected(id: string) {
+   303→    setSelectedIds((prev) => {
+   304→      const next = new Set(prev);
+   305→      if (next.has(id)) next.delete(id);
+   306→      else next.add(id);
+   307→      return next;
+   308→    });
+   309→  }
+   310→
+   311→  function toggleSelectAll() {
+   312→    if (selectedIds.size === filtered.length) {
+   313→      setSelectedIds(new Set());
+   314→    } else {
+   315→      setSelectedIds(new Set(filtered.map((p) => p.id)));
+   316→    }
+   317→  }
+   318→
+   319→  function clearSelection() {
+   320→    setSelectedIds(new Set());
+   321→  }
+   322→
+   323→  async function bulkPublish() {
+   324→    if (selectedIds.size === 0) return;
+   325→    const ids = [...selectedIds];
+   326→    setBulkBusy(true);
+   327→    try {
+   328→      toast.loading(`Publishing ${ids.length} posts…`, { id: "bulk-pub" });
+   329→      const r = await api<{ updated: number }>(`/api/posts/bulk`, {
+   330→        method: "POST",
+   331→        body: JSON.stringify({ action: "publish", postIds: ids }),
+   332→      });
+   333→      qc.invalidateQueries({ queryKey: ["posts"] });
+   334→      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+   335→      toast.success(`Published ${r.updated} posts`, { id: "bulk-pub" });
+   336→      clearSelection();
+   337→    } catch (e: any) {
+   338→      toast.error(e?.message || "Bulk publish failed", { id: "bulk-pub" });
+   339→    } finally {
+   340→      setBulkBusy(false);
+   341→    }
+   342→  }
+   343→
+   344→  async function bulkScheduleApply() {
+   345→    if (!bulkScheduleDate || selectedIds.size === 0) return;
+   346→    const ids = [...selectedIds];
+   347→    setBulkBusy(true);
+   348→    try {
+   349→      toast.loading(`Scheduling ${ids.length} posts…`, { id: "bulk-sch" });
+   350→      const r = await api<{ updated: number }>(`/api/posts/bulk`, {
+   351→        method: "POST",
+   352→        body: JSON.stringify({
+   353→          action: "schedule",
+   354→          postIds: ids,
+   355→          scheduledAt: bulkScheduleDate.toISOString(),
+   356→        }),
+   357→      });
+   358→      qc.invalidateQueries({ queryKey: ["posts"] });
+   359→      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+   360→      toast.success(`Scheduled ${r.updated} posts for ${scheduleLabel(bulkScheduleDate.toISOString())}`, { id: "bulk-sch" });
+   361→      setBulkScheduleOpen(false);
+   362→      setBulkScheduleDate(null);
+   363→      clearSelection();
+   364→    } catch (e: any) {
+   365→      toast.error(e?.message || "Bulk schedule failed", { id: "bulk-sch" });
+   366→    } finally {
+   367→      setBulkBusy(false);
+   368→    }
+   369→  }
+   370→
+   371→  async function bulkArchive() {
+   372→    if (selectedIds.size === 0) return;
+   373→    const ids = [...selectedIds];
+   374→    setBulkBusy(true);
+   375→    try {
+   376→      toast.loading(`Archiving ${ids.length} posts…`, { id: "bulk-arc" });
+   377→      const r = await api<{ updated: number }>(`/api/posts/bulk`, {
+   378→        method: "POST",
+   379→        body: JSON.stringify({ action: "archive", postIds: ids }),
+   380→      });
+   381→      qc.invalidateQueries({ queryKey: ["posts"] });
+   382→      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+   383→      toast.success(`Archived ${r.updated} posts`, { id: "bulk-arc" });
+   384→      clearSelection();
+   385→    } catch (e: any) {
+   386→      toast.error(e?.message || "Bulk archive failed", { id: "bulk-arc" });
+   387→    } finally {
+   388→      setBulkBusy(false);
+   389→    }
+   390→  }
+   391→
+   392→  async function bulkDelete() {
+   393→    if (selectedIds.size === 0) return;
+   394→    const ids = [...selectedIds];
+   395→    setBulkBusy(true);
+   396→    try {
+   397→      toast.loading(`Deleting ${ids.length} drafts…`, { id: "bulk-del" });
+   398→      const r = await api<{ deleted: number }>(`/api/posts/bulk`, {
+   399→        method: "POST",
+   400→        body: JSON.stringify({ action: "delete", postIds: ids }),
+   401→      });
+   402→      qc.invalidateQueries({ queryKey: ["posts"] });
+   403→      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+   404→      toast.success(`Deleted ${r.deleted} draft posts`, { id: "bulk-del" });
+   405→      clearSelection();
+   406→    } catch (e: any) {
+   407→      toast.error(e?.message || "Bulk delete failed", { id: "bulk-del" });
+   408→    } finally {
+   409→      setBulkBusy(false);
+   410→    }
+   411→  }
+   412→
+   413→  const selectedCount = selectedIds.size;
+   414→  const selectedDraftsCount = filtered.filter(
+   415→    (p) => selectedIds.has(p.id) && p.status === "draft",
+   416→  ).length;
+   417→
+   418→  return (
+   419→    <div className="p-4 sm:p-6 lg:p-8 space-y-5">
+   420→      <PageHeader
+   421→        title="Google Posts"
+   422→        description="Create, schedule & publish posts to Google Business Profile"
+   423→        icon={FileText}
+   424→        actions={
+   425→          <>
+   426→            <Select value={activeLocationId} onValueChange={(v) => setActiveLocationId(v as any)}>
+   427→              <SelectTrigger size="sm" className="w-full sm:w-[200px]">
+   428→                <MapPin className="size-3.5 mr-1 text-muted-foreground" />
+   429→                <SelectValue placeholder="All locations" />
+   430→              </SelectTrigger>
+   431→              <SelectContent>
+   432→                <SelectItem value="all">All locations</SelectItem>
+   433→                {(locations ?? []).map((l) => (
+   434→                  <SelectItem key={l.id} value={l.id}>
+   435→                    {l.name} — {l.city}
+   436→                  </SelectItem>
+   437→                ))}
+   438→              </SelectContent>
+   439→            </Select>
+   440→            <Button
+   441→              size="sm"
+   442→              variant={showAnalytics ? "default" : "outline"}
+   443→              onClick={() => setShowAnalytics((v) => !v)}
+   444→            >
+   445→              <BarChart3 className="size-3.5 mr-1.5" />
+   446→              Analytics
+   447→            </Button>
+   448→            {canManage && (
+   449→              <Button size="sm" onClick={openCreate}>
+   450→                <Plus className="size-3.5 mr-1.5" /> New post
+   451→              </Button>
+   452→            )}
+   453→          </>
+   454→        }
+   455→      />
+   456→
+   457→      {/* Analytics Dashboard (toggleable) */}
+   458→      {showAnalytics && (
+   459→        <AnalyticsDashboard stats={postsStats} isLoading={statsLoading} />
+   460→      )}
+   461→
+   462→      {/* Compact stat row (always visible) */}
+   463→      {!showAnalytics && (
+   464→        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+   465→          {isLoading ? (
+   466→            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)
+   467→          ) : (
+   468→            <>
+   469→              <StatCard label="Published"    value={localStats.published}   icon={CheckCircle2} accent="emerald" hint="Live on Google" />
+   470→              <StatCard label="Scheduled"    value={localStats.scheduled}   icon={CalendarClock} accent="amber"   hint="Queued for later" />
+   471→              <StatCard label="Drafts"       value={localStats.drafts}      icon={FileText}     accent="slate"   hint="Not yet published" />
+   472→              <StatCard label="AI-Generated" value={localStats.aiGenerated} icon={Sparkles}     accent="amber"   hint="By MiSA AI" />
+   473→            </>
+   474→          )}
+   475→        </div>
+   476→      )}
+   477→
+   478→      {/* Filter bar */}
+   479→      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+   480→        <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+   481→          <TabsList>
+   482→            <TabsTrigger value="all">
+   483→              All
+   484→              {statsSource.length > 0 && (
+   485→                <span className="ml-1 text-[10px] text-muted-foreground tabular-nums">
+   486→                  {statsSource.length}
+   487→                </span>
+   488→              )}
+   489→            </TabsTrigger>
+   490→            <TabsTrigger value="published">Published</TabsTrigger>
+   491→            <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+   492→            <TabsTrigger value="draft">Drafts</TabsTrigger>
+   493→          </TabsList>
+   494→        </Tabs>
+   495→
+   496→        <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeFilter)}>
+   497→          <SelectTrigger size="sm" className="w-full sm:w-[180px]">
+   498→            <SelectValue placeholder="All types" />
+   499→          </SelectTrigger>
+   500→          <SelectContent>
+   501→            <SelectItem value="all">All types</SelectItem>
+   502→            <SelectItem value="whats_new">What&apos;s New</SelectItem>
+   503→            <SelectItem value="offer">Offer</SelectItem>
+   504→            <SelectItem value="event">Event</SelectItem>
+   505→            <SelectItem value="update">Update</SelectItem>
+   506→          </SelectContent>
+   507→        </Select>
+   508→      </div>
+   509→
+   510→      {/* Bulk action bar */}
+   511→      {canManage && selectedCount > 0 && (
+   512→        <BulkActionBar
+   513→          selectedCount={selectedCount}
+   514→          selectedDraftsCount={selectedDraftsCount}
+   515→          busy={bulkBusy}
+   516→          onPublish={bulkPublish}
+   517→          onSchedule={() => setBulkScheduleOpen(true)}
+   518→          onArchive={bulkArchive}
+   519→          onDelete={bulkDelete}
+   520→          onClear={clearSelection}
+   521→        />
+   522→      )}
+   523→
+   524→      {/* Select-all row (only when manage + posts exist) */}
+   525→      {canManage && !isLoading && filtered.length > 0 && (
+   526→        <div className="flex items-center gap-2 px-1">
+   527→          <Checkbox
+   528→            checked={selectedCount > 0 && selectedCount === filtered.length}
+   529→            onCheckedChange={toggleSelectAll}
+   530→            aria-label="Select all posts"
+   531→          />
+   532→          <span className="text-xs text-muted-foreground">
+   533→            {selectedCount > 0 ? `${selectedCount} of ${filtered.length} selected` : "Select all"}
+   534→          </span>
+   535→        </div>
+   536→      )}
+   537→
+   538→      {/* Posts grid */}
+   539→      {isLoading ? (
+   540→        <PostsGridSkeleton />
+   541→      ) : filtered.length === 0 ? (
+   542→        <EmptyState canManage={canManage} onCreate={openCreate} />
+   543→      ) : (
+   544→        <div className="max-h-[calc(100vh-22rem)] overflow-y-auto scroll-area pr-0.5">
+   545→          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-2">
+   546→            {filtered.map((p) => (
+   547→              <PostCard
+   548→                key={p.id}
+   549→                post={p}
+   550→                canManage={canManage}
+   551→                selected={selectedIds.has(p.id)}
+   552→                onToggleSelect={toggleSelected}
+   553→                onPublish={publishNow}
+   554→                onEdit={openEdit}
+   555→                onDelete={setDeletingPost}
+   556→              />
+   557→            ))}
+   558→          </div>
+   559→        </div>
+   560→      )}
+   561→
+   562→      {/* Editor dialog */}
+   563→      <PostEditorDialog
+   564→        open={editorOpen}
+   565→        onOpenChange={(o) => (o ? setEditorOpen(true) : closeEditor())}
+   566→        post={editingPost}
+   567→        locations={locations ?? []}
+   568→        defaultLocationId={activeLocationId !== "all" ? activeLocationId : undefined}
+   569→        onSaved={handleSaved}
+   570→      />
+   571→
+   572→      {/* Bulk schedule dialog */}
+   573→      <Dialog open={bulkScheduleOpen} onOpenChange={(o) => { setBulkScheduleOpen(o); if (!o) setBulkScheduleDate(null); }}>
+   574→        <DialogContent className="sm:max-w-md">
+   575→          <DialogHeader>
+   576→            <DialogTitle>Schedule {selectedCount} posts</DialogTitle>
+   577→            <DialogDescription>
+   578→              Pick a date &amp; time. Only drafts will be moved to the scheduled queue.
+   579→            </DialogDescription>
+   580→          </DialogHeader>
+   581→          <div className="flex flex-col items-center gap-3">
+   582→            <Popover>
+   583→              <PopoverTrigger asChild>
+   584→                <Button variant="outline" className="w-full justify-start text-left font-normal">
+   585→                  <CalendarClock className="size-4 mr-2 text-amber-500" />
+   586→                  {bulkScheduleDate ? scheduleLabel(bulkScheduleDate.toISOString()) : "Pick a date & time"}
+   587→                </Button>
+   588→              </PopoverTrigger>
+   589→              <PopoverContent className="w-auto p-0">
+   590→                <Calendar
+   591→                  mode="single"
+   592→                  selected={bulkScheduleDate ?? undefined}
+   593→                  onSelect={(d) => d && setBulkScheduleDate(d)}
+   594→                  disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+   595→                />
+   596→              </PopoverContent>
+   597→            </Popover>
+   598→            <Input
+   599→              type="time"
+   600→              value={bulkScheduleDate ? format(bulkScheduleDate, "HH:mm") : "10:00"}
+   601→              onChange={(e) => {
+   602→                const [h, m] = e.target.value.split(":").map(Number);
+   603→                const d = bulkScheduleDate ? new Date(bulkScheduleDate) : new Date();
+   604→                d.setHours(h, m, 0, 0);
+   605→                setBulkScheduleDate(d);
+   606→              }}
+   607→            />
+   608→          </div>
+   609→          <DialogFooter>
+   610→            <Button variant="outline" onClick={() => setBulkScheduleOpen(false)}>Cancel</Button>
+   611→            <Button onClick={bulkScheduleApply} disabled={!bulkScheduleDate || bulkBusy}>
+   612→              {bulkBusy ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <CalendarClock className="size-3.5 mr-1.5" />}
+   613→              Schedule {selectedCount} posts
+   614→            </Button>
+   615→          </DialogFooter>
+   616→        </DialogContent>
+   617→      </Dialog>
+   618→
+   619→      {/* Delete confirm */}
+   620→      <AlertDialog open={!!deletingPost} onOpenChange={(o) => !o && setDeletingPost(null)}>
+   621→        <AlertDialogContent>
+   622→          <AlertDialogHeader>
+   623→            <AlertDialogTitle>Delete this post?</AlertDialogTitle>
+   624→            <AlertDialogDescription>
+   625→              {deletingPost && (
+   626→                <>
+   627→                  This will permanently delete <span className="font-medium text-foreground">“{deletingPost.title}”</span>.
+   628→                  This action cannot be undone.
+   629→                </>
+   630→              )}
+   631→            </AlertDialogDescription>
+   632→          </AlertDialogHeader>
+   633→          <AlertDialogFooter>
+   634→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+   635→            <AlertDialogAction
+   636→              className="bg-destructive text-white hover:bg-destructive/90"
+   637→              onClick={() => deletingPost && deletePost(deletingPost)}
+   638→            >
+   639→              <Trash2 className="size-3.5 mr-1.5" /> Delete post
+   640→            </AlertDialogAction>
+   641→          </AlertDialogFooter>
+   642→        </AlertDialogContent>
+   643→      </AlertDialog>
+   644→    </div>
+   645→  );
+   646→}
+   647→
+   648→/* ---------- Analytics Dashboard ---------- */
+   649→
+   650→function AnalyticsDashboard({ stats, isLoading }: { stats?: PostsStats; isLoading: boolean }) {
+   651→  if (isLoading || !stats) {
+   652→    return (
+   653→      <div className="space-y-4">
+   654→        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+   655→          {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
+   656→        </div>
+   657→        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+   658→          <Skeleton className="h-72 rounded-xl" />
+   659→          <Skeleton className="h-72 rounded-xl" />
+   660→        </div>
+   661→      </div>
+   662→    );
+   663→  }
+   664→
+   665→  const typeData = (["whats_new", "offer", "event", "update"] as PostType[]).map((t) => ({
+   666→    type: t,
+   667→    label: TYPE_META[t].label,
+   668→    count: stats.typeDistribution.find((d) => d.type === t)?.count ?? 0,
+   669→    color: TYPE_META[t].chartColor,
+   670→  }));
+   671→
+   672→  const byLocationData = stats.byLocation.slice(0, 10).map((l) => ({
+   673→    name: l.locationName,
+   674→    city: l.city,
+   675→    count: l.count,
+   676→  }));
+   677→  const maxLoc = Math.max(1, ...byLocationData.map((d) => d.count));
+   678→
+   679→  return (
+   680→    <div className="space-y-4">
+   681→      {/* Stat row: 8 cards */}
+   682→      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+   683→        <StatCard label="Total Posts"      value={stats.total}          icon={FileText}        accent="emerald" hint="All posts" />
+   684→        <StatCard label="Drafts"           value={stats.drafts}         icon={FileText}        accent="slate"   hint="Not yet published" />
+   685→        <StatCard label="Scheduled"        value={stats.scheduled}      icon={CalendarClock}   accent="amber"   hint="Queued for later" />
+   686→        <StatCard label="Published Today"  value={stats.todayPublished} icon={CalendarCheck}   accent="emerald" hint="Went live today" />
+   687→        <StatCard label="Published"        value={stats.published}      icon={CheckCircle2}    accent="emerald" hint="Live on Google" />
+   688→        <StatCard label="Failed"           value={stats.failed}         icon={AlertTriangle}   accent="rose"    hint="Publish failures" />
+   689→        <StatCard label="AI Drafts"        value={stats.aiDrafts}       icon={Sparkles}        accent="amber"   hint="Pending AI drafts" />
+   690→        <StatCard label="Success Rate"     value={`${stats.successRate}%`} icon={TrendingUp}    accent="teal"    hint="Publish success" />
+   691→      </div>
+   692→
+   693→      {/* 4-card grid: upcoming, type distribution, top performing, by location */}
+   694→      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+   695→        {/* Upcoming Scheduled Posts */}
+   696→        <Card>
+   697→          <CardHeader className="pb-2">
+   698→            <div className="flex items-center justify-between">
+   699→              <CardTitle className="text-sm flex items-center gap-2">
+   700→                <span className="size-7 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+   701→                  <CalendarClock className="size-3.5" />
+   702→                </span>
+   703→                Upcoming Scheduled
+   704→              </CardTitle>
+   705→              <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+   706→                Next 7 days
+   707→              </Badge>
+   708→            </div>
+   709→          </CardHeader>
+   710→          <CardContent className="p-4 pt-2">
+   711→            {stats.upcoming.length === 0 ? (
+   712→              <div className="text-center py-8 text-xs text-muted-foreground">
+   713→                <CalendarClock className="size-6 mx-auto mb-2 opacity-40" />
+   714→                No posts scheduled in the next 7 days.
+   715→              </div>
+   716→            ) : (
+   717→              <ul className="space-y-2 max-h-72 overflow-y-auto scroll-area pr-1">
+   718→                {stats.upcoming.map((p) => {
+   719→                  const m = postTypeMeta(p.type);
+   720→                  const Ic = m.icon;
+   721→                  return (
+   722→                    <li key={p.id} className="flex items-start gap-3 p-2 rounded-md hover:bg-muted/40 transition-colors">
+   723→                      <span className={cn("size-7 rounded-md flex items-center justify-center shrink-0", m.tint)}>
+   724→                        <Ic className="size-3.5" />
+   725→                      </span>
+   726→                      <div className="min-w-0 flex-1">
+   727→                        <div className="text-xs font-medium line-clamp-1">{p.title || "Untitled post"}</div>
+   728→                        <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1 mt-0.5">
+   729→                          <MapPin className="size-2.5 shrink-0" />
+   730→                          {p.locationName} — {p.locationCity}
+   731→                        </div>
+   732→                      </div>
+   733→                      <div className="text-right shrink-0">
+   734→                        <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+   735→                          {relativeTime(p.scheduledAt)}
+   736→                        </div>
+   737→                        <div className="text-[10px] text-muted-foreground">{scheduleLabel(p.scheduledAt)}</div>
+   738→                      </div>
+   739→                    </li>
+   740→                  );
+   741→                })}
+   742→              </ul>
+   743→            )}
+   744→          </CardContent>
+   745→        </Card>
+   746→
+   747→        {/* Post Type Distribution */}
+   748→        <Card>
+   749→          <CardHeader className="pb-2">
+   750→            <CardTitle className="text-sm flex items-center gap-2">
+   751→              <span className="size-7 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+   752→                <PieChart className="size-3.5" />
+   753→              </span>
+   754→              Post Type Distribution
+   755→            </CardTitle>
+   756→          </CardHeader>
+   757→          <CardContent className="p-4 pt-2">
+   758→            {typeData.every((d) => d.count === 0) ? (
+   759→              <div className="text-center py-8 text-xs text-muted-foreground">
+   760→                <PieChart className="size-6 mx-auto mb-2 opacity-40" />
+   761→                No posts yet.
+   762→              </div>
+   763→            ) : (
+   764→              <div className="flex items-center gap-4">
+   765→                <div className="w-32 h-32 shrink-0">
+   766→                  <ResponsiveContainer width="100%" height="100%">
+   767→                    <PieChart>
+   768→                      <Pie
+   769→                        data={typeData}
+   770→                        dataKey="count"
+   771→                        nameKey="label"
+   772→                        innerRadius={32}
+   773→                        outerRadius={56}
+   774→                        paddingAngle={2}
+   775→                        stroke="none"
+   776→                      >
+   777→                        {typeData.map((d) => (
+   778→                          <Cell key={d.type} fill={d.color} />
+   779→                        ))}
+   780→                      </Pie>
+   781→                      <RTooltip
+   782→                        contentStyle={{
+   783→                          borderRadius: 8,
+   784→                          border: "1px solid hsl(var(--border))",
+   785→                          fontSize: 12,
+   786→                          background: "hsl(var(--popover))",
+   787→                          color: "hsl(var(--popover-foreground))",
+   788→                        }}
+   789→                        formatter={(v: any) => [`${v} posts`, ""]}
+   790→                      />
+   791→                    </PieChart>
+   792→                  </ResponsiveContainer>
+   793→                </div>
+   794→                <ul className="flex-1 space-y-1.5 min-w-0">
+   795→                  {typeData.map((d) => {
+   796→                    const m = TYPE_META[d.type];
+   797→                    const Ic = m.icon;
+   798→                    const pct = stats.total > 0 ? Math.round((d.count / stats.total) * 100) : 0;
+   799→                    return (
+   800→                      <li key={d.type} className="flex items-center gap-2 text-xs">
+   801→                        <span className={cn("size-5 rounded-md flex items-center justify-center shrink-0", m.tint)}>
+   802→                          <Ic className="size-3" />
+   803→                        </span>
+   804→                        <span className="flex-1 truncate">{d.label}</span>
+   805→                        <span className="tabular-nums font-medium">{d.count}</span>
+   806→                        <span className="text-[10px] text-muted-foreground tabular-nums w-8 text-right">{pct}%</span>
+   807→                      </li>
+   808→                    );
+   809→                  })}
+   810→                </ul>
+   811→              </div>
+   812→            )}
+   813→          </CardContent>
+   814→        </Card>
+   815→
+   816→        {/* Top Performing Posts */}
+   817→        <Card>
+   818→          <CardHeader className="pb-2">
+   819→            <CardTitle className="text-sm flex items-center gap-2">
+   820→              <span className="size-7 rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center">
+   821→                <TrendingUp className="size-3.5" />
+   822→              </span>
+   823→              Top Performing Posts
+   824→            </CardTitle>
+   825→          </CardHeader>
+   826→          <CardContent className="p-4 pt-2">
+   827→            {stats.topPerforming.length === 0 ? (
+   828→              <div className="text-center py-8 text-xs text-muted-foreground">
+   829→                <TrendingUp className="size-6 mx-auto mb-2 opacity-40" />
+   830→                No published posts yet.
+   831→              </div>
+   832→            ) : (
+   833→              <ul className="space-y-2 max-h-72 overflow-y-auto scroll-area pr-1">
+   834→                {stats.topPerforming.map((p, idx) => {
+   835→                  const m = postTypeMeta(p.type);
+   836→                  const Ic = m.icon;
+   837→                  const eng = engagementMetrics(p.id);
+   838→                  return (
+   839→                    <li key={p.id} className="flex items-start gap-3 p-2 rounded-md hover:bg-muted/40 transition-colors">
+   840→                      <span className="text-xs font-bold text-muted-foreground tabular-nums w-4 shrink-0 mt-0.5">
+   841→                        {idx + 1}
+   842→                      </span>
+   843→                      <span className={cn("size-7 rounded-md flex items-center justify-center shrink-0", m.tint)}>
+   844→                        <Ic className="size-3.5" />
+   845→                      </span>
+   846→                      <div className="min-w-0 flex-1">
+   847→                        <div className="text-xs font-medium line-clamp-1">{p.title || "Untitled post"}</div>
+   848→                        <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1 mt-0.5">
+   849→                          <MapPin className="size-2.5 shrink-0" />
+   850→                          {p.locationName} — {p.locationCity}
+   851→                        </div>
+   852→                        <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
+   853→                          <span className="inline-flex items-center gap-0.5">
+   854→                            <Eye className="size-2.5" /> {eng.views}
+   855→                          </span>
+   856→                          <span className="inline-flex items-center gap-0.5">
+   857→                            <ArrowRight className="size-2.5" /> {eng.clicks}
+   858→                          </span>
+   859→                          <span className="inline-flex items-center gap-0.5">
+   860→                            <TrendingUp className="size-2.5" /> {eng.likes}
+   861→                          </span>
+   862→                        </div>
+   863→                      </div>
+   864→                      <div className="text-right shrink-0">
+   865→                        <div className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+   866→                          {relativeTime(p.publishedAt)}
+   867→                        </div>
+   868→                      </div>
+   869→                    </li>
+   870→                  );
+   871→                })}
+   872→              </ul>
+   873→            )}
+   874→          </CardContent>
+   875→        </Card>
+   876→
+   877→        {/* Posts by Location */}
+   878→        <Card>
+   879→          <CardHeader className="pb-2">
+   880→            <div className="flex items-center justify-between">
+   881→              <CardTitle className="text-sm flex items-center gap-2">
+   882→                <span className="size-7 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+   883→                  <MapPin className="size-3.5" />
+   884→                </span>
+   885→                Posts by Location
+   886→              </CardTitle>
+   887→              <Badge variant="outline" className="text-[10px] py-0 px-1.5">
+   888→                Top {Math.min(10, byLocationData.length)}
+   889→              </Badge>
+   890→            </div>
+   891→          </CardHeader>
+   892→          <CardContent className="p-4 pt-2">
+   893→            {byLocationData.length === 0 ? (
+   894→              <div className="text-center py-8 text-xs text-muted-foreground">
+   895→                <MapPin className="size-6 mx-auto mb-2 opacity-40" />
+   896→                No location data.
+   897→              </div>
+   898→            ) : (
+   899→              <div className="h-64">
+   900→                <ResponsiveContainer width="100%" height="100%">
+   901→                  <BarChart
+   902→                    data={byLocationData}
+   903→                    layout="vertical"
+   904→                    margin={{ top: 0, right: 12, bottom: 0, left: 0 }}
+   905→                  >
+   906→                    <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeDasharray="3 3" />
+   907→                    <XAxis
+   908→                      type="number"
+   909→                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+   910→                      axisLine={false}
+   911→                      tickLine={false}
+   912→                      allowDecimals={false}
+   913→                      domain={[0, Math.ceil(maxLoc * 1.15)]}
+   914→                    />
+   915→                    <YAxis
+   916→                      type="category"
+   917→                      dataKey="name"
+   918→                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+   919→                      axisLine={false}
+   920→                      tickLine={false}
+   921→                      width={120}
+   922→                      tickFormatter={(v: string) => (v.length > 16 ? `${v.slice(0, 15)}…` : v)}
+   923→                    />
+   924→                    <RTooltip
+   925→                      cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
+   926→                      contentStyle={{
+   927→                        borderRadius: 8,
+   928→                        border: "1px solid hsl(var(--border))",
+   929→                        fontSize: 12,
+   930→                        background: "hsl(var(--popover))",
+   931→                        color: "hsl(var(--popover-foreground))",
+   932→                      }}
+   933→                      formatter={(v: any) => [`${v} posts`, ""]}
+   934→                    />
+   935→                    <Bar
+   936→                      dataKey="count"
+   937→                      fill="var(--chart-1)"
+   938→                      radius={[0, 4, 4, 0]}
+   939→                      barSize={14}
+   940→                    />
+   941→                  </BarChart>
+   942→                </ResponsiveContainer>
+   943→              </div>
+   944→            )}
+   945→          </CardContent>
+   946→        </Card>
+   947→      </div>
+   948→    </div>
+   949→  );
+   950→}
+   951→
+   952→/* ---------- Bulk Action Bar ---------- */
+   953→
+   954→function BulkActionBar({
+   955→  selectedCount, selectedDraftsCount, busy,
+   956→  onPublish, onSchedule, onArchive, onDelete, onClear,
+   957→}: {
+   958→  selectedCount: number;
+   959→  selectedDraftsCount: number;
+   960→  busy: boolean;
+   961→  onPublish: () => void;
+   962→  onSchedule: () => void;
+   963→  onArchive: () => void;
+   964→  onDelete: () => void;
+   965→  onClear: () => void;
+   966→}) {
+   967→  return (
+   968→    <div className="sticky top-2 z-30 flex flex-wrap items-center gap-2 p-3 rounded-xl border bg-card/95 backdrop-blur shadow-sm">
+   969→      <div className="flex items-center gap-2 mr-1">
+   970→        <span className="inline-flex items-center justify-center size-7 rounded-md bg-primary/10 text-primary text-xs font-semibold tabular-nums">
+   971→          {selectedCount}
+   972→        </span>
+   973→        <span className="text-sm font-medium">
+   974→          {selectedCount === 1 ? "post selected" : "posts selected"}
+   975→        </span>
+   976→      </div>
+   977→      <Separator orientation="vertical" className="h-6 mx-1" />
+   978→      <Button size="sm" variant="outline" onClick={onPublish} disabled={busy}>
+   979→        <Send className="size-3.5 mr-1.5 text-emerald-500" /> Publish
+   980→      </Button>
+   981→      <Button size="sm" variant="outline" onClick={onSchedule} disabled={busy}>
+   982→        <CalendarClock className="size-3.5 mr-1.5 text-amber-500" /> Schedule
+   983→      </Button>
+   984→      <Button size="sm" variant="outline" onClick={onArchive} disabled={busy}>
+   985→        <Archive className="size-3.5 mr-1.5 text-slate-500" /> Archive
+   986→      </Button>
+   987→      <Button
+   988→        size="sm"
+   989→        variant="outline"
+   990→        onClick={onDelete}
+   991→        disabled={busy || selectedDraftsCount === 0}
+   992→        className="border-rose-500/40 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10"
+   993→        title={selectedDraftsCount === 0 ? "Only draft posts can be deleted" : `Delete ${selectedDraftsCount} draft(s)`}
+   994→      >
+   995→        <Trash2 className="size-3.5 mr-1.5" /> Delete
+   996→        {selectedDraftsCount > 0 && (
+   997→          <span className="ml-1 text-[10px] tabular-nums opacity-80">({selectedDraftsCount})</span>
+   998→        )}
+   999→      </Button>
+  1000→      <div className="ml-auto">
+  1001→        <Button size="sm" variant="ghost" onClick={onClear} disabled={busy}>
+  1002→          <X className="size-3.5 mr-1.5" /> Clear
+  1003→        </Button>
+  1004→      </div>
+  1005→    </div>
+  1006→  );
+  1007→}
+  1008→
+  1009→/* ---------- Post card ---------- */
+  1010→
+  1011→function PostCard({
+  1012→  post, canManage, selected, onToggleSelect,
+  1013→  onPublish, onEdit, onDelete,
+  1014→}: {
+  1015→  post: PostWithLocation;
+  1016→  canManage: boolean;
+  1017→  selected: boolean;
+  1018→  onToggleSelect: (id: string) => void;
+  1019→  onPublish: (p: PostWithLocation) => void;
+  1020→  onEdit: (p: PostWithLocation) => void;
+  1021→  onDelete: (p: PostWithLocation) => void;
+  1022→}) {
+  1023→  const meta = postTypeMeta(post.type);
+  1024→  const Icon = meta.icon;
+  1025→  const [scheduleOpen, setScheduleOpen] = React.useState(false);
+  1026→  const [scheduleDate, setScheduleDate] = React.useState<Date | null>(
+  1027→    post.scheduledAt ? new Date(post.scheduledAt) : null,
+  1028→  );
+  1029→  const [scheduling, setScheduling] = React.useState(false);
+  1030→  const qc = useQueryClient();
+  1031→
+  1032→  const relPublished = relativeTime(post.publishedAt);
+  1033→  const relScheduled = relativeTime(post.scheduledAt);
+  1034→  const relCreated = relativeTime(post.createdAt);
+  1035→
+  1036→  const ctaMeta = post.ctaType ? CTA_META_BY_VALUE[post.ctaType] : undefined;
+  1037→  const CtaIcon = ctaMeta?.icon;
+  1038→
+  1039→  async function applySchedule() {
+  1040→    if (!scheduleDate) return;
+  1041→    setScheduling(true);
+  1042→    try {
+  1043→      await api(`/api/posts/${post.id}`, {
+  1044→        method: "PATCH",
+  1045→        body: JSON.stringify({ status: "scheduled", scheduledAt: scheduleDate.toISOString() }),
+  1046→      });
+  1047→      qc.invalidateQueries({ queryKey: ["posts"] });
+  1048→      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+  1049→      toast.success(`Scheduled for ${scheduleLabel(scheduleDate.toISOString())}`);
+  1050→      setScheduleOpen(false);
+  1051→    } catch (e: any) {
+  1052→      toast.error(e?.message || "Failed to schedule");
+  1053→    } finally {
+  1054→      setScheduling(false);
+  1055→    }
+  1056→  }
+  1057→
+  1058→  return (
+  1059→    <Card className={cn(
+  1060→      "group relative hover:shadow-md transition-shadow overflow-hidden",
+  1061→      selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+  1062→    )}>
+  1063→      <CardContent className="p-4 space-y-3">
+  1064→        {/* Header: checkbox + type + actions */}
+  1065→        <div className="flex items-start justify-between gap-2">
+  1066→          <div className="flex items-center gap-2 min-w-0">
+  1067→            {canManage && (
+  1068→              <Checkbox
+  1069→                checked={selected}
+  1070→                onCheckedChange={() => onToggleSelect(post.id)}
+  1071→                aria-label={`Select post ${post.title}`}
+  1072→                className="mt-0.5"
+  1073→              />
+  1074→            )}
+  1075→            <span className={cn("size-8 rounded-lg flex items-center justify-center shrink-0", meta.tint)}>
+  1076→              <Icon className="size-4" />
+  1077→            </span>
+  1078→            <div className="min-w-0">
+  1079→              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+  1080→                {meta.label}
+  1081→              </div>
+  1082→              <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1">
+  1083→                <MapPin className="size-2.5" />
+  1084→                {post.locationName}
+  1085→              </div>
+  1086→            </div>
+  1087→          </div>
+  1088→
+  1089→          {canManage && (
+  1090→            <DropdownMenu>
+  1091→              <DropdownMenuTrigger asChild>
+  1092→                <Button variant="ghost" size="icon" className="size-7 -mt-1 -mr-1 opacity-60 group-hover:opacity-100 transition-opacity">
+  1093→                  <MoreVertical className="size-4" />
+  1094→                </Button>
+  1095→              </DropdownMenuTrigger>
+  1096→              <DropdownMenuContent align="end" className="w-44">
+  1097→                {(post.status === "draft" || post.status === "scheduled" || post.status === "failed") && (
+  1098→                  <DropdownMenuItem onClick={() => onPublish(post)}>
+  1099→                    <Send className="size-3.5 mr-2 text-emerald-500" /> Publish now
+  1100→                  </DropdownMenuItem>
+  1101→                )}
+  1102→                <DropdownMenuItem onClick={() => setScheduleOpen(true)}>
+  1103→                  <CalendarClock className="size-3.5 mr-2 text-amber-500" /> Schedule…
+  1104→                </DropdownMenuItem>
+  1105→                <DropdownMenuItem onClick={() => onEdit(post)}>
+  1106→                  <Pencil className="size-3.5 mr-2" /> Edit
+  1107→                </DropdownMenuItem>
+  1108→                <DropdownMenuSeparator />
+  1109→                <DropdownMenuItem
+  1110→                  className="text-rose-600 dark:text-rose-400 focus:text-rose-700"
+  1111→                  onClick={() => onDelete(post)}
+  1112→                >
+  1113→                  <Trash2 className="size-3.5 mr-2" /> Delete
+  1114→                </DropdownMenuItem>
+  1115→              </DropdownMenuContent>
+  1116→            </DropdownMenu>
+  1117→          )}
+  1118→        </div>
+  1119→
+  1120→        {/* Title */}
+  1121→        <h3 className="font-semibold text-sm leading-snug line-clamp-1">{post.title || "Untitled post"}</h3>
+  1122→
+  1123→        {/* Content preview */}
+  1124→        <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed">
+  1125→          {post.content}
+  1126→        </p>
+  1127→
+  1128→        {/* Status + AI badge + CTA badge */}
+  1129→        <div className="flex items-center gap-1.5 flex-wrap">
+  1130→          <PostStatusBadge status={post.status} />
+  1131→          {post.source === "ai" && (
+  1132→            <Badge
+  1133→              variant="outline"
+  1134→              className="text-[10px] py-0 px-1.5 gap-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-medium"
+  1135→            >
+  1136→              <Sparkles className="size-2.5" />
+  1137→              MiSA AI
+  1138→            </Badge>
+  1139→          )}
+  1140→          {ctaMeta && CtaIcon && (
+  1141→            <Badge variant="outline" className={cn("text-[10px] py-0 px-1.5 font-normal gap-0.5 border-l-2", ctaMeta.tint)}>
+  1142→              <CtaIcon className="size-2.5" />
+  1143→              {ctaMeta.label}
+  1144→            </Badge>
+  1145→          )}
+  1146→        </div>
+  1147→
+  1148→        {/* Footer: time + CTA */}
+  1149→        <div className="flex items-center justify-between gap-2 pt-2 border-t text-[10px] text-muted-foreground">
+  1150→          <span className="inline-flex items-center gap-1 min-w-0 truncate">
+  1151→            {post.status === "published" && relPublished ? (
+  1152→              <>
+  1153→                <CheckCircle2 className="size-2.5 text-emerald-500 shrink-0" />
+  1154→                <span className="truncate">Published {relPublished}</span>
+  1155→              </>
+  1156→            ) : post.status === "scheduled" && relScheduled ? (
+  1157→              <>
+  1158→                <Clock className="size-2.5 text-amber-500 shrink-0" />
+  1159→                <span className="truncate">Goes live {relScheduled}</span>
+  1160→              </>
+  1161→            ) : (
+  1162→              <>
+  1163→                <Clock className="size-2.5 shrink-0" />
+  1164→                <span className="truncate">Created {relCreated}</span>
+  1165→              </>
+  1166→            )}
+  1167→          </span>
+  1168→          {post.ctaUrl && (
+  1169→            <a
+  1170→              href={post.ctaUrl}
+  1171→              target="_blank"
+  1172→              rel="noopener noreferrer"
+  1173→              className="inline-flex items-center gap-0.5 text-primary hover:underline shrink-0"
+  1174→              onClick={(e) => e.stopPropagation()}
+  1175→            >
+  1176→              <ExternalLink className="size-2.5" /> Link
+  1177→            </a>
+  1178→          )}
+  1179→        </div>
+  1180→      </CardContent>
+  1181→
+  1182→      {/* Schedule popover */}
+  1183→      <Dialog open={scheduleOpen} onOpenChange={(o) => setScheduleOpen(o)}>
+  1184→        <DialogContent className="sm:max-w-md">
+  1185→          <DialogHeader>
+  1186→            <DialogTitle>Schedule post</DialogTitle>
+  1187→            <DialogDescription>
+  1188→              Pick when this post should go live on Google Business Profile.
+  1189→            </DialogDescription>
+  1190→          </DialogHeader>
+  1191→          <div className="flex flex-col items-center gap-3">
+  1192→            <Popover>
+  1193→              <PopoverTrigger asChild>
+  1194→                <Button variant="outline" className="w-full justify-start text-left font-normal">
+  1195→                  <CalendarClock className="size-4 mr-2 text-amber-500" />
+  1196→                  {scheduleDate ? scheduleLabel(scheduleDate.toISOString()) : "Pick a date & time"}
+  1197→                </Button>
+  1198→              </PopoverTrigger>
+  1199→              <PopoverContent className="w-auto p-0">
+  1200→                <Calendar
+  1201→                  mode="single"
+  1202→                  selected={scheduleDate ?? undefined}
+  1203→                  onSelect={(d) => d && setScheduleDate(d)}
+  1204→                  disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+  1205→                />
+  1206→              </PopoverContent>
+  1207→            </Popover>
+  1208→            <Input
+  1209→              type="time"
+  1210→              value={scheduleDate ? format(scheduleDate, "HH:mm") : "10:00"}
+  1211→              onChange={(e) => {
+  1212→                const [h, m] = e.target.value.split(":").map(Number);
+  1213→                const d = scheduleDate ? new Date(scheduleDate) : new Date();
+  1214→                d.setHours(h, m, 0, 0);
+  1215→                setScheduleDate(d);
+  1216→              }}
+  1217→            />
+  1218→          </div>
+  1219→          <DialogFooter>
+  1220→            <Button variant="outline" onClick={() => setScheduleOpen(false)}>Cancel</Button>
+  1221→            <Button onClick={applySchedule} disabled={!scheduleDate || scheduling}>
+  1222→              {scheduling ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <CalendarClock className="size-3.5 mr-1.5" />}
+  1223→              Schedule post
+  1224→            </Button>
+  1225→          </DialogFooter>
+  1226→        </DialogContent>
+  1227→      </Dialog>
+  1228→    </Card>
+  1229→  );
+  1230→}
+  1231→
+  1232→/* ---------- Empty state ---------- */
+  1233→
+  1234→function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () => void }) {
+  1235→  return (
+  1236→    <Card>
+  1237→      <CardContent className="p-12 flex flex-col items-center justify-center text-center">
+  1238→        <div className="size-14 rounded-full bg-amber-500/10 flex items-center justify-center mb-4">
+  1239→          <Sparkles className="size-7 text-amber-500" />
+  1240→        </div>
+  1241→        <h3 className="text-base font-semibold">No posts yet</h3>
+  1242→        <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+  1243→          Create your first post or let MiSA AI generate one. Posts help your locations stay
+  1244→          visible and engage customers on Google Search &amp; Maps.
+  1245→        </p>
+  1246→        {canManage && (
+  1247→          <Button className="mt-4" size="sm" onClick={onCreate}>
+  1248→            <Plus className="size-3.5 mr-1.5" /> New post
+  1249→          </Button>
+  1250→        )}
+  1251→      </CardContent>
+  1252→    </Card>
+  1253→  );
+  1254→}
+  1255→
+  1256→/* ---------- Skeleton ---------- */
+  1257→
+  1258→function PostsGridSkeleton() {
+  1259→  return (
+  1260→    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+  1261→      {Array.from({ length: 6 }).map((_, i) => (
+  1262→        <Card key={i}>
+  1263→          <CardContent className="p-4 space-y-3">
+  1264→            <div className="flex items-center gap-2">
+  1265→              <Skeleton className="size-8 rounded-lg" />
+  1266→              <div className="space-y-1.5 flex-1">
+  1267→                <Skeleton className="h-2.5 w-16" />
+  1268→                <Skeleton className="h-2 w-24" />
+  1269→              </div>
+  1270→            </div>
+  1271→            <Skeleton className="h-4 w-3/4" />
+  1272→            <Skeleton className="h-3 w-full" />
+  1273→            <Skeleton className="h-3 w-full" />
+  1274→            <Skeleton className="h-3 w-2/3" />
+  1275→            <div className="flex gap-2 pt-2">
+  1276→              <Skeleton className="h-5 w-16 rounded-full" />
+  1277→              <Skeleton className="h-5 w-20 rounded-full" />
+  1278→            </div>
+  1279→          </CardContent>
+  1280→        </Card>
+  1281→      ))}
+  1282→    </div>
+  1283→  );
+  1284→}
+  1285→
+  1286→/* ---------- Post editor dialog ---------- */
+  1287→
+  1288→type EditorStatus = "draft" | "scheduled" | "published";
+  1289→
+  1290→interface EditorState {
+  1291→  locationId: string;
+  1292→  type: PostType;
+  1293→  title: string;
+  1294→  content: string;
+  1295→  ctaType: string;
+  1296→  ctaUrl: string;
+  1297→  status: EditorStatus;
+  1298→  scheduledAt: Date | null;
+  1299→  source: "manual" | "ai";
+  1300→  tone: AiTone;
+  1301→  publishMode: PublishMode;
+  1302→  selectedLocationIds: string[];
+  1303→  internalNotes: string;
+  1304→}
+  1305→
+  1306→function PostEditorDialog({
+  1307→  open, onOpenChange, post, locations, defaultLocationId, onSaved,
+  1308→}: {
+  1309→  open: boolean;
+  1310→  onOpenChange: (o: boolean) => void;
+  1311→  post: PostWithLocation | null;
+  1312→  locations: { id: string; name: string; city: string; status?: string }[];
+  1313→  defaultLocationId?: string;
+  1314→  onSaved: () => void;
+  1315→}) {
+  1316→  const isEdit = !!post;
+  1317→  const activeLocations = React.useMemo(() => locations, [locations]);
+  1318→  const allActiveIds = React.useMemo(
+  1319→    () => locations.filter((l) => l.status !== "paused").map((l) => l.id),
+  1320→    [locations],
+  1321→  );
+  1322→
+  1323→  const [state, setState] = React.useState<EditorState>(() => ({
+  1324→    locationId: post?.locationId ?? defaultLocationId ?? locations[0]?.id ?? "",
+  1325→    type: post?.type ?? "whats_new",
+  1326→    title: post?.title ?? "",
+  1327→    content: post?.content ?? "",
+  1328→    ctaType: post?.ctaType ?? "learn_more",
+  1329→    ctaUrl: post?.ctaUrl ?? "",
+  1330→    status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : "draft") as EditorStatus,
+  1331→    scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : null,
+  1332→    source: post?.source ?? "manual",
+  1333→    tone: "professional",
+  1334→    publishMode: "single",
+  1335→    selectedLocationIds: [],
+  1336→    internalNotes: "",
+  1337→  }));
+  1338→
+  1339→  // Reset when opening
+  1340→  React.useEffect(() => {
+  1341→    if (open) {
+  1342→      setState({
+  1343→        locationId: post?.locationId ?? defaultLocationId ?? locations[0]?.id ?? "",
+  1344→        type: post?.type ?? "whats_new",
+  1345→        title: post?.title ?? "",
+  1346→        content: post?.content ?? "",
+  1347→        ctaType: post?.ctaType ?? "learn_more",
+  1348→        ctaUrl: post?.ctaUrl ?? "",
+  1349→        status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : "draft") as EditorStatus,
+  1350→        scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : null,
+  1351→        source: post?.source ?? "manual",
+  1352→        tone: "professional",
+  1353→        publishMode: "single",
+  1354→        selectedLocationIds: [],
+  1355→        internalNotes: "",
+  1356→      });
+  1357→    }
+  1358→  }, [open, post, defaultLocationId, locations]);
+  1359→
+  1360→  const [aiTopic, setAiTopic] = React.useState("");
+  1361→  const [aiLoading, setAiLoading] = React.useState(false);
+  1362→  const [saving, setSaving] = React.useState(false);
+  1363→  const [multiConfirmOpen, setMultiConfirmOpen] = React.useState(false);
+  1364→
+  1365→  const titleCount = state.title.length;
+  1366→  const contentWords = state.content.trim() ? state.content.trim().split(/\s+/).length : 0;
+  1367→
+  1368→  function update<K extends keyof EditorState>(k: K, v: EditorState[K]) {
+  1369→    setState((s) => ({ ...s, [k]: v }));
+  1370→  }
+  1371→
+  1372→  // Resolve final list of location IDs based on publish mode (for multi-publish)
+  1373→  function resolveMultiLocationIds(): string[] {
+  1374→    if (state.publishMode === "all") return allActiveIds;
+  1375→    if (state.publishMode === "multiple") return state.selectedLocationIds;
+  1376→    return [];
+  1377→  }
+  1378→
+  1379→  async function generateWithAi() {
+  1380→    if (state.publishMode === "single" && !state.locationId) {
+  1381→      toast.error("Pick a location first");
+  1382→      return;
+  1383→    }
+  1384→    if (!aiTopic.trim()) {
+  1385→      toast.error("Enter a topic for MiSA AI to write about");
+  1386→      return;
+  1387→    }
+  1388→    setAiLoading(true);
+  1389→    try {
+  1390→      const gen = await api<{ title: string; content: string; ctaType: string }>(
+  1391→        "/api/posts",
+  1392→        {
+  1393→          method: "POST",
+  1394→          body: JSON.stringify({
+  1395→            action: "ai_generate",
+  1396→            locationId: state.locationId || locations[0]?.id,
+  1397→            type: state.type,
+  1398→            topic: aiTopic.trim(),
+  1399→            tone: state.tone,
+  1400→          }),
+  1401→        },
+  1402→      );
+  1403→      setState((s) => ({
+  1404→        ...s,
+  1405→        title: gen.title ?? s.title,
+  1406→        content: gen.content ?? s.content,
+  1407→        ctaType: gen.ctaType ?? s.ctaType,
+  1408→        source: "ai",
+  1409→      }));
+  1410→      toast.success("MiSA AI drafted a post. Review & tweak before publishing.");
+  1411→    } catch (e: any) {
+  1412→      toast.error(e?.message || "MiSA AI generation failed");
+  1413→    } finally {
+  1414→      setAiLoading(false);
+  1415→    }
+  1416→  }
+  1417→
+  1418→  function attemptSave() {
+  1419→    if (!state.title.trim()) { toast.error("Title is required"); return; }
+  1420→    if (!state.content.trim()) { toast.error("Content is required"); return; }
+  1421→    if (state.status === "scheduled" && !state.scheduledAt) {
+  1422→      toast.error("Pick a schedule date & time");
+  1423→      return;
+  1424→    }
+  1425→
+  1426→    // Multi-location publish only on create
+  1427→    if (!isEdit && state.publishMode !== "single") {
+  1428→      const ids = resolveMultiLocationIds();
+  1429→      if (state.publishMode === "multiple" && ids.length === 0) {
+  1430→        toast.error("Select at least one location");
+  1431→        return;
+  1432→      }
+  1433→      if (state.publishMode === "all" && ids.length === 0) {
+  1434→        toast.error("No active locations available");
+  1435→        return;
+  1436→      }
+  1437→      setMultiConfirmOpen(true);
+  1438→      return;
+  1439→    }
+  1440→
+  1441→    if (isEdit && post) {
+  1442→      // Existing single-location edit flow
+  1443→      saveSingle();
+  1444→    } else {
+  1445→      saveSingle();
+  1446→    }
+  1447→  }
+  1448→
+  1449→  async function saveSingle() {
+  1450→    if (state.publishMode === "single" && !state.locationId) {
+  1451→      toast.error("Select a location");
+  1452→      return;
+  1453→    }
+  1454→    setSaving(true);
+  1455→    try {
+  1456→      if (isEdit && post) {
+  1457→        await api(`/api/posts/${post.id}`, {
+  1458→          method: "PATCH",
+  1459→          body: JSON.stringify({
+  1460→            title: state.title,
+  1461→            content: state.content,
+  1462→            ctaType: state.ctaType || null,
+  1463→            ctaUrl: state.ctaUrl || null,
+  1464→            status: state.status,
+  1465→            scheduledAt: state.status === "scheduled" ? state.scheduledAt?.toISOString() : null,
+  1466→          }),
+  1467→        });
+  1468→        toast.success(state.status === "published" ? "Post published" : state.status === "scheduled" ? "Post scheduled" : "Post saved");
+  1469→      } else {
+  1470→        await api("/api/posts", {
+  1471→          method: "POST",
+  1472→          body: JSON.stringify({
+  1473→            locationId: state.locationId,
+  1474→            type: state.type,
+  1475→            title: state.title,
+  1476→            content: state.content,
+  1477→            ctaType: state.ctaType || null,
+  1478→            ctaUrl: state.ctaUrl || null,
+  1479→            status: state.status,
+  1480→            scheduledAt: state.status === "scheduled" ? state.scheduledAt?.toISOString() : null,
+  1481→            source: state.source,
+  1482→          }),
+  1483→        });
+  1484→        toast.success(state.status === "published" ? "Post published to Google Business Profile" : state.status === "scheduled" ? "Post scheduled" : "Draft saved");
+  1485→      }
+  1486→      onSaved();
+  1487→    } catch (e: any) {
+  1488→      toast.error(e?.message || "Failed to save post");
+  1489→    } finally {
+  1490→      setSaving(false);
+  1491→    }
+  1492→  }
+  1493→
+  1494→  async function saveMultiLocation() {
+  1495→    const locationIds = resolveMultiLocationIds();
+  1496→    if (locationIds.length === 0) {
+  1497→      toast.error("No locations selected");
+  1498→      return;
+  1499→    }
+  1500→    setSaving(true);
+  1501→    try {
+  1502→      const r = await api<{ created: number }>("/api/posts/bulk", {
+  1503→        method: "POST",
+  1504→        body: JSON.stringify({
+  1505→          action: "publish-multi",
+  1506→          locationIds,
+  1507→          post: {
+  1508→            type: state.type,
+  1509→            title: state.title,
+  1510→            content: state.content,
+  1511→            ctaType: state.ctaType || null,
+  1512→            ctaUrl: state.ctaUrl || null,
+  1513→            imageUrl: null,
+  1514→            status: state.status,
+  1515→            source: state.source,
+  1516→            scheduledAt: state.status === "scheduled" ? state.scheduledAt?.toISOString() : null,
+  1517→          },
+  1518→        }),
+  1519→      });
+  1520→      toast.success(`Created ${r.created} post${r.created === 1 ? "" : "s"} across ${locationIds.length} location${locationIds.length === 1 ? "" : "s"}`);
+  1521→      setMultiConfirmOpen(false);
+  1522→      onSaved();
+  1523→    } catch (e: any) {
+  1524→      toast.error(e?.message || "Multi-location publish failed");
+  1525→    } finally {
+  1526→      setSaving(false);
+  1527→    }
+  1528→  }
+  1529→
+  1530→  const meta = postTypeMeta(state.type);
+  1531→  const TypeIcon = meta.icon;
+  1532→  const selectedTone = TONE_OPTIONS.find((t) => t.value === state.tone);
+  1533→
+  1534→  // Count for multi-publish confirmation
+  1535→  const multiLocationCount = resolveMultiLocationIds().length;
+  1536→
+  1537→  return (
+  1538→    <>
+  1539→      <Dialog open={open} onOpenChange={onOpenChange}>
+  1540→        <DialogContent className="sm:max-w-5xl max-h-[calc(100vh-2rem)] overflow-y-auto scroll-area">
+  1541→          <DialogHeader>
+  1542→            <DialogTitle className="flex items-center gap-2">
+  1543→              <FileText className="size-4 text-primary" />
+  1544→              {isEdit ? "Edit post" : "Create post"}
+  1545→            </DialogTitle>
+  1546→            <DialogDescription>
+  1547→              {isEdit
+  1548→                ? "Update post content, CTA, or schedule."
+  1549→                : "Write a new Google Business Profile post or let MiSA AI draft one for you."}
+  1550→            </DialogDescription>
+  1551→          </DialogHeader>
+  1552→
+  1553→          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+  1554→            {/* Left: form */}
+  1555→            <div className="space-y-4">
+  1556→              {/* AI generator */}
+  1557→              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+  1558→                <div className="flex items-center gap-2">
+  1559→                  <Sparkles className="size-4 text-amber-500" />
+  1560→                  <span className="text-sm font-semibold">Generate with MiSA AI</span>
+  1561→                  <Badge variant="outline" className="ml-auto text-[10px] py-0 px-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+  1562→                    AI
+  1563→                  </Badge>
+  1564→                </div>
+  1565→                <p className="text-xs text-muted-foreground">
+  1566→                  Tell MiSA the topic (e.g. “Monsoon car AC service offer”) and we&apos;ll draft title, body &amp; CTA.
+  1567→                </p>
+  1568→                <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-2">
+  1569→                  <Input
+  1570→                    placeholder="Topic, offer or event…"
+  1571→                    value={aiTopic}
+  1572→                    onChange={(e) => setAiTopic(e.target.value)}
+  1573→                    onKeyDown={(e) => { if (e.key === "Enter" && !aiLoading) generateWithAi(); }}
+  1574→                    className="flex-1"
+  1575→                  />
+  1576→                  <Select value={state.tone} onValueChange={(v) => update("tone", v as AiTone)}>
+  1577→                    <SelectTrigger className="w-full">
+  1578→                      <Wand2 className="size-3.5 mr-1 text-amber-500" />
+  1579→                      <SelectValue />
+  1580→                    </SelectTrigger>
+  1581→                    <SelectContent>
+  1582→                      {TONE_OPTIONS.map((t) => (
+  1583→                        <SelectItem key={t.value} value={t.value}>
+  1584→                          <span className="text-xs">{t.label}</span>
+  1585→                        </SelectItem>
+  1586→                      ))}
+  1587→                    </SelectContent>
+  1588→                  </Select>
+  1589→                </div>
+  1590→                {selectedTone && (
+  1591→                  <p className="text-[10px] text-amber-700 dark:text-amber-400/80 italic">
+  1592→                    {selectedTone.hint}
+  1593→                  </p>
+  1594→                )}
+  1595→                <Button
+  1596→                  type="button"
+  1597→                  variant="outline"
+  1598→                  onClick={generateWithAi}
+  1599→                  disabled={aiLoading}
+  1600→                  className="w-full border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
+  1601→                >
+  1602→                  {aiLoading ? (
+  1603→                    <><Loader2 className="size-3.5 mr-1.5 animate-spin" /> Generating…</>
+  1604→                  ) : (
+  1605→                    <><Wand2 className="size-3.5 mr-1.5" /> Generate with MiSA AI</>
+  1606→                  )}
+  1607→                </Button>
+  1608→              </div>
+  1609→
+  1610→              {/* Publish to (only on create) */}
+  1611→              {!isEdit && (
+  1612→                <div className="rounded-lg border bg-card p-3 space-y-3">
+  1613→                  <div className="flex items-center gap-2">
+  1614→                    <Megaphone className="size-4 text-primary" />
+  1615→                    <span className="text-sm font-semibold">Publish to</span>
+  1616→                    <Badge variant="outline" className="ml-auto text-[10px] py-0 px-1.5">
+  1617→                      {state.publishMode === "single" ? "1 location" : state.publishMode === "multiple" ? `${state.selectedLocationIds.length} locations` : `${allActiveIds.length} active`}
+  1618→                    </Badge>
+  1619→                  </div>
+  1620→                  <div className="grid grid-cols-3 gap-1.5">
+  1621→                    {([
+  1622→                      { value: "single", label: "Single", icon: MapPin },
+  1623→                      { value: "multiple", label: "Multiple", icon: Layers },
+  1624→                      { value: "all", label: "All Active", icon: CheckCheck },
+  1625→                    ] as { value: PublishMode; label: string; icon: any }[]).map((opt) => (
+  1626→                      <button
+  1627→                        key={opt.value}
+  1628→                        type="button"
+  1629→                        onClick={() => update("publishMode", opt.value)}
+  1630→                        className={cn(
+  1631→                          "flex flex-col items-center justify-center gap-1 rounded-md border p-2 text-xs transition-colors",
+  1632→                          state.publishMode === opt.value
+  1633→                            ? "border-primary bg-primary/5 text-primary font-medium"
+  1634→                            : "border-border hover:bg-muted/50 text-muted-foreground",
+  1635→                        )}
+  1636→                      >
+  1637→                        <opt.icon className="size-3.5" />
+  1638→                        {opt.label}
+  1639→                      </button>
+  1640→                    ))}
+  1641→                  </div>
+  1642→
+  1643→                  {/* Single location select */}
+  1644→                  {state.publishMode === "single" && (
+  1645→                    <div className="space-y-1.5">
+  1646→                      <Label className="text-xs">Location <span className="text-rose-500">*</span></Label>
+  1647→                      <Select value={state.locationId} onValueChange={(v) => update("locationId", v)}>
+  1648→                        <SelectTrigger className="w-full">
+  1649→                          <MapPin className="size-3.5 mr-1 text-muted-foreground" />
+  1650→                          <SelectValue placeholder="Select location" />
+  1651→                        </SelectTrigger>
+  1652→                        <SelectContent>
+  1653→                          {activeLocations.map((l) => (
+  1654→                            <SelectItem key={l.id} value={l.id}>{l.name} — {l.city}</SelectItem>
+  1655→                          ))}
+  1656→                        </SelectContent>
+  1657→                      </Select>
+  1658→                    </div>
+  1659→                  )}
+  1660→
+  1661→                  {/* Multiple locations checkbox list */}
+  1662→                  {state.publishMode === "multiple" && (
+  1663→                    <div className="space-y-1.5">
+  1664→                      <div className="flex items-center justify-between">
+  1665→                        <Label className="text-xs">Select locations</Label>
+  1666→                        <button
+  1667→                          type="button"
+  1668→                          className="text-[10px] text-primary hover:underline"
+  1669→                          onClick={() => update("selectedLocationIds", allActiveIds)}
+  1670→                        >
+  1671→                          Select all
+  1672→                        </button>
+  1673→                      </div>
+  1674→                      <div className="max-h-44 overflow-y-auto scroll-area rounded-md border p-1">
+  1675→                        {activeLocations.map((l) => {
+  1676→                          const checked = state.selectedLocationIds.includes(l.id);
+  1677→                          return (
+  1678→                            <label
+  1679→                              key={l.id}
+  1680→                              className={cn(
+  1681→                                "flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer hover:bg-muted/50",
+  1682→                                checked && "bg-primary/5",
+  1683→                              )}
+  1684→                            >
+  1685→                              <Checkbox
+  1686→                                checked={checked}
+  1687→                                onCheckedChange={() => {
+  1688→                                  const next = checked
+  1689→                                    ? state.selectedLocationIds.filter((id) => id !== l.id)
+  1690→                                    : [...state.selectedLocationIds, l.id];
+  1691→                                  update("selectedLocationIds", next);
+  1692→                                }}
+  1693→                              />
+  1694→                              <span className="flex-1 truncate">{l.name}</span>
+  1695→                              <span className="text-[10px] text-muted-foreground">{l.city}</span>
+  1696→                            </label>
+  1697→                          );
+  1698→                        })}
+  1699→                      </div>
+  1700→                    </div>
+  1701→                  )}
+  1702→
+  1703→                  {/* All active confirmation */}
+  1704→                  {state.publishMode === "all" && (
+  1705→                    <div className="rounded-md bg-emerald-500/5 border border-emerald-500/20 p-2 text-xs text-emerald-700 dark:text-emerald-400 flex items-start gap-2">
+  1706→                      <CheckCheck className="size-3.5 mt-0.5 shrink-0" />
+  1707→                      <span>
+  1708→                        This will create one post for each of <strong>{allActiveIds.length}</strong> active locations.
+  1709→                      </span>
+  1710→                    </div>
+  1711→                  )}
+  1712→                </div>
+  1713→              )}
+  1714→
+  1715→              {/* Location & type (edit mode shows location read-only) */}
+  1716→              {isEdit && (
+  1717→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1718→                  <div className="space-y-1.5">
+  1719→                    <Label className="text-xs">Location</Label>
+  1720→                    <div className="text-sm px-3 py-2 rounded-md border bg-muted/30 flex items-center gap-1.5">
+  1721→                      <MapPin className="size-3.5 text-muted-foreground" />
+  1722→                      <span className="truncate">
+  1723→                        {locations.find((l) => l.id === state.locationId)?.name ?? "—"}
+  1724→                      </span>
+  1725→                    </div>
+  1726→                  </div>
+  1727→                  <div className="space-y-1.5">
+  1728→                    <Label className="text-xs">Post type <span className="text-rose-500">*</span></Label>
+  1729→                    <Select value={state.type} onValueChange={(v) => update("type", v as PostType)}>
+  1730→                      <SelectTrigger className="w-full">
+  1731→                        <SelectValue />
+  1732→                      </SelectTrigger>
+  1733→                      <SelectContent>
+  1734→                        {Object.entries(TYPE_META).map(([k, m]) => (
+  1735→                          <SelectItem key={k} value={k}>
+  1736→                            <span className="inline-flex items-center gap-2">
+  1737→                              <m.icon className="size-3.5" /> {m.label}
+  1738→                            </span>
+  1739→                          </SelectItem>
+  1740→                        ))}
+  1741→                      </SelectContent>
+  1742→                    </Select>
+  1743→                  </div>
+  1744→                </div>
+  1745→              )}
+  1746→              {/* Type select (create mode, multi or single) */}
+  1747→              {!isEdit && (
+  1748→                <div className="space-y-1.5">
+  1749→                  <Label className="text-xs">Post type <span className="text-rose-500">*</span></Label>
+  1750→                  <Select value={state.type} onValueChange={(v) => update("type", v as PostType)}>
+  1751→                    <SelectTrigger className="w-full">
+  1752→                      <SelectValue />
+  1753→                    </SelectTrigger>
+  1754→                    <SelectContent>
+  1755→                      {Object.entries(TYPE_META).map(([k, m]) => (
+  1756→                        <SelectItem key={k} value={k}>
+  1757→                          <span className="inline-flex items-center gap-2">
+  1758→                            <m.icon className="size-3.5" /> {m.label}
+  1759→                          </span>
+  1760→                        </SelectItem>
+  1761→                      ))}
+  1762→                    </SelectContent>
+  1763→                  </Select>
+  1764→                </div>
+  1765→              )}
+  1766→
+  1767→              {/* Title */}
+  1768→              <div className="space-y-1.5">
+  1769→                <div className="flex items-center justify-between">
+  1770→                  <Label className="text-xs">Title <span className="text-rose-500">*</span></Label>
+  1771→                  <span className={cn("text-[10px] tabular-nums", titleCount > 60 ? "text-rose-500" : "text-muted-foreground")}>
+  1772→                    {titleCount}/60
+  1773→                  </span>
+  1774→                </div>
+  1775→                <Input
+  1776→                  value={state.title}
+  1777→                  maxLength={80}
+  1778→                  onChange={(e) => update("title", e.target.value.slice(0, 60))}
+  1779→                  placeholder="e.g. Monsoon Sale — Up to 30% off car AC service"
+  1780→                />
+  1781→              </div>
+  1782→
+  1783→              {/* Content */}
+  1784→              <div className="space-y-1.5">
+  1785→                <div className="flex items-center justify-between">
+  1786→                  <Label className="text-xs">Content <span className="text-rose-500">*</span></Label>
+  1787→                  <span className="text-[10px] text-muted-foreground tabular-nums">
+  1788→                    {contentWords} words · {state.content.length} chars
+  1789→                  </span>
+  1790→                </div>
+  1791→                <Textarea
+  1792→                  value={state.content}
+  1793→                  onChange={(e) => update("content", e.target.value)}
+  1794→                  rows={5}
+  1795→                  placeholder="Write 100–180 words. Mention the offer, time window & how to redeem…"
+  1796→                  className="resize-y min-h-[120px]"
+  1797→                />
+  1798→                <p className="text-[10px] text-muted-foreground">
+  1799→                  Suggested: 100–180 words for best engagement on Google.
+  1800→                </p>
+  1801→              </div>
+  1802→
+  1803→              {/* CTA */}
+  1804→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1805→                <div className="space-y-1.5">
+  1806→                  <Label className="text-xs">Call-to-action</Label>
+  1807→                  <Select value={state.ctaType} onValueChange={(v) => update("ctaType", v)}>
+  1808→                    <SelectTrigger className="w-full">
+  1809→                      <SelectValue />
+  1810→                    </SelectTrigger>
+  1811→                    <SelectContent>
+  1812→                      {CTA_OPTIONS.map((o) => (
+  1813→                        <SelectItem key={o.value} value={o.value}>
+  1814→                          <span className="inline-flex items-center gap-2">
+  1815→                            <o.icon className="size-3.5" /> {o.label}
+  1816→                          </span>
+  1817→                        </SelectItem>
+  1818→                      ))}
+  1819→                    </SelectContent>
+  1820→                  </Select>
+  1821→                </div>
+  1822→                <div className="space-y-1.5">
+  1823→                  <Label className="text-xs">
+  1824→                    {state.ctaType === "call" ? "Phone number" : "CTA URL"}
+  1825→                  </Label>
+  1826→                  <Input
+  1827→                    value={state.ctaUrl}
+  1828→                    onChange={(e) => update("ctaUrl", e.target.value)}
+  1829→                    placeholder={state.ctaType === "call" ? "+91 98765 43210" : "https://…"}
+  1830→                  />
+  1831→                </div>
+  1832→              </div>
+  1833→
+  1834→              {/* Status + schedule */}
+  1835→              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+  1836→                <div className="space-y-1.5">
+  1837→                  <Label className="text-xs">Status</Label>
+  1838→                  <Select value={state.status} onValueChange={(v) => update("status", v as EditorStatus)}>
+  1839→                    <SelectTrigger className="w-full">
+  1840→                      <SelectValue />
+  1841→                    </SelectTrigger>
+  1842→                    <SelectContent>
+  1843→                      <SelectItem value="draft">Save as Draft</SelectItem>
+  1844→                      <SelectItem value="scheduled">Schedule</SelectItem>
+  1845→                      <SelectItem value="published">Publish now</SelectItem>
+  1846→                    </SelectContent>
+  1847→                  </Select>
+  1848→                </div>
+  1849→                {state.status === "scheduled" && (
+  1850→                  <div className="space-y-1.5">
+  1851→                    <Label className="text-xs">Schedule date &amp; time</Label>
+  1852→                    <Popover>
+  1853→                      <PopoverTrigger asChild>
+  1854→                        <Button variant="outline" className="w-full justify-start text-left font-normal">
+  1855→                          <CalendarClock className="size-3.5 mr-1.5 text-amber-500" />
+  1856→                          {state.scheduledAt ? scheduleLabel(state.scheduledAt.toISOString()) : "Pick date"}
+  1857→                        </Button>
+  1858→                      </PopoverTrigger>
+  1859→                      <PopoverContent className="w-auto p-0">
+  1860→                        <Calendar
+  1861→                          mode="single"
+  1862→                          selected={state.scheduledAt ?? undefined}
+  1863→                          onSelect={(d) => {
+  1864→                            if (!d) return;
+  1865→                            const next = new Date(d);
+  1866→                            if (state.scheduledAt) {
+  1867→                              next.setHours(state.scheduledAt.getHours(), state.scheduledAt.getMinutes(), 0, 0);
+  1868→                            } else {
+  1869→                              next.setHours(10, 0, 0, 0);
+  1870→                            }
+  1871→                            update("scheduledAt", next);
+  1872→                          }}
+  1873→                          disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+  1874→                        />
+  1875→                        <div className="p-2 border-t">
+  1876→                          <Input
+  1877→                            type="time"
+  1878→                            value={state.scheduledAt ? format(state.scheduledAt, "HH:mm") : "10:00"}
+  1879→                            onChange={(e) => {
+  1880→                              const [h, m] = e.target.value.split(":").map(Number);
+  1881→                              const d = state.scheduledAt ? new Date(state.scheduledAt) : new Date();
+  1882→                              d.setHours(h, m, 0, 0);
+  1883→                              update("scheduledAt", d);
+  1884→                            }}
+  1885→                          />
+  1886→                        </div>
+  1887→                      </PopoverContent>
+  1888→                    </Popover>
+  1889→                  </div>
+  1890→                )}
+  1891→              </div>
+  1892→
+  1893→              {/* Internal Notes (private) */}
+  1894→              <div className="rounded-lg border border-dashed bg-muted/20 p-3 space-y-1.5">
+  1895→                <div className="flex items-center gap-2">
+  1896→                  <FileText className="size-3.5 text-slate-500" />
+  1897→                  <Label className="text-xs font-medium">Internal Notes</Label>
+  1898→                  <Badge variant="outline" className="ml-auto text-[10px] py-0 px-1.5 bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-500/20">
+  1899→                    Private
+  1900→                  </Badge>
+  1901→                </div>
+  1902→                <Textarea
+  1903→                  value={state.internalNotes}
+  1904→                  onChange={(e) => update("internalNotes", e.target.value)}
+  1905→                  rows={2}
+  1906→                  placeholder="Notes for your team — never sent to Google."
+  1907→                  className="resize-y min-h-[60px] bg-background"
+  1908→                />
+  1909→                <p className="text-[10px] text-muted-foreground italic">
+  1910→                  Notes are private and never sent to Google Business Profile.
+  1911→                </p>
+  1912→              </div>
+  1913→            </div>
+  1914→
+  1915→            {/* Right: preview */}
+  1916→            <div className="space-y-3">
+  1917→              <div className="flex items-center justify-between">
+  1918→                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Preview</span>
+  1919→                {state.source === "ai" && (
+  1920→                  <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+  1921→                    <Sparkles className="size-2.5 mr-0.5" /> MiSA AI
+  1922→                  </Badge>
+  1923→                )}
+  1924→              </div>
+  1925→              <Card className="overflow-hidden">
+  1926→                <CardContent className="p-0">
+  1927→                  {/* Faux Google search card */}
+  1928→                  <div className="p-4 border-b bg-muted/30">
+  1929→                    <div className="flex items-center gap-2">
+  1930→                      <div className="size-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-semibold">
+  1931→                        {state.locationId
+  1932→                          ? (locations.find((l) => l.id === state.locationId)?.name?.[0] ?? "M")
+  1933→                          : state.publishMode !== "single" ? `${multiLocationCount}` : "M"}
+  1934→                      </div>
+  1935→                      <div className="min-w-0">
+  1936→                        <div className="text-xs font-semibold truncate">
+  1937→                          {state.publishMode === "single"
+  1938→                            ? (locations.find((l) => l.id === state.locationId)?.name ?? "Select a location")
+  1939→                            : state.publishMode === "multiple"
+  1940→                              ? `${state.selectedLocationIds.length} locations`
+  1941→                              : `${allActiveIds.length} active locations`}
+  1942→                        </div>
+  1943→                        <div className="text-[10px] text-muted-foreground truncate">
+  1944→                          {state.publishMode === "single"
+  1945→                            ? (locations.find((l) => l.id === state.locationId)?.city ?? "—")
+  1946→                            : state.publishMode === "multiple"
+  1947→                              ? "Multi-location publish"
+  1948→                              : "All active locations"}
+  1949→                        </div>
+  1950→                      </div>
+  1951→                    </div>
+  1952→                  </div>
+  1953→                  <div className="p-4 space-y-2">
+  1954→                    <div className="flex items-center gap-1.5">
+  1955→                      <span className={cn("size-5 rounded-md flex items-center justify-center", meta.tint)}>
+  1956→                        <TypeIcon className="size-3" />
+  1957→                      </span>
+  1958→                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+  1959→                        {meta.label}
+  1960→                      </span>
+  1961→                    </div>
+  1962→                    <h4 className="text-sm font-semibold leading-snug">
+  1963→                      {state.title || <span className="text-muted-foreground italic">Post title…</span>}
+  1964→                    </h4>
+  1965→                    <p className="text-xs text-muted-foreground line-clamp-6 leading-relaxed whitespace-pre-wrap">
+  1966→                      {state.content || <span className="italic">Your post content will appear here…</span>}
+  1967→                    </p>
+  1968→                    {state.ctaType && CTA_META_BY_VALUE[state.ctaType] && (
+  1969→                      <div className="pt-2">
+  1970→                        <span className={cn("inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium", CTA_META_BY_VALUE[state.ctaType].tint)}>
+  1971→                          {(() => {
+  1972→                            const Ic = CTA_META_BY_VALUE[state.ctaType].icon;
+  1973→                            return <Ic className="size-3" />;
+  1974→                          })()}
+  1975→                          {CTA_LABEL[state.ctaType] ?? state.ctaType}
+  1976→                        </span>
+  1977→                      </div>
+  1978→                    )}
+  1979→                  </div>
+  1980→                </CardContent>
+  1981→              </Card>
+  1982→
+  1983→              <div className="text-[10px] text-muted-foreground leading-relaxed">
+  1984→                This is a simulated preview of how your post will render on Google Search &amp; Maps.
+  1985→                Final appearance may vary based on Google&apos;s display rules.
+  1986→              </div>
+  1987→            </div>
+  1988→          </div>
+  1989→
+  1990→          <DialogFooter className="border-t pt-4">
+  1991→            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+  1992→              Cancel
+  1993→            </Button>
+  1994→            <Button onClick={attemptSave} disabled={saving}>
+  1995→              {saving ? (
+  1996→                <><Loader2 className="size-3.5 mr-1.5 animate-spin" /> Saving…</>
+  1997→              ) : state.status === "published" ? (
+  1998→                <><Send className="size-3.5 mr-1.5" /> Publish now</>
+  1999→              ) : state.status === "scheduled" ? (
+  2000→                <><CalendarClock className="size-3.5 mr-1.5" /> Schedule post</>
+
+[showing lines 1-2000 of 2044; use offset=2001 with limit to continue reading]

@@ -41,13 +41,18 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import {
+  ToggleGroup, ToggleGroupItem,
+} from "@/components/ui/toggle-group";
+import {
   FileText, Newspaper, Tag, CalendarDays, Info, Plus, MoreVertical,
   Send, CalendarClock, Pencil, Trash2, Sparkles, ArrowRight, CheckCircle2,
   Clock, Wand2, ExternalLink, MapPin, Loader2,
   Phone, Globe, Mail, CalendarCheck, Eye,
   Archive, BarChart3, X, AlertTriangle, Megaphone, Layers, TrendingUp,
-  CheckCheck,
+  CheckCheck, List as ListIcon, Calendar as CalendarIcon, Inbox,
 } from "lucide-react";
+import { PostsCalendar } from "@/components/views/posts-calendar";
+import { PublishingQueue } from "@/components/views/posts-queue";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   Tooltip as RTooltip, CartesianGrid,
@@ -191,6 +196,8 @@ export function PostsView() {
   const [editingPost, setEditingPost] = React.useState<PostWithLocation | null>(null);
   const [deletingPost, setDeletingPost] = React.useState<PostWithLocation | null>(null);
   const [showAnalytics, setShowAnalytics] = React.useState(true);
+  const [viewMode, setViewMode] = React.useState<"list" | "calendar" | "queue">("list");
+  const [presetScheduledAt, setPresetScheduledAt] = React.useState<Date | null>(null);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
@@ -245,17 +252,57 @@ export function PostsView() {
     return list;
   }, [allPosts, typeFilter]);
 
+  // Posts for calendar view (scheduled + published, with optional type filter)
+  const calendarPosts = React.useMemo(() => {
+    let list = (allPostsData ?? []).filter(
+      (p) => p.status === "scheduled" || p.status === "published",
+    );
+    if (typeFilter !== "all") list = list.filter((p) => p.type === typeFilter);
+    return list;
+  }, [allPostsData, typeFilter]);
+
+  // Posts for queue view (scheduled + failed)
+  const queuePosts = React.useMemo(() => {
+    return (allPostsData ?? []).filter(
+      (p) => p.status === "scheduled" || p.status === "failed",
+    );
+  }, [allPostsData]);
+
+  // Stable per-location color dots (used when "All locations" is selected)
+  const locationColorMap = React.useMemo(() => {
+    const palette = [
+      "bg-emerald-500", "bg-amber-500", "bg-teal-500", "bg-rose-500",
+      "bg-violet-500", "bg-cyan-500", "bg-orange-500", "bg-lime-500",
+      "bg-fuchsia-500", "bg-sky-500", "bg-pink-500", "bg-yellow-500",
+    ];
+    const map = new Map<string, string>();
+    (locations ?? []).forEach((l, i) => {
+      map.set(l.id, palette[i % palette.length]);
+    });
+    return map;
+  }, [locations]);
+
+  const showLocationDots = !activeLocationId || activeLocationId === "all";
+
   function openCreate() {
     setEditingPost(null);
+    setPresetScheduledAt(null);
+    setEditorOpen(true);
+  }
+  function openCreateWithDate(date: Date) {
+    setEditingPost(null);
+    setPresetScheduledAt(date);
     setEditorOpen(true);
   }
   function openEdit(p: PostWithLocation) {
     setEditingPost(p);
+    setPresetScheduledAt(null);
     setEditorOpen(true);
   }
   function closeEditor() {
     setEditorOpen(false);
     setEditingPost(null);
+    setPresetScheduledAt(null);
   }
 
   async function publishNow(p: PostWithLocation) {
@@ -475,23 +522,29 @@ export function PostsView() {
         </div>
       )}
 
-      {/* Filter bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
-          <TabsList>
-            <TabsTrigger value="all">
-              All
-              {statsSource.length > 0 && (
-                <span className="ml-1 text-[10px] text-muted-foreground tabular-nums">
-                  {statsSource.length}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="published">Published</TabsTrigger>
-            <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
-            <TabsTrigger value="draft">Drafts</TabsTrigger>
-          </TabsList>
-        </Tabs>
+      {/* View-mode toggle + type filter (apply to all modes) */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ToggleGroup
+          type="single"
+          value={viewMode}
+          onValueChange={(v) => { if (v) setViewMode(v as "list" | "calendar" | "queue"); }}
+          variant="outline"
+          size="sm"
+          aria-label="View mode"
+        >
+          <ToggleGroupItem value="list" aria-label="List view">
+            <ListIcon className="size-3.5 mr-1.5" />
+            <span className="text-xs">List</span>
+          </ToggleGroupItem>
+          <ToggleGroupItem value="calendar" aria-label="Calendar view">
+            <CalendarIcon className="size-3.5 mr-1.5" />
+            <span className="text-xs">Calendar</span>
+          </ToggleGroupItem>
+          <ToggleGroupItem value="queue" aria-label="Publishing queue">
+            <Inbox className="size-3.5 mr-1.5" />
+            <span className="text-xs">Queue</span>
+          </ToggleGroupItem>
+        </ToggleGroup>
 
         <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeFilter)}>
           <SelectTrigger size="sm" className="w-full sm:w-[180px]">
@@ -507,56 +560,105 @@ export function PostsView() {
         </Select>
       </div>
 
-      {/* Bulk action bar */}
-      {canManage && selectedCount > 0 && (
-        <BulkActionBar
-          selectedCount={selectedCount}
-          selectedDraftsCount={selectedDraftsCount}
-          busy={bulkBusy}
-          onPublish={bulkPublish}
-          onSchedule={() => setBulkScheduleOpen(true)}
-          onArchive={bulkArchive}
-          onDelete={bulkDelete}
-          onClear={clearSelection}
+      {/* Status tabs (list mode only) */}
+      {viewMode === "list" && (
+        <div className="-mt-1">
+          <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+            <TabsList>
+              <TabsTrigger value="all">
+                All
+                {statsSource.length > 0 && (
+                  <span className="ml-1 text-[10px] text-muted-foreground tabular-nums">
+                    {statsSource.length}
+                  </span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="published">Published</TabsTrigger>
+              <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+              <TabsTrigger value="draft">Drafts</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      )}
+
+      {/* List view */}
+      {viewMode === "list" && (
+        <>
+          {/* Bulk action bar */}
+          {canManage && selectedCount > 0 && (
+            <BulkActionBar
+              selectedCount={selectedCount}
+              selectedDraftsCount={selectedDraftsCount}
+              busy={bulkBusy}
+              onPublish={bulkPublish}
+              onSchedule={() => setBulkScheduleOpen(true)}
+              onArchive={bulkArchive}
+              onDelete={bulkDelete}
+              onClear={clearSelection}
+            />
+          )}
+
+          {/* Select-all row (only when manage + posts exist) */}
+          {canManage && !isLoading && filtered.length > 0 && (
+            <div className="flex items-center gap-2 px-1">
+              <Checkbox
+                checked={selectedCount > 0 && selectedCount === filtered.length}
+                onCheckedChange={toggleSelectAll}
+                aria-label="Select all posts"
+              />
+              <span className="text-xs text-muted-foreground">
+                {selectedCount > 0 ? `${selectedCount} of ${filtered.length} selected` : "Select all"}
+              </span>
+            </div>
+          )}
+
+          {/* Posts grid */}
+          {isLoading ? (
+            <PostsGridSkeleton />
+          ) : filtered.length === 0 ? (
+            <EmptyState canManage={canManage} onCreate={openCreate} />
+          ) : (
+            <div className="max-h-[calc(100vh-22rem)] overflow-y-auto scroll-area pr-0.5">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-2">
+                {filtered.map((p) => (
+                  <PostCard
+                    key={p.id}
+                    post={p}
+                    canManage={canManage}
+                    selected={selectedIds.has(p.id)}
+                    onToggleSelect={toggleSelected}
+                    onPublish={publishNow}
+                    onEdit={openEdit}
+                    onDelete={setDeletingPost}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Calendar view */}
+      {viewMode === "calendar" && (
+        <PostsCalendar
+          posts={calendarPosts}
+          isLoading={isLoading || !allPostsData}
+          showLocationDots={showLocationDots}
+          locationColorByLocationId={(id) => locationColorMap.get(id)}
+          onPostClick={openEdit}
+          onNewPostOnDate={openCreateWithDate}
         />
       )}
 
-      {/* Select-all row (only when manage + posts exist) */}
-      {canManage && !isLoading && filtered.length > 0 && (
-        <div className="flex items-center gap-2 px-1">
-          <Checkbox
-            checked={selectedCount > 0 && selectedCount === filtered.length}
-            onCheckedChange={toggleSelectAll}
-            aria-label="Select all posts"
-          />
-          <span className="text-xs text-muted-foreground">
-            {selectedCount > 0 ? `${selectedCount} of ${filtered.length} selected` : "Select all"}
-          </span>
-        </div>
-      )}
-
-      {/* Posts grid */}
-      {isLoading ? (
-        <PostsGridSkeleton />
-      ) : filtered.length === 0 ? (
-        <EmptyState canManage={canManage} onCreate={openCreate} />
-      ) : (
-        <div className="max-h-[calc(100vh-22rem)] overflow-y-auto scroll-area pr-0.5">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-2">
-            {filtered.map((p) => (
-              <PostCard
-                key={p.id}
-                post={p}
-                canManage={canManage}
-                selected={selectedIds.has(p.id)}
-                onToggleSelect={toggleSelected}
-                onPublish={publishNow}
-                onEdit={openEdit}
-                onDelete={setDeletingPost}
-              />
-            ))}
-          </div>
-        </div>
+      {/* Publishing queue view */}
+      {viewMode === "queue" && (
+        <PublishingQueue
+          posts={queuePosts}
+          isLoading={isLoading || !allPostsData}
+          canManage={canManage}
+          onEdit={openEdit}
+          onClick={openEdit}
+        />
       )}
 
       {/* Editor dialog */}
@@ -566,6 +668,7 @@ export function PostsView() {
         post={editingPost}
         locations={locations ?? []}
         defaultLocationId={activeLocationId !== "all" ? activeLocationId : undefined}
+        defaultScheduledAt={presetScheduledAt}
         onSaved={handleSaved}
       />
 
@@ -1304,13 +1407,14 @@ interface EditorState {
 }
 
 function PostEditorDialog({
-  open, onOpenChange, post, locations, defaultLocationId, onSaved,
+  open, onOpenChange, post, locations, defaultLocationId, defaultScheduledAt, onSaved,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   post: PostWithLocation | null;
   locations: { id: string; name: string; city: string; status?: string }[];
   defaultLocationId?: string;
+  defaultScheduledAt?: Date | null;
   onSaved: () => void;
 }) {
   const isEdit = !!post;
@@ -1327,8 +1431,8 @@ function PostEditorDialog({
     content: post?.content ?? "",
     ctaType: post?.ctaType ?? "learn_more",
     ctaUrl: post?.ctaUrl ?? "",
-    status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : "draft") as EditorStatus,
-    scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : null,
+    status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : (!isEdit && defaultScheduledAt ? "scheduled" : "draft")) as EditorStatus,
+    scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : (!isEdit && defaultScheduledAt ? defaultScheduledAt : null),
     source: post?.source ?? "manual",
     tone: "professional",
     publishMode: "single",
@@ -1346,8 +1450,8 @@ function PostEditorDialog({
         content: post?.content ?? "",
         ctaType: post?.ctaType ?? "learn_more",
         ctaUrl: post?.ctaUrl ?? "",
-        status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : "draft") as EditorStatus,
-        scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : null,
+        status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : (!post && defaultScheduledAt ? "scheduled" : "draft")) as EditorStatus,
+        scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : (!post && defaultScheduledAt ? defaultScheduledAt : null),
         source: post?.source ?? "manual",
         tone: "professional",
         publishMode: "single",
@@ -1355,7 +1459,7 @@ function PostEditorDialog({
         internalNotes: "",
       });
     }
-  }, [open, post, defaultLocationId, locations]);
+  }, [open, post, defaultLocationId, defaultScheduledAt, locations]);
 
   const [aiTopic, setAiTopic] = React.useState("");
   const [aiLoading, setAiLoading] = React.useState(false);

@@ -2822,3 +2822,76 @@ Stage Summary:
   * `available` badge hidden when count is 0 OR status is not_configured/not_connected — per task spec.
   * `verificationState` reconciliation: GET handler upgrades to "verified" if Google reports a COMPLETED verification even when our cached DB state hasn't caught up.
   * No new permissions: POST/PATCH gated on `locations.manage` (super_admin only — matches the existing single-location verify route); GET on `locations.view`.
+
+---
+Task ID: POSTS-CALENDAR-QUEUE
+Agent: Frontend Engineer
+Task: Calendar View (monthly, drag-to-reschedule, location filter) + Publishing Queue (retry, cancel, reschedule) for Google Posts
+
+Work Log:
+- Audited existing posts-view.tsx (2043 lines), api/posts routes, types.ts, package.json. Confirmed @dnd-kit/core + date-fns installed; PostStatus = "draft" | "scheduled" | "published" | "failed"; existing PATCH /api/posts/[id] already handles failed → published retry correctly (condition `body.status === "published" && post.status !== "published"` covers draft/scheduled/failed → published). No backend changes required.
+- Created `/home/z/my-project/src/components/views/posts-calendar.tsx` (~630 lines):
+  * Monthly 7-col grid (Sun–Sat) covering 6 weeks via date-fns startOfMonth/endOfMonth/startOfWeek/endOfWeek/eachDayOfInterval. Prev/Next/Today buttons + month/year label.
+  * Posts rendered as colored chips (whats_new=teal, offer=emerald, event=amber, update=slate) inside day cells. Each chip shows type icon + truncated title + optional per-location color dot (only when "All locations" selected).
+  * Drag-to-reschedule via @dnd-kit/core DndContext + useDraggable + useDroppable + DragOverlay. Only `scheduled` posts are draggable (published posts render with a Lock icon and `disabled` on the draggable). PointerSensor with distance:5 activation to allow click-vs-drag discrimination.
+  * On drop: PATCH `/api/posts/[id]` with `{ status:"scheduled", scheduledAt:<new date at original time-of-day> }`. Preserves original hour/min via setHours/setMinutes/setSeconds/setMilliseconds. Optimistic update via qc.setQueryData(["posts"], ...) → on error, reverts and toasts. Past-date guard returns early with toast.
+  * "Today" highlighted with emerald ring + filled emerald circle for the date number. Days outside the cursor month dimmed (bg-muted/30 + muted text). Drop indicator: bg-primary/10 + ring-2 ring-primary.
+  * Click on chip → calls onPostClick(post) which the parent wires to existing PostEditorDialog in edit mode. Click on empty area of day cell (either the explicit + button or the bottom-of-cell overlay) → calls onNewPostOnDate(date) which the parent wires to a new openCreateWithDate(date) helper that opens the existing PostEditorDialog with status="scheduled" + scheduledAt prefilled (verified via agent-browser: status combo shows "Schedule" and date button shows "28 Jun 2026, 10:00 AM").
+  * Calendar header: legend with all 4 type colors + "Show scheduled" / "Show published" Switch toggles (both on by default).
+  * "+N more" expand/collapse when a day has >3 posts (per MAX_VISIBLE_POSTS).
+  * Mobile responsive: Card with overflow-x-auto + min-w-[760px] inner grid so calendar scrolls horizontally on narrow screens.
+- Created `/home/z/my-project/src/components/views/posts-queue.tsx` (~430 lines):
+  * 3-column grid (lg:grid-cols-3, stacks on mobile): Pending (amber accent, Clock icon), Processing (slate accent, Loader2 icon), Failed (rose accent, AlertCircle icon). Each column has a count badge.
+  * Processing column shows explanatory note: "Posts publish instantly to Google Business Profile — there's no async processing queue. Failed publishes show up in the Failed column where you can retry them." (since our publish flow is synchronous).
+  * QueueCard component: type icon, title (line-clamp-1), location, Scheduled/Failed badge, content preview (line-clamp-2). For scheduled: live countdown ("Publishes in 1d 2h" / "in 2h 15m" / "in 5m" / "due now") using useCountdown hook that ticks every 30s + scheduleLabel. For failed: rose-tinted error box.
+  * Actions: Scheduled posts → "Publish now" (PATCH status:"published"), "Reschedule" (opens inline RescheduleDialog with Calendar popover + time input → PATCH status:"scheduled", scheduledAt), "Cancel" (PATCH status:"draft", scheduledAt:null — moves to draft). Failed posts → "Retry" (PATCH status:"published" — re-calls createGooglePost via existing PATCH route), "Edit" (calls onEdit → opens PostEditorDialog), "Cancel" (same as scheduled). All actions guarded by canManage + busyAction lock to prevent double-clicks; toast.loading/success/error with id-based dedup.
+  * Auto-refresh every 30s via useEffect + setInterval that calls qc.invalidateQueries(["posts"]) + (["posts-stats"]). Self-cleans on unmount. Header strip shows "Auto-refreshes every 30s · N pending · N failed".
+  * Empty states per column with dashed-border placeholder + lucide icon (CheckCircle2 for "all caught up" empty pending/failed; Loader2 for processing-empty).
+- Modified `/home/z/my-project/src/components/views/posts-view.tsx`:
+  * Added imports for PostsCalendar, PublishingQueue, ToggleGroup/ToggleGroupItem, and ListIcon/CalendarIcon/Inbox icons.
+  * Added `viewMode: "list" | "calendar" | "queue"` state (default "list") and `presetScheduledAt: Date | null` state.
+  * Added memos: `calendarPosts` (all scheduled + published for active location, type-filtered), `queuePosts` (all scheduled + failed), `locationColorMap` (stable per-location dot colors from a 12-color palette indexed by location order), `showLocationDots` (true only when "All locations" selected).
+  * Added `openCreateWithDate(date)` helper — sets presetScheduledAt + opens editor with no editing post (so editor enters create mode with status="scheduled" + scheduledAt prefilled).
+  * Replaced the existing filter bar with: (a) view-mode ToggleGroup (List/Calendar/Queue) + type Select (always visible — applies to all modes per task spec), (b) status Tabs (now only render in list mode), (c) conditional rendering of list/calendar/queue.
+  * Existing list view (bulk action bar, select-all row, posts grid) wrapped in `viewMode === "list" && (...)` — unchanged behavior when in list mode.
+  * PostEditorDialog now accepts a `defaultScheduledAt?: Date | null` prop; both the useState initializer and the open-effect use it to prefill status="scheduled" + scheduledAt when creating a new post with a preset date.
+  * The location filter (activeLocationId from Zustand) automatically applies to calendar and queue views because both reuse the existing `allPostsData` query (which is already scoped to activeLocationId).
+- Backend: verified existing PATCH /api/posts/[id] route handles failed → published retry correctly (the `body.status === "published" && post.status !== "published"` condition is true for failed posts, which then calls createGooglePost and assigns data.googlePostId + data.publishedAt). The editingPublished block (which would patchGooglePost) only fires when post.status === "published" — not for failed → published. No backend changes needed.
+- Reuse summary: PostsCalendar reuses PostEditorDialog (via parent openEdit/openCreateWithDate callbacks) and useAppStore activeLocationId (via parent props). PublishingQueue reuses PostEditorDialog (via parent onEdit callback) and the existing /api/posts list endpoint (via parent allPostsData prop). Both reuse useQueryClient + toast + shadcn components.
+
+Verification:
+- `bun run lint` → 0 errors, 0 warnings ✅
+- `bunx tsc --noEmit` → 0 errors ✅
+- `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health` → 200 ✅
+- `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` → 200 ✅
+- Dev log: only pre-existing `[next-auth][warn][NEXTAUTH_URL]` warning (unrelated) + normal Prisma queries. No errors, no warnings related to the new code.
+- Agent-browser interactive verification:
+  * Navigated to Google Posts view → confirmed "List view" radio is checked by default, 19 posts in the list.
+  * Clicked "Calendar view" radio → confirmed monthly grid renders with weekday header (Sun–Sat), prev/next/today buttons, legend, scheduled/published toggles, day cells with date numbers (today highlighted with emerald circle), and published posts rendered as disabled chips ("Free Car Care Camp — Pune Published — locked" ×3 on Jul 1, 2026).
+  * Clicked a published chip → existing PostEditorDialog opens in "Edit post" mode with the post's title/content/CTA pre-filled.
+  * Closed edit dialog → clicked an empty day cell ("Add post on Jun 28, 2026") → existing PostEditorDialog opens in "Create post" mode with status combo pre-set to "Schedule" and date button showing "28 Jun 2026, 10:00 AM".
+  * Closed create dialog → clicked "Publishing queue" radio → confirmed 3 columns render (Pending, Processing, Failed) with count badges (0/0/0), explanatory hints, and empty states ("No pending posts — you're all caught up." / "No posts in processing — publishes complete synchronously." / "No failed publishes — everything went through."). "Auto-refreshes every 30s · 0 pending · 0 failed" header strip visible.
+  * Created a new scheduled post via the "New post" dialog (status=Schedule, date=Tomorrow 10:00 AM) → returned to list view, "All 20" tab count, "Scheduled" tab selected.
+  * Switched to Calendar view → confirmed the new "Test Queue Post" chip appears on Jul 10, 2026 as an enabled (non-disabled) draggable button.
+  * Switched to Queue view → confirmed Pending column shows the "Test Queue Post" card with title, location, Scheduled badge, content preview, live countdown ("Publishes in 1d 2h · Tomorrow, 10:00 AM"), and 3 action buttons (Publish now / Reschedule / Cancel).
+  * Clicked "Cancel" on the test post → card disappeared from Pending column, empty state restored, "0 pending" in header strip.
+- No existing list-view behavior broken — toggling back to "List view" still shows the same status tabs, bulk actions, and posts grid as before.
+
+Stage Summary:
+- Files created:
+  * `src/components/views/posts-calendar.tsx` — PostsCalendar component (~630 lines): monthly grid, @dnd-kit drag-to-reschedule, type legend, scheduled/published toggles, location dots, click-chip-to-edit, click-empty-to-create, mobile horizontal scroll.
+  * `src/components/views/posts-queue.tsx` — PublishingQueue component (~430 lines): Pending/Processing/Failed columns, QueueCard with live countdown, RescheduleDialog, retry/cancel/reschedule actions, 30s auto-refresh, empty states.
+- Files modified:
+  * `src/components/views/posts-view.tsx` — added view-mode toggle (ToggleGroup), viewMode + presetScheduledAt state, calendarPosts/queuePosts/locationColorMap/showLocationDots memos, openCreateWithDate helper, conditional rendering of list/calendar/queue, defaultScheduledAt prop on PostEditorDialog (with both useState initializer and open-effect using it).
+- Key decisions:
+  * Two new companion files instead of bloating posts-view.tsx (now ~2120 lines) — easier to maintain, clearer separation. Both new components import nothing from posts-view.tsx (props-based integration), keeping the boundary clean.
+  * Calendar uses the existing allPostsData query (already scoped to activeLocationId) and filters client-side for scheduled+published — no new API endpoint needed. Same for queue (filters for scheduled+failed).
+  * Drag-to-reschedule is OPTIMISTIC: qc.setQueryData(["posts"], ...) moves the chip immediately on drop, then PATCH confirms. On error, the cache is reverted to the original scheduledAt + status, and an error toast appears. This gives instant visual feedback even on slow networks.
+  * Past-date guard: if the drop target's date (with the original time-of-day preserved) is in the past, the reschedule is rejected with "Can't reschedule to a past date & time". This prevents users from accidentally back-dating a scheduled post.
+  * Only `scheduled` posts are draggable (useDraggable disabled:true for everything else). Published posts render the chip with a Lock icon and disabled=true so dnd-kit won't initiate a drag.
+  * Time-of-day preservation on reschedule: setHours/setMinutes/setSeconds/setMilliseconds(newDate, original.getHours(), original.getMinutes(), 0, 0). A post scheduled for "Jul 10, 10:00 AM" dropped onto "Jul 15" becomes "Jul 15, 10:00 AM".
+  * Queue auto-refresh uses setInterval(30s) inside PublishingQueue's useEffect — invalidates the parent's ["posts"] + ["posts-stats"] queries. Self-cleans on unmount. This catches newly-scheduled posts and status changes without needing a separate refetchInterval on the parent query (which would always poll, even in list/calendar mode).
+  * RescheduleDialog is self-contained inside posts-queue.tsx (not shared with posts-calendar.tsx — calendar uses drag-and-drop instead). Both write the same PATCH payload.
+  * Per-location color palette is 12 colors indexed by location order — gives each location a stable, distinguishable dot color when "All locations" is selected. Hidden when a specific location is filtered (no need — only one location's posts show).
+  * Processing column intentionally empty: GBP publish is synchronous (PATCH awaits createGooglePost before responding). The explanatory note tells the user this is by design, and points them to the Failed column for retries.
+  * Retry on failed post: just PATCH { status:"published" } — verified the existing route re-calls createGooglePost (since post.status !== "published"). No route changes needed.
