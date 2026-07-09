@@ -46,8 +46,8 @@ const QUICK_PROMPTS = [
   "Generate a monsoon offer post for Pune",
   "Which locations need attention this week?",
   "Summarize Mumbai's performance this month",
-  "Write a business description for a new Thane showroom",
-  "Suggest 3 SEO keywords for modular kitchens in Nashik",
+  "Write a business description for a new Thane car service centre",
+  "Suggest 3 SEO keywords for car service in Pune",
 ];
 
 const CAPABILITIES: { icon: React.ComponentType<{ className?: string }>; title: string; desc: string }[] = [

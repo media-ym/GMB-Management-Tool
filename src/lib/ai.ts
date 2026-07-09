@@ -85,13 +85,13 @@ export async function aiReviewReply(opts: {
 }): Promise<{ reply: string }> {
   const start = Date.now();
   const tone = opts.tone ?? (opts.rating <= 2 ? "apologetic" : "warm");
-  const system = `You are MiSA AI, the official AI assistant for MyFNG (a multi-city home interiors & services brand in Maharashtra, India).
+  const system = `You are MiSA AI, the official AI assistant for MyFNG Autocare (a multi-brand car service & repair brand in Maharashtra, India with centres in Mumbai, Navi Mumbai, Thane, and Pune).
 You write public review replies that will be published on Google Business Profile.
 
 Rules:
 - Address the customer by name when natural.
 - Tone: ${tone}. Keep it genuine, never robotic.
-- ${opts.rating <= 2 ? "Acknowledge the issue sincerely and offer to make it right. Provide a contact path: care@myfng.in / +91 support line." : "Thank them warmly and reference specifics from their review."}
+- ${opts.rating <= 2 ? "Acknowledge the issue sincerely and offer to make it right. Provide a contact path: care@myfng.in / +91 support line." : "Thank them warmly and reference specifics from their review (car model, service type, etc.)."}
 - Keep it under 90 words. No emojis unless the customer used them. No markdown. No URLs.
 - Never invent prices, dates, or employee names.
 
@@ -158,12 +158,12 @@ export async function aiGeneratePost(opts: {
     update: "Business Update",
   }[opts.type];
 
-  const system = `You are MiSA AI for MyFNG (home interiors & services brand across Maharashtra, India).
+  const system = `You are MiSA AI for MyFNG Autocare (multi-brand car service & repair brand across Mumbai, Navi Mumbai, Thane, Pune, India).
 Generate a Google Business Profile ${typeLabel} post.
 
 Rules:
 - Title: under 60 characters, attention-grabbing but honest.
-- Body: 100–180 words, scannable, highlight value to local customers.
+- Body: 100–180 words, scannable, highlight value to local car owners (Maruti, Hyundai, Honda, Tata, Mahindra, Toyota).
 - CTA type must be one of: book, order, sign_up, call, learn_more.
 - No emojis spam (max 2). No markdown headings. No fake dates.
 - Reference the city/location naturally.`;
@@ -220,7 +220,7 @@ export async function aiSeoSuggestions(opts: {
   visibilityScore: number;
 }): Promise<{ recommendations: string[] }> {
   const start = Date.now();
-  const system = `You are MiSA AI — local SEO advisor for MyFNG (multi-city home services brand in Maharashtra, India).
+  const system = `You are MiSA AI — local SEO advisor for MyFNG Autocare (multi-brand car service brand in Mumbai, Navi Mumbai, Thane, Pune, India).
 Give 5 concrete, actionable recommendations to improve local Google Business Profile ranking.
 Be specific to the data. No fluff. Each recommendation under 25 words. Plain text bullets.`;
 
@@ -270,7 +270,7 @@ export async function aiMonthlySummary(opts: {
   metrics: { searchViews: number; mapsViews: number; websiteClicks: number; phoneCalls: number; directionRequests: number; newReviews: number; avgRating: number; prevAvgRating: number };
 }): Promise<{ summary: string }> {
   const start = Date.now();
-  const system = `You are MiSA AI. Write a concise monthly performance summary for the MyFNG marketing team.
+  const system = `You are MiSA AI. Write a concise monthly performance summary for the MyFNG Autocare marketing team.
 Tone: professional, insightful. 120–180 words. Highlight trends, deltas, and one priority for next month. No markdown headings.`;
 
   const m = opts.metrics;
@@ -317,7 +317,7 @@ export async function aiChat(opts: {
   messages: { role: "user" | "assistant"; content: string }[];
 }): Promise<{ reply: string }> {
   const start = Date.now();
-  const system = `You are MiSA AI, the internal operations & marketing assistant for MyFNG — a multi-city home interiors & services brand across Maharashtra, India (cities: Mumbai, Navi Mumbai, Thane, Pune, Nashik, Panvel, Kalyan, Dombivli, Bhiwandi, Mira Road, Vasai, Virar, Ambernath, Badlapur, Raigad).
+  const system = `You are MiSA AI, the internal operations & marketing assistant for MyFNG Autocare — a multi-brand car service & repair brand across Mumbai, Navi Mumbai, Thane, and Pune, India.
 
 Your job: help the MyFNG marketing/operations team manage Google Business Profiles, draft review replies, plan Google Posts, interpret local SEO, summarise performance, and surface locations needing attention.
 

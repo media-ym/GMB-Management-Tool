@@ -1160,7 +1160,7 @@ export async function syncLocationFull(locationId: string): Promise<{
       await db.businessCategory.deleteMany({ where: { locationId } });
       if (profile.categories.primaryCategory) {
         await db.businessCategory.create({
-          data: { locationId, categoryName: profile.categories.primaryCategory.displayName || "Interior Designer", isPrimary: true },
+          data: { locationId, categoryName: profile.categories.primaryCategory.displayName || "Auto Repair Shop", isPrimary: true },
         });
         result.categories++;
       }

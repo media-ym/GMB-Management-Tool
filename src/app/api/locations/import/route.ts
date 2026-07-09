@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
           locationId: location.id,
           googleAccountId: googleAccount?.id || null,
           profileName: gmb.name,
-          primaryCategory: gmb.primaryCategory || "Interior Designer",
+          primaryCategory: gmb.primaryCategory || "Auto Repair Shop",
           additionalCategoriesJson: JSON.stringify(gmb.additionalCategories || []),
           averageRating: gmb.averageRating || 0,
           totalReviews: gmb.totalReviews || 0,

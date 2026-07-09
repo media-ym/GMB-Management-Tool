@@ -80,8 +80,8 @@ export async function POST(req: NextRequest) {
       reviewCount: 0,
       healthScore: 0,
       visibilityScore: 0,
-      categoriesJson: JSON.stringify(["Interior Designer"]),
-      servicesJson: JSON.stringify(["Modular Kitchen", "Wardrobe Design", "Full Home Interiors"]),
+      categoriesJson: JSON.stringify(["Auto Repair Shop"]),
+      servicesJson: JSON.stringify(["Periodic Service", "Brake Repair", "AC Service & Repair"]),
       hoursJson: JSON.stringify([
         { day: 1, open: "10:00", close: "20:00", closed: false },
         { day: 2, open: "10:00", close: "20:00", closed: false },
@@ -110,16 +110,16 @@ export async function POST(req: NextRequest) {
   }
 
   // Create default categories
-  await db.businessCategory.create({ data: { locationId: location.id, categoryName: "Interior Designer", isPrimary: true } });
-  await db.businessCategory.create({ data: { locationId: location.id, categoryName: "Home Improvement Store", isPrimary: false } });
-  await db.businessCategory.create({ data: { locationId: location.id, categoryName: "Furniture Store", isPrimary: false } });
+  await db.businessCategory.create({ data: { locationId: location.id, categoryName: "Auto Repair Shop", isPrimary: true } });
+  await db.businessCategory.create({ data: { locationId: location.id, categoryName: "Car Service Station", isPrimary: false } });
+  await db.businessCategory.create({ data: { locationId: location.id, categoryName: "Auto Air Conditioning Service", isPrimary: false } });
 
   // Create default services
   const defaultServices = [
-    { serviceName: "Modular Kitchen", description: "Custom modular kitchens with premium hardware and finishes.", category: "Kitchen" },
-    { serviceName: "Wardrobe Design", description: "Sliding and hinged wardrobes with smart storage solutions.", category: "Bedroom" },
-    { serviceName: "Full Home Interiors", description: "End-to-end interior design and execution for your home.", category: "Complete" },
-    { serviceName: "False Ceiling", description: "POP and gypsum false ceiling with integrated lighting.", category: "Living Room" },
+    { serviceName: "Periodic Service", description: "Manufacturer-scheduled periodic service with genuine parts and certified mechanics.", category: "Service" },
+    { serviceName: "Brake Repair", description: "Brake pad replacement, disc skimming and full brake system inspection.", category: "Brakes" },
+    { serviceName: "AC Service & Repair", description: "Car AC diagnostics, gas refill, compressor and cooling system repair.", category: "AC" },
+    { serviceName: "Multi-Brand Repair", description: "Expert multi-brand car repair for Maruti, Hyundai, Honda, Tata, Mahindra, Toyota.", category: "Repair" },
   ];
   for (const s of defaultServices) {
     await db.service.create({ data: { locationId: location.id, ...s, status: "active" } });

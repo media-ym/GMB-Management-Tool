@@ -1,23 +1,12 @@
 import { db } from "../src/lib/db";
 import { hashPassword } from "../src/lib/password";
 
-// MyFNG locations (per architecture doc §7)
+// MyFNG Autocare locations — Mumbai, Navi Mumbai, Thane, Pune only
 const LOCATIONS = [
   { code: "MYFNG-MUM", name: "MyFNG Mumbai", city: "Mumbai", address: "Linking Road, Bandra West, Mumbai, Maharashtra 400050", lat: 19.0596, lng: 72.8295, phone: "+91 22 4000 1001", pincode: "400050" },
   { code: "MYFNG-NM", name: "MyFNG Navi Mumbai", city: "Navi Mumbai", address: "Palm Beach Road, Vashi, Navi Mumbai, Maharashtra 400703", lat: 19.0760, lng: 73.0250, phone: "+91 22 4000 1002", pincode: "400703" },
   { code: "MYFNG-THA", name: "MyFNG Thane", city: "Thane", address: "Ghodbunder Road, Manpada, Thane West, Maharashtra 400607", lat: 19.2447, lng: 72.9793, phone: "+91 22 4000 1003", pincode: "400607" },
   { code: "MYFNG-PUN", name: "MyFNG Pune", city: "Pune", address: "Baner Road, Baner, Pune, Maharashtra 411045", lat: 18.5590, lng: 73.7868, phone: "+91 20 4000 1004", pincode: "411045" },
-  { code: "MYFNG-NSK", name: "MyFNG Nashik", city: "Nashik", address: "College Road, Nashik, Maharashtra 422005", lat: 19.9945, lng: 73.7754, phone: "+91 253 4000 1005", pincode: "422005" },
-  { code: "MYFNG-PNV", name: "MyFNG Panvel", city: "Panvel", address: "Khandeshwar Road, Panvel, Navi Mumbai, Maharashtra 410206", lat: 18.9888, lng: 73.1118, phone: "+91 22 4000 1006", pincode: "410206" },
-  { code: "MYFNG-KLY", name: "MyFNG Kalyan", city: "Kalyan", address: "Station Road, Kalyan West, Maharashtra 421301", lat: 19.2403, lng: 73.1305, phone: "+91 251 4000 1007", pincode: "421301" },
-  { code: "MYFNG-DOM", name: "MyFNG Dombivli", city: "Dombivli", address: "Manpada Road, Dombivli East, Maharashtra 421201", lat: 19.2167, lng: 73.0833, phone: "+91 251 4000 1008", pincode: "421201" },
-  { code: "MYFNG-BHI", name: "MyFNG Bhiwandi", city: "Bhiwandi", address: "Mumbai-Agra Road, Bhiwandi, Maharashtra 421302", lat: 19.2967, lng: 73.0633, phone: "+91 2522 4000 1009", pincode: "421302" },
-  { code: "MYFNG-MIR", name: "MyFNG Mira Road", city: "Mira Road", address: "Western Express Highway, Mira Road East, Maharashtra 401107", lat: 19.2750, lng: 72.8750, phone: "+91 22 4000 1010", pincode: "401107" },
-  { code: "MYFNG-VAS", name: "MyFNG Vasai", city: "Vasai", address: "Vasai Road, Vasai West, Maharashtra 401202", lat: 19.4245, lng: 72.8087, phone: "+91 250 4000 1011", pincode: "401202" },
-  { code: "MYFNG-VIR", name: "MyFNG Virar", city: "Virar", address: "Viva College Road, Virar West, Maharashtra 401303", lat: 19.4520, lng: 72.8110, phone: "+91 250 4000 1012", pincode: "401303" },
-  { code: "MYFNG-AMB", name: "MyFNG Ambernath", city: "Ambernath", address: "Kalyan-Ambernath Road, Ambernath East, Maharashtra 421501", lat: 19.2083, lng: 73.1883, phone: "+91 251 4000 1013", pincode: "421501" },
-  { code: "MYFNG-BDL", name: "MyFNG Badlapur", city: "Badlapur", address: "Railway Road, Badlapur West, Maharashtra 421503", lat: 19.1667, lng: 73.2333, phone: "+91 251 4000 1014", pincode: "421503" },
-  { code: "MYFNG-RGD", name: "MyFNG Raigad", city: "Raigad", address: "Alibag Road, Raigad, Maharashtra 402201", lat: 18.5167, lng: 73.1833, phone: "+91 2141 4000 1015", pincode: "402201" },
 ];
 
 const REVIEW_AUTHORS = [
@@ -28,57 +17,57 @@ const REVIEW_AUTHORS = [
 ];
 
 const POSITIVE_REVIEWS = [
-  "Got my modular kitchen done by MyFNG team. Excellent finish and on-time delivery. The 3D design preview helped a lot. Highly recommend!",
-  "Outstanding service! The team understood exactly what we wanted. Our living room makeover looks stunning. Worth every rupee.",
-  "Booked a full home interiors package. Professional crew, clean work, and they handled all approvals. 5 stars from us.",
-  "Great experience from design to installation. Special thanks to the project manager who kept us updated daily.",
-  "Beautiful wardrobes and excellent space utilisation in our 2BHK. The finish quality is top notch.",
-  "Very happy with the false ceiling and lighting work. The team was punctual and courteous throughout.",
-  "MyFNG Pune team did an amazing job with our kitchen and master bedroom. Modern designs and durable material.",
-  "Smooth end-to-end experience. The site supervisor was always available. Final outcome exceeded expectations.",
+  "Got my Maruti Swift serviced at MyFNG. Excellent work and on-time delivery. The multi-brand expertise is impressive. Highly recommend!",
+  "Outstanding service! The team understood exactly what was wrong with my Hyundai Creta. The engine now runs like new. Worth every rupee.",
+  "Booked a full car service package. Professional crew, clean work, and they picked up and dropped the car. 5 stars from us.",
+  "Great experience from booking to delivery. Special thanks to the service advisor who kept me updated daily with photos.",
+  "Perfect wheel alignment and balancing on my Tata Nexon. The ride quality is top notch now. Saved me from a tyre replacement.",
+  "Very happy with the AC repair work. The team was punctual and courteous throughout. Fair pricing for genuine parts.",
+  "MyFNG Pune team did an amazing job with my Honda City's clutch replacement. Smooth gear shifts and durable parts.",
+  "Smooth end-to-end experience. The service bay was spotless. Final outcome exceeded expectations.",
 ];
 const NEUTRAL_REVIEWS = [
-  "Decent work overall but the project took 2 weeks longer than promised. Quality is good though.",
-  "Design was nice but communication could have been better. Happy with the final result.",
-  "Satisfied with the work but had to follow up multiple times for the warranty documents.",
-  "Good quality interiors. Slightly on the expensive side but you get what you pay for.",
+  "Decent service overall but the work took a day longer than promised. Quality is good though.",
+  "Repair was nice but communication could have been better. Happy with the final result.",
+  "Satisfied with the service but had to follow up multiple times for the service history documents.",
+  "Good quality work. Slightly on the expensive side but you get genuine parts and warranty.",
 ];
 const NEGATIVE_REVIEWS = [
-  "Delayed by 3 weeks and the finishing on the cabinet doors is uneven. Had to call them back twice for fixes.",
-  "Promised soft-close hinges but received regular ones. Still waiting for replacement after 2 weeks.",
-  "Poor response from the site supervisor. Work quality is okay but project management needs improvement.",
-  "The paint started chipping near the window within a month. Disappointed with the warranty support.",
+  "Delayed by 2 days and the brake pad installation was uneven. Had to call them back twice for fixes.",
+  "Promised OEM brake pads but received aftermarket ones. Still waiting for replacement after a week.",
+  "Poor response from the service advisor. Work quality is okay but customer service needs improvement.",
+  "The AC started leaking again within a month. Disappointed with the warranty support.",
 ];
 
 const KEYWORDS_BY_CITY = [
-  "modular kitchen near me", "home interiors", "wardrobe designers",
-  "false ceiling contractor", "modular kitchen {city}", "interior designer {city}",
-  "home renovation", "custom furniture", "living room design",
+  "car service near me", "multi brand car service", "car repair shop",
+  "maruti car service {city}", "car service {city}", "hyundai car service {city}",
+  "car ac repair", "wheel alignment", "car servicing",
 ];
 
 const COMPETITORS = [
-  { name: "HomeLane", category: "Home Interiors" },
-  { name: "Livspace", category: "Home Interiors" },
-  { name: "Pepperfry Studio", category: "Furniture Store" },
-  { name: "Urban Ladder", category: "Home Interiors" },
+  { name: "GoMechanic", category: "Multi Brand Car Service" },
+  { name: "AutoBrix", category: "Car Service" },
+  { name: "Pitstop", category: "Car Service" },
+  { name: "GarageWorks", category: "Multi Brand Car Service" },
 ];
 
 const SERVICES_LIST = [
-  { name: "Modular Kitchen", category: "Kitchen", desc: "Custom modular kitchens with premium hardware and finishes." },
-  { name: "Wardrobe Design", category: "Bedroom", desc: "Sliding and hinged wardrobes with smart storage solutions." },
-  { name: "False Ceiling", category: "Living Room", desc: "POP and gypsum false ceiling with integrated lighting." },
-  { name: "Full Home Interiors", category: "Complete", desc: "End-to-end interior design and execution for your home." },
-  { name: "Custom Furniture", category: "Furniture", desc: "Bespoke furniture crafted to your space and style." },
-  { name: "Living Room Design", category: "Living Room", desc: "Complete living room makeovers with theme design." },
+  { name: "Periodic Car Service", category: "Maintenance", desc: "Comprehensive periodic service with oil change, filter replacement, and 50-point inspection." },
+  { name: "Multi-Brand Repair", category: "Repair", desc: "Expert repair services for Maruti, Hyundai, Honda, Tata, Mahindra, Toyota, and more." },
+  { name: "AC Service & Repair", category: "AC", desc: "Car AC gas refill, compressor repair, and cooling system diagnostics." },
+  { name: "Brake & Clutch Service", category: "Repair", desc: "Brake pad replacement, clutch overhaul, and transmission service." },
+  { name: "Wheel Alignment & Balancing", category: "Tyres", desc: "Computerised wheel alignment, balancing, and tyre rotation." },
+  { name: "Engine Diagnostics", category: "Diagnostics", desc: "OBD-II scanning, engine performance check, and ECU diagnostics." },
 ];
 
 const PRODUCTS_LIST = [
-  { name: "Acrylic Modular Kitchen Set", category: "Kitchen", price: 185000 },
-  { name: "Sliding Wardrobe 8ft", category: "Bedroom", price: 65000 },
-  { name: "False Ceiling with Cove Light", category: "Living Room", price: 28000 },
-  { name: "TV Unit with Storage", category: "Living Room", price: 42000 },
-  { name: "Pooja Room Unit", category: "Special", price: 35000 },
-  { name: "Study Table with Bookshelf", category: "Bedroom", price: 22000 },
+  { name: "Basic Car Service Package", category: "Service", price: 3499 },
+  { name: "Premium Car Service Package", category: "Service", price: 5999 },
+  { name: "AC Gas Refill & Service", category: "AC", price: 1899 },
+  { name: "Brake Pad Replacement (Front)", category: "Brakes", price: 2499 },
+  { name: "Wheel Alignment & Balancing", category: "Tyres", price: 1200 },
+  { name: "Full Body & Interior Detailing", category: "Detailing", price: 4999 },
 ];
 
 const BUSINESS_HOURS = [
@@ -100,10 +89,10 @@ const ATTRIBUTES = [
 ];
 
 const CATEGORIES = [
-  { name: "Interior Designer", primary: true },
-  { name: "Home Improvement Store", primary: false },
-  { name: "Furniture Store", primary: false },
-  { name: "Kitchen Furniture Store", primary: false },
+  { name: "Auto Repair Shop", primary: true },
+  { name: "Auto Mechanic", primary: false },
+  { name: "Car Wash", primary: false },
+  { name: "Automobile Parts Store", primary: false },
 ];
 
 function pick<T>(arr: T[], i: number): T { return arr[i % arr.length]; }
@@ -209,7 +198,7 @@ async function main() {
     create: {
       clientCode: "MYFNG-SELF",
       name: "MyFNG (Self)",
-      legalName: "MyFNG Interiors Pvt. Ltd.",
+      legalName: "MyFNG Autocare Private Limited",
       contactName: "Operations Team",
       contactEmail: "ops@myfng.in",
       contactPhone: "+91 90000 00000",
@@ -261,7 +250,7 @@ async function main() {
         timezone: "Asia/Kolkata",
         latitude: L.lat,
         longitude: L.lng,
-        status: i === 9 ? "paused" : "active",
+        status: i === 3 ? "paused" : "active",
         syncStatus: pick(syncStatuses, i),
         lastSyncedAt: new Date(Date.now() - rand(i + 2, 60) * 60 * 1000),
         avgRating: Math.round(avgRating * 10) / 10,
@@ -284,8 +273,8 @@ async function main() {
         locationId: loc.id,
         googleAccountId: null, // Will be linked when real Google OAuth connects
         profileName: L.name,
-        primaryCategory: "Interior Designer",
-        additionalCategoriesJson: JSON.stringify(["Home Improvement Store", "Furniture Store"]),
+        primaryCategory: "Auto Repair Shop",
+        additionalCategoriesJson: JSON.stringify(["Auto Mechanic", "Car Wash", "Automobile Parts Store"]),
         averageRating: Math.round(avgRating * 10) / 10,
         totalReviews: reviewCount,
         verificationState: "verified",
@@ -299,7 +288,7 @@ async function main() {
       data: {
         profileId: gbp.id,
         locationId: loc.id,
-        description: `MyFNG ${L.city} — Premium home interiors & modular kitchen experience centre. Visit us for free 3D design consultation.`,
+        description: `MyFNG ${L.city} — Premium multi-brand car service & repair centre. Visit us for free diagnostics, genuine parts, and certified mechanics.`,
         openingHoursJson: JSON.stringify(BUSINESS_HOURS),
         servicesJson: JSON.stringify(SERVICES_LIST.map(s => s.name)),
         attributesJson: JSON.stringify(Object.fromEntries(ATTRIBUTES.map(a => [a.name, a.value === "true"]))),
@@ -376,7 +365,7 @@ async function main() {
       const createdAt = new Date(Date.now() - rand(reviewSeed, 45) * 24 * 60 * 60 * 1000);
       const replied = rating >= 3 && rand(reviewSeed, 3) === 0;
       const replyText = replied
-        ? `Hi ${pick(REVIEW_AUTHORS, reviewSeed).split(" ")[0]}, thank you so much for sharing your experience with MyFNG ${loc.city}. We're glad you chose us for your home interiors. Our team would love to stay in touch — reach us anytime at care@myfng.in. — Team MyFNG`
+        ? `Hi ${pick(REVIEW_AUTHORS, reviewSeed).split(" ")[0]}, thank you so much for sharing your experience with MyFNG ${loc.city}. We're glad you trusted us with your car service. Our team would love to stay in touch — reach us anytime at care@myfng.in. — Team MyFNG Autocare`
         : null;
       const review = await db.review.create({
         data: {
@@ -424,11 +413,11 @@ async function main() {
 
   // ── Review Reply Templates ────────────────────────────────────────
   const templates = [
-    { title: "Positive 5-star", rating: 5, template: "Hi {name}, thank you so much for your kind words! We're thrilled you loved your MyFNG experience. Welcome to the MyFNG family — reach us anytime at care@myfng.in." },
-    { title: "Positive 4-star", rating: 4, template: "Hi {name}, thank you for the wonderful review! It was a pleasure working on your home. We'd love to see the final result — tag us @myfng on social!" },
-    { title: "Neutral 3-star", rating: 3, template: "Hi {name}, thank you for your feedback. We're glad you're satisfied with the quality. We'd love to understand how we could have earned 5 stars — please write to care@myfng.in." },
-    { title: "Negative - Delay", rating: 2, template: "Hi {name}, we sincerely apologise for the delay and inconvenience. This isn't our standard. Please write to care@myfng.in with your project ID and our escalation team will resolve this within 48 hours." },
-    { title: "Negative - Quality", rating: 1, template: "Hi {name}, we're truly sorry to hear about the quality issue. We stand behind our work with a 5-year warranty. Please contact care@myfng.in so we can schedule a free inspection and fix." },
+    { title: "Positive - Thanks", rating: 5, template: "Hi {name}, thank you so much for your kind words about MyFNG! We're thrilled your car service experience was smooth. Our team is always here for your vehicle needs — reach us at care@myfng.in. — Team MyFNG Autocare" },
+    { title: "Positive - Recommend", rating: 4, template: "Hi {name}, thanks for recommending MyFNG! We're glad you trust us with your car. Schedule your next service anytime at care@myfng.in. — Team MyFNG Autocare" },
+    { title: "Neutral - Follow up", rating: 3, template: "Hi {name}, thanks for your feedback. We'd like to make this right. Please write to care@myfng.in with your service ID and our team will address your concerns within 24 hours. — Team MyFNG Autocare" },
+    { title: "Negative - Delay", rating: 2, template: "Hi {name}, we sincerely apologise for the delay and inconvenience. This isn't our standard. Please write to care@myfng.in with your service ID and our escalation team will resolve this within 48 hours. — Team MyFNG Autocare" },
+    { title: "Negative - Quality", rating: 1, template: "Hi {name}, we're truly sorry to hear about the service issue. We stand behind our work with a service warranty. Please contact care@myfng.in so we can schedule a free re-inspection and fix. — Team MyFNG Autocare" },
   ];
   for (const t of templates) {
     await db.reviewReplyTemplate.create({ data: { title: t.title, rating: t.rating, template: t.template, language: "en", isActive: true, createdBy: createdUsers[1].id } });
@@ -436,11 +425,11 @@ async function main() {
 
   // ── Posts ─────────────────────────────────────────────────────────
   const postTopics = [
-    { type: "whats_new", title: "New Monsoon Modular Kitchen Collection Launched", content: "Introducing our all-new monsoon-ready modular kitchen range with anti-moisture ply and soft-close hardware across all MyFNG experience centres. Visit us this weekend for an exclusive preview and complimentary 3D design consultation.", ctaType: "learn_more" },
-    { type: "offer", title: "Flat 25% Off on Wardrobe Packages — This Month Only", content: "Upgrade your bedroom with custom sliding wardrobes at 25% off. Free site measurement, free 3D design, and zero-cost EMI for 6 months. Limited slots per city — book your free design visit today.", ctaType: "book" },
-    { type: "event", title: "Home Interiors Design Expo — Pune", content: "Join us at the MyFNG Design Expo in Baner, Pune. Meet our senior designers, explore live mock-up homes, and avail expo-only discounts on full home interior packages. Saturday & Sunday, 10 AM to 8 PM.", ctaType: "sign_up" },
-    { type: "update", title: "New Experience Centre Now Open in Kalyan", content: "We're excited to announce the opening of our newest MyFNG experience centre at Station Road, Kalyan. Walk in for free design consultations, material sampling, and meet our certified interior designers.", ctaType: "call" },
-    { type: "whats_new", title: "Smart Home Integration Now Available", content: "MyFNG now offers smart lighting, automated curtains, and voice-controlled ambiance as part of selected full home interior packages. Experience the future of living at any MyFNG studio.", ctaType: "learn_more" },
+    { type: "whats_new", title: "Free 50-Point Car Health Check This Monsoon", content: "Get a complimentary 50-point car health check at all MyFNG Autocare centres this monsoon. Our multi-brand specialists inspect brakes, tyres, battery, wipers, and electricals — all free with any service booking. Visit us this weekend.", ctaType: "learn_more" },
+    { type: "offer", title: "Flat 25% Off on AC Service — This Month Only", content: "Get your car AC serviced at 25% off. Includes gas refill, vent cleaning, and cooling performance check. Free pickup and drop for all bookings. Limited slots per city — book your free inspection today.", ctaType: "book" },
+    { type: "event", title: "Free Car Care Camp — Pune", content: "Join us at the MyFNG Autocare Car Care Camp in Baner, Pune. Meet our certified mechanics, get free diagnostics, and avail camp-only discounts on full service packages. Saturday & Sunday, 10 AM to 8 PM.", ctaType: "sign_up" },
+    { type: "update", title: "New Service Centre Now Open in Thane", content: "We're excited to announce the opening of our newest MyFNG Autocare service centre at Ghodbunder Road, Thane. Walk in for free multi-brand car diagnostics, genuine spare parts, and certified mechanics.", ctaType: "call" },
+    { type: "whats_new", title: "OBD-II Diagnostics Now Available at All Centres", content: "MyFNG Autocare now offers advanced OBD-II engine diagnostics across all service centres. Get real-time engine health reports, error code analysis, and expert recommendations as part of every periodic service.", ctaType: "learn_more" },
   ];
   for (let li = 0; li < createdLocations.length; li++) {
     const loc = createdLocations[li];
@@ -564,10 +553,10 @@ async function main() {
         locationId: loc.id,
         auditScore: loc.healthScore,
         profileStrength: loc.visibilityScore,
-        missingCategoriesJson: JSON.stringify(rand(loc.latitude! * 10, 3) === 0 ? ["Kitchen Furniture Store"] : []),
+        missingCategoriesJson: JSON.stringify(rand(loc.latitude! * 10, 3) === 0 ? ["Car Wash"] : []),
         missingPhotos: rand(loc.latitude! * 10, 5),
         missingServices: rand(loc.latitude! * 10, 3),
-        recommendationsJson: JSON.stringify(["Add more photos of completed projects", "Update business hours for holidays", "Respond to all pending reviews within 24h"]),
+        recommendationsJson: JSON.stringify(["Add more photos of completed services", "Update business hours for holidays", "Respond to all pending reviews within 24h"]),
       },
     });
   }
@@ -625,10 +614,10 @@ async function main() {
 
   const aiSugs = [
     { category: "review", title: "12 reviews awaiting reply", desc: "5 are 1-2 star. Respond within 24h to protect local SEO.", priority: "critical" },
-    { category: "seo", title: "Ranking dropped on 'modular kitchen mumbai'", desc: "Position slipped from #2 to #7. Refresh photos and publish a post.", priority: "high" },
-    { category: "post", title: "3 locations haven't posted in 14 days", desc: "Vasai, Virar, Badlapur need fresh content. Generate with MiSA AI.", priority: "medium" },
-    { category: "profile", title: "Incomplete business info on Mira Road", desc: "Missing 2 services and 3 attributes. Complete for better visibility.", priority: "medium" },
-    { category: "performance", title: "Nashik call volume down 18%", desc: "Investigate phone tracking and consider call-only campaign.", priority: "low" },
+    { category: "seo", title: "Ranking dropped on 'car service mumbai'", desc: "Position slipped from #2 to #7. Refresh photos and publish a post.", priority: "high" },
+    { category: "post", title: "2 locations haven't posted in 14 days", desc: "Thane and Pune need fresh content. Generate with MiSA AI.", priority: "medium" },
+    { category: "profile", title: "Incomplete business info on Navi Mumbai", desc: "Missing 2 services and 3 attributes. Complete for better visibility.", priority: "medium" },
+    { category: "performance", title: "Pune call volume down 18%", desc: "Investigate phone tracking and consider call-only campaign.", priority: "low" },
   ];
   for (const s of aiSugs) {
     await db.aiSuggestion.create({ data: { category: s.category, title: s.title, description: s.desc, priority: s.priority, status: "pending" } });
@@ -644,11 +633,11 @@ async function main() {
 
   // ── Notifications ─────────────────────────────────────────────────
   const notifs = [
-    { type: "review", title: "New 1-star review on MyFNG Pune", message: "A customer posted a 1-star review mentioning delay and uneven finish. Needs immediate attention.", severity: "critical", link: "reviews" },
-    { type: "sync", title: "Google sync failed for MyFNG Bhiwandi", message: "OAuth token expired. Re-authorize Google Business Profile to resume sync.", severity: "warning", link: "locations" },
-    { type: "ranking", title: "Ranking dropped for 'modular kitchen mumbai'", message: "Position dropped from #2 to #7 in last 7 days. Consider refreshing photos and posts.", severity: "warning", link: "seo" },
-    { type: "ai_alert", title: "MiSA AI flagged 4 locations needing attention", message: "Lower than average health score detected on Mira Road, Vasai, Virar, Badlapur.", severity: "info", link: "ai" },
-    { type: "system", title: "Daily analytics sync completed", message: "Performance metrics updated for all 15 locations.", severity: "success", link: "analytics" },
+    { type: "review", title: "New 1-star review on MyFNG Pune", message: "A customer posted a 1-star review mentioning delay and uneven brake pad installation. Needs immediate attention.", severity: "critical", link: "reviews" },
+    { type: "sync", title: "Google sync failed for MyFNG Thane", message: "OAuth token expired. Re-authorize Google Business Profile to resume sync.", severity: "warning", link: "locations" },
+    { type: "ranking", title: "Ranking dropped for 'car service mumbai'", message: "Position dropped from #2 to #7 in last 7 days. Consider refreshing photos and posts.", severity: "warning", link: "seo" },
+    { type: "ai_alert", title: "MiSA AI flagged 2 locations needing attention", message: "Lower than average health score detected on Thane and Pune.", severity: "info", link: "ai" },
+    { type: "system", title: "Daily analytics sync completed", message: "Performance metrics updated for all 4 locations.", severity: "success", link: "analytics" },
     { type: "review", title: "12 new reviews this week", message: "Average rating improved by 0.1 across all locations.", severity: "info", link: "reviews" },
   ];
   for (const n of notifs) {
@@ -742,7 +731,7 @@ async function main() {
 
   // ── Error Logs ────────────────────────────────────────────────────
   const errors = [
-    { module: "google-sync", code: "OAUTH_EXPIRED", msg: "Google OAuth token expired for Bhiwandi location" },
+    { module: "google-sync", code: "OAUTH_EXPIRED", msg: "Google OAuth token expired for Thane location" },
     { module: "ai-processing", code: "TIMEOUT", msg: "AI request timed out after 30s" },
     { module: "analytics-sync", code: "API_LIMIT", msg: "Google Business Profile API quota exceeded" },
   ];
@@ -791,7 +780,7 @@ async function main() {
   }
 
   // ── Settings ──────────────────────────────────────────────────────
-  await db.setting.create({ data: { key: "brand", value: JSON.stringify({ name: "MyFNG", tagline: "Home Interiors & Services", supportEmail: "care@myfng.in", supportPhone: "+91 22 4000 1000" }) } });
+  await db.setting.create({ data: { key: "brand", value: JSON.stringify({ name: "MyFNG Autocare", tagline: "Multi-Brand Car Service & Repair", supportEmail: "care@myfng.in", supportPhone: "+91 22 4000 1000" }) } });
   await db.setting.create({ data: { key: "ai", value: JSON.stringify({ assistantName: "MiSA AI", defaultModel: "glm-4.6", autoApprove: false, maxTokensPerDay: 200000 }) } });
   await db.setting.create({ data: { key: "sync", value: JSON.stringify({ reviewsInterval: "5m", businessInfoInterval: "30m", postsInterval: "30m", analyticsInterval: "daily" }) } });
 

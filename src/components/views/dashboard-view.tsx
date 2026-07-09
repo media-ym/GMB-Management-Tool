@@ -268,7 +268,7 @@ export function DashboardView() {
               icon={Search}
               accent="text-teal-500 bg-teal-500/10"
               title="SEO ranking dropped on 2 keywords"
-              body="'modular kitchen mumbai' and 'home interiors pune' slipped this week. Review recommendations."
+              body="'car service mumbai' and 'car repair pune' slipped this week. Review recommendations."
               action="View SEO"
               onClick={() => setView("seo")}
             />

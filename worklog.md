@@ -2727,3 +2727,58 @@ Stage Summary:
 Files created: `.env.example`, `start-production.sh` (executable).
 Files modified: `prisma/schema.postgresql.prisma` (stub → 944-line complete schema), `DEPLOYMENT.md` (full rewrite), `next.config.ts` (removed invalid `eslint` key + `ignoreBuildErrors`), `tsconfig.json` (exclude SDK dirs), `src/app/api/ai/route.ts`, `src/app/api/dashboard/executive/route.ts`, `src/app/api/posts/bulk/route.ts`, `src/app/api/reports/route.ts`, `src/lib/types.ts`, `src/lib/ai.ts`, `src/lib/google-service.ts` (2 fixes), `src/components/shared/page-header.tsx`, `src/components/views/google-integration-view.tsx`.
 Build status: ✅ `bun run build` exits 0. Platform is production-ready for Hostinger deploy.
+
+---
+Task ID: REBRAND-SEED
+Agent: Database Seed Engineer
+Task: Rebrand seed.ts from Home Interiors to Multi-Brand Car Service (MyFNG Autocare)
+
+Work Log:
+- Replaced legal name: MyFNG Interiors Pvt. Ltd. → MyFNG Autocare Private Limited
+- Reduced locations from 15 to 4 (Mumbai, Navi Mumbai, Thane, Pune)
+- Replaced reviews (8 positive, 4 neutral, 4 negative) with car service context
+- Replaced keywords, competitors, services, products, posts with car service content
+- Updated business info description, reply templates, notifications
+- Updated categories to Auto Repair Shop / Car Service Center
+- Updated GBP primaryCategory "Interior Designer" → "Auto Repair Shop"; additional categories → Auto Mechanic / Car Wash / Automobile Parts Store
+- Updated review reply text in seeding loop to "car service" / "Team MyFNG Autocare"
+- Replaced aiSugs: removed Vasai/Virar/Badlapur/Mira Road/Nashik references → Thane/Pune/Navi Mumbai
+- Replaced notifications: removed Bhiwandi sync error (→ Thane); "all 15 locations" → "all 4 locations"
+- Replaced error log: "Bhiwandi location" → "Thane location"
+- Updated SEO audit missing category "Kitchen Furniture Store" → "Car Wash"; recommendations "completed projects" → "completed services"
+- Updated brand settings tagline "Home Interiors & Services" → "Multi-Brand Car Service & Repair", name "MyFNG" → "MyFNG Autocare"
+- Adjusted paused-location index `i === 9` → `i === 3` (Pune paused; previously Mira Road which no longer exists)
+- Lint: 0 errors, 0 warnings
+- Grep for old terms (interiors|kitchen|wardrobe|nashik|panvel|kalyan|dombivli|bhiwandi|mira road|vasai|virar|ambernath|badlapur|raigad|living room|false ceiling|furniture|modular): 0 matches
+
+Stage Summary:
+Seed file fully rebranded to multi-brand car service context. All 4 cities (Mumbai, Navi Mumbai, Thane, Pune) consistently referenced throughout; no Home Interiors or removed-city references remain.
+
+---
+Task ID: REBRAND-CODE
+Agent: Frontend/Backend Engineer
+Task: Rebrand all source files from Home Interiors to Multi-Brand Car Service
+
+Work Log:
+- Updated src/lib/ai.ts — all 5 AI prompts (aiReviewReply, aiGeneratePost, aiSeoSuggestions, aiMonthlySummary, aiChat) now reference MyFNG Autocare as a multi-brand car service & repair brand across Mumbai, Navi Mumbai, Thane, Pune. Removed the 11 extra cities from aiChat's system prompt. Positive-tone review-reply branch now references "car model, service type, etc.". Post-generation rule now highlights value to "local car owners (Maruti, Hyundai, Honda, Tata, Mahindra, Toyota)".
+- Updated src/app/api/locations/route.ts — default new-location seed (categoriesJson, servicesJson, BusinessCategory rows, Service rows) switched from Interior Designer/Modular Kitchen/Wardrobe Design/Full Home Interiors/False Ceiling → Auto Repair Shop (primary), Car Service Station, Auto Air Conditioning Service, Periodic Service, Brake Repair, AC Service & Repair, Multi-Brand Repair.
+- Updated src/app/api/locations/import/route.ts — fallback primaryCategory "Interior Designer" → "Auto Repair Shop".
+- Updated src/lib/google-service.ts — fallback categoryName when Google's displayName is empty: "Interior Designer" → "Auto Repair Shop". Left Google API constants (INTERIOR photo category enum, gcid:interior_designer category ID examples) untouched — those are official GBP API contract values, not business-context strings.
+- Updated src/components/views/dashboard-view.tsx — SEO AI suggestion body now references "car service mumbai" and "car repair pune" instead of "modular kitchen mumbai"/"home interiors pune".
+- Updated src/components/views/settings-view.tsx — tagline placeholder "Home Interiors & Services" → "Multi-Brand Car Service & Repair".
+- Updated src/components/views/seo-view.tsx — keyword placeholder "interior designer mumbai" → "car service mumbai".
+- Updated src/components/views/posts-view.tsx — MiSA AI topic example and post title placeholder now reference "Monsoon car AC service" instead of modular kitchens.
+- Updated src/components/views/ai-view.tsx — suggestion prompts: "Thane showroom" → "Thane car service centre"; "modular kitchens in Nashik" → "car service in Pune" (also removed out-of-footprint Nashik reference).
+- Updated src/components/views/media-view.tsx — upload filename placeholder "thane_showroom_hero.jpg" → "thane_centre_hero.jpg"; stat card hint "Storefront & interior shots" → "Storefront & workshop shots".
+- Replaced "MyFNG Interiors Pvt. Ltd." references — none existed in src/ (the platform never had this exact legal string in code; seed.ts is the other agent's responsibility).
+- Login illustration (car repair scene — mechanic fixing a car with hood open) left unchanged. Verified no "interiors" references in login-screen.tsx.
+- CSS class names, component names, variable names left untouched. Google API category enums (INTERIOR photo category) and gcid examples (gcid:interior_designer) preserved as official API contract values.
+
+Verification:
+- `bun run lint` → 0 errors, 0 warnings ✅
+- `rg -i "interiors|home interiors|interior designer|MyFNG Interiors Pvt" src/` → 0 matches ✅
+- `rg -i "interiors|home interiors|interior designer|MyFNG Interiors Pvt" prisma/seed.ts` → 0 matches (as of this pass; seed.ts is the other agent's responsibility) ✅
+- `rg -i "showroom|kitchen|wardrobe|Nashik|Panvel|Kalyan|Dombivli|Bhiwandi|Mira Road|Vasai|Virar|Ambernath|Badlapur|Raigad" src/` → 0 matches ✅
+
+Stage Summary:
+All source files rebranded to multi-brand car service context. The platform's user-facing copy, AI prompts, default new-location seed data, and placeholder text now consistently describe MyFNG Autocare as a multi-brand car service & repair brand operating in Mumbai, Navi Mumbai, Thane, and Pune. Google API integration constants (photo category enums, gcid examples) preserved untouched to avoid breaking the GBP integration contract. Work record saved to /agent-ctx/REBRAND-CODE-frontend-backend-engineer.md.

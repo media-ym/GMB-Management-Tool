@@ -1,0 +1,803 @@
+     1→import { db } from "../src/lib/db";
+     2→import { hashPassword } from "../src/lib/password";
+     3→
+     4→// MyFNG locations (per architecture doc §7)
+     5→const LOCATIONS = [
+     6→  { code: "MYFNG-MUM", name: "MyFNG Mumbai", city: "Mumbai", address: "Linking Road, Bandra West, Mumbai, Maharashtra 400050", lat: 19.0596, lng: 72.8295, phone: "+91 22 4000 1001", pincode: "400050" },
+     7→  { code: "MYFNG-NM", name: "MyFNG Navi Mumbai", city: "Navi Mumbai", address: "Palm Beach Road, Vashi, Navi Mumbai, Maharashtra 400703", lat: 19.0760, lng: 73.0250, phone: "+91 22 4000 1002", pincode: "400703" },
+     8→  { code: "MYFNG-THA", name: "MyFNG Thane", city: "Thane", address: "Ghodbunder Road, Manpada, Thane West, Maharashtra 400607", lat: 19.2447, lng: 72.9793, phone: "+91 22 4000 1003", pincode: "400607" },
+     9→  { code: "MYFNG-PUN", name: "MyFNG Pune", city: "Pune", address: "Baner Road, Baner, Pune, Maharashtra 411045", lat: 18.5590, lng: 73.7868, phone: "+91 20 4000 1004", pincode: "411045" },
+    10→  { code: "MYFNG-NSK", name: "MyFNG Nashik", city: "Nashik", address: "College Road, Nashik, Maharashtra 422005", lat: 19.9945, lng: 73.7754, phone: "+91 253 4000 1005", pincode: "422005" },
+    11→  { code: "MYFNG-PNV", name: "MyFNG Panvel", city: "Panvel", address: "Khandeshwar Road, Panvel, Navi Mumbai, Maharashtra 410206", lat: 18.9888, lng: 73.1118, phone: "+91 22 4000 1006", pincode: "410206" },
+    12→  { code: "MYFNG-KLY", name: "MyFNG Kalyan", city: "Kalyan", address: "Station Road, Kalyan West, Maharashtra 421301", lat: 19.2403, lng: 73.1305, phone: "+91 251 4000 1007", pincode: "421301" },
+    13→  { code: "MYFNG-DOM", name: "MyFNG Dombivli", city: "Dombivli", address: "Manpada Road, Dombivli East, Maharashtra 421201", lat: 19.2167, lng: 73.0833, phone: "+91 251 4000 1008", pincode: "421201" },
+    14→  { code: "MYFNG-BHI", name: "MyFNG Bhiwandi", city: "Bhiwandi", address: "Mumbai-Agra Road, Bhiwandi, Maharashtra 421302", lat: 19.2967, lng: 73.0633, phone: "+91 2522 4000 1009", pincode: "421302" },
+    15→  { code: "MYFNG-MIR", name: "MyFNG Mira Road", city: "Mira Road", address: "Western Express Highway, Mira Road East, Maharashtra 401107", lat: 19.2750, lng: 72.8750, phone: "+91 22 4000 1010", pincode: "401107" },
+    16→  { code: "MYFNG-VAS", name: "MyFNG Vasai", city: "Vasai", address: "Vasai Road, Vasai West, Maharashtra 401202", lat: 19.4245, lng: 72.8087, phone: "+91 250 4000 1011", pincode: "401202" },
+    17→  { code: "MYFNG-VIR", name: "MyFNG Virar", city: "Virar", address: "Viva College Road, Virar West, Maharashtra 401303", lat: 19.4520, lng: 72.8110, phone: "+91 250 4000 1012", pincode: "401303" },
+    18→  { code: "MYFNG-AMB", name: "MyFNG Ambernath", city: "Ambernath", address: "Kalyan-Ambernath Road, Ambernath East, Maharashtra 421501", lat: 19.2083, lng: 73.1883, phone: "+91 251 4000 1013", pincode: "421501" },
+    19→  { code: "MYFNG-BDL", name: "MyFNG Badlapur", city: "Badlapur", address: "Railway Road, Badlapur West, Maharashtra 421503", lat: 19.1667, lng: 73.2333, phone: "+91 251 4000 1014", pincode: "421503" },
+    20→  { code: "MYFNG-RGD", name: "MyFNG Raigad", city: "Raigad", address: "Alibag Road, Raigad, Maharashtra 402201", lat: 18.5167, lng: 73.1833, phone: "+91 2141 4000 1015", pincode: "402201" },
+    21→];
+    22→
+    23→const REVIEW_AUTHORS = [
+    24→  "Rohan Mehta", "Priya Sharma", "Amit Deshpande", "Sneha Patil", "Vikram Iyer",
+    25→  "Anjali Nair", "Suresh Kadam", "Deepa Joshi", "Manish Gupta", "Pooja More",
+    26→  "Karan Singh", "Neha Verma", "Rajesh Pawar", "Meera Desai", "Aditya Rao",
+    27→  "Swati Bhat", "Gaurav Kale", "Reshma Pillai", "Nilesh Shetty", "Arti Kulkarni",
+    28→];
+    29→
+    30→const POSITIVE_REVIEWS = [
+    31→  "Got my modular kitchen done by MyFNG team. Excellent finish and on-time delivery. The 3D design preview helped a lot. Highly recommend!",
+    32→  "Outstanding service! The team understood exactly what we wanted. Our living room makeover looks stunning. Worth every rupee.",
+    33→  "Booked a full home interiors package. Professional crew, clean work, and they handled all approvals. 5 stars from us.",
+    34→  "Great experience from design to installation. Special thanks to the project manager who kept us updated daily.",
+    35→  "Beautiful wardrobes and excellent space utilisation in our 2BHK. The finish quality is top notch.",
+    36→  "Very happy with the false ceiling and lighting work. The team was punctual and courteous throughout.",
+    37→  "MyFNG Pune team did an amazing job with our kitchen and master bedroom. Modern designs and durable material.",
+    38→  "Smooth end-to-end experience. The site supervisor was always available. Final outcome exceeded expectations.",
+    39→];
+    40→const NEUTRAL_REVIEWS = [
+    41→  "Decent work overall but the project took 2 weeks longer than promised. Quality is good though.",
+    42→  "Design was nice but communication could have been better. Happy with the final result.",
+    43→  "Satisfied with the work but had to follow up multiple times for the warranty documents.",
+    44→  "Good quality interiors. Slightly on the expensive side but you get what you pay for.",
+    45→];
+    46→const NEGATIVE_REVIEWS = [
+    47→  "Delayed by 3 weeks and the finishing on the cabinet doors is uneven. Had to call them back twice for fixes.",
+    48→  "Promised soft-close hinges but received regular ones. Still waiting for replacement after 2 weeks.",
+    49→  "Poor response from the site supervisor. Work quality is okay but project management needs improvement.",
+    50→  "The paint started chipping near the window within a month. Disappointed with the warranty support.",
+    51→];
+    52→
+    53→const KEYWORDS_BY_CITY = [
+    54→  "modular kitchen near me", "home interiors", "wardrobe designers",
+    55→  "false ceiling contractor", "modular kitchen {city}", "interior designer {city}",
+    56→  "home renovation", "custom furniture", "living room design",
+    57→];
+    58→
+    59→const COMPETITORS = [
+    60→  { name: "HomeLane", category: "Home Interiors" },
+    61→  { name: "Livspace", category: "Home Interiors" },
+    62→  { name: "Pepperfry Studio", category: "Furniture Store" },
+    63→  { name: "Urban Ladder", category: "Home Interiors" },
+    64→];
+    65→
+    66→const SERVICES_LIST = [
+    67→  { name: "Modular Kitchen", category: "Kitchen", desc: "Custom modular kitchens with premium hardware and finishes." },
+    68→  { name: "Wardrobe Design", category: "Bedroom", desc: "Sliding and hinged wardrobes with smart storage solutions." },
+    69→  { name: "False Ceiling", category: "Living Room", desc: "POP and gypsum false ceiling with integrated lighting." },
+    70→  { name: "Full Home Interiors", category: "Complete", desc: "End-to-end interior design and execution for your home." },
+    71→  { name: "Custom Furniture", category: "Furniture", desc: "Bespoke furniture crafted to your space and style." },
+    72→  { name: "Living Room Design", category: "Living Room", desc: "Complete living room makeovers with theme design." },
+    73→];
+    74→
+    75→const PRODUCTS_LIST = [
+    76→  { name: "Acrylic Modular Kitchen Set", category: "Kitchen", price: 185000 },
+    77→  { name: "Sliding Wardrobe 8ft", category: "Bedroom", price: 65000 },
+    78→  { name: "False Ceiling with Cove Light", category: "Living Room", price: 28000 },
+    79→  { name: "TV Unit with Storage", category: "Living Room", price: 42000 },
+    80→  { name: "Pooja Room Unit", category: "Special", price: 35000 },
+    81→  { name: "Study Table with Bookshelf", category: "Bedroom", price: 22000 },
+    82→];
+    83→
+    84→const BUSINESS_HOURS = [
+    85→  { day: 1, open: "10:00", close: "20:00", closed: false }, // Mon
+    86→  { day: 2, open: "10:00", close: "20:00", closed: false },
+    87→  { day: 3, open: "10:00", close: "20:00", closed: false },
+    88→  { day: 4, open: "10:00", close: "20:00", closed: false },
+    89→  { day: 5, open: "10:00", close: "20:00", closed: false },
+    90→  { day: 6, open: "10:00", close: "21:00", closed: false }, // Sat
+    91→  { day: 0, open: "11:00", close: "18:00", closed: false }, // Sun
+    92→];
+    93→
+    94→const ATTRIBUTES = [
+    95→  { name: "Wheelchair Accessible", value: "true" },
+    96→  { name: "Appointments Required", value: "true" },
+    97→  { name: "Onsite Services", value: "true" },
+    98→  { name: "Parking Available", value: "true" },
+    99→  { name: "Online Appointments", value: "true" },
+   100→];
+   101→
+   102→const CATEGORIES = [
+   103→  { name: "Interior Designer", primary: true },
+   104→  { name: "Home Improvement Store", primary: false },
+   105→  { name: "Furniture Store", primary: false },
+   106→  { name: "Kitchen Furniture Store", primary: false },
+   107→];
+   108→
+   109→function pick<T>(arr: T[], i: number): T { return arr[i % arr.length]; }
+   110→function rand(seed: number, max: number): number {
+   111→  const x = Math.sin(seed) * 10000;
+   112→  return Math.floor((x - Math.floor(x)) * max);
+   113→}
+   114→
+   115→async function main() {
+   116→  console.log("Seeding MyFNG Local AI Manager (expanded schema)...");
+   117→
+   118→  // Clean ALL tables (order matters for FK constraints)
+   119→  const tables = [
+   120→    "StorageFile", "Webhook", "ApiToken", "ScheduledJob", "BackgroundJob",
+   121→    "ErrorLog", "ApiLog", "SyncLog", "ActivityLog", "DashboardWidget",
+   122→    "UserPreference", "Report", "AiUsage", "AiSuggestion", "AiJob",
+   123→    "CompetitorRanking", "Competitor", "GeoGridResult", "SeoAudit",
+   124→    "KeywordRanking", "Keyword", "AnalyticsMonthly", "DashboardCache",
+   125→    "AnalyticDaily", "MediaLibrary", "Post", "ReviewLabel", "ReviewReply",
+   126→    "ReviewReplyTemplate", "Review", "BusinessHour", "SpecialHour",
+   127→    "BusinessAttribute", "Service", "Product", "BusinessPhoto",
+   128→    "BusinessCategory", "BusinessInformation", "GoogleBusinessProfile",
+   129→    "GoogleAccount", "ClientAuthorization", "Client",
+   130→    "RolePermission", "Permission", "Role",
+   131→    "Notification", "AuditLog", "AIHistory", "Setting", "Location", "User",
+   132→  ];
+   133→  for (const t of tables) {
+   134→    try { await (db as any)[t].deleteMany(); } catch (e) { /* ignore */ }
+   135→  }
+   136→
+   137→  // ── Roles & Permissions (§4-§5) ───────────────────────────────────
+   138→  const roleDefs = [
+   139→    { name: "Super Admin", desc: "Full access to every module and setting." },
+   140→    { name: "Marketing Manager", desc: "Reviews, Posts, Analytics, AI. No user management." },
+   141→    { name: "Branch Manager", desc: "Assigned locations, reviews, posts. No global settings." },
+   142→    { name: "Customer Support", desc: "Reviews and AI replies only." },
+   143→    { name: "Viewer", desc: "Read-only access to dashboard and reports." },
+   144→  ];
+   145→  const roles: any[] = [];
+   146→  for (const r of roleDefs) {
+   147→    roles.push(await db.role.create({ data: { name: r.name, description: r.desc } }));
+   148→  }
+   149→
+   150→  const permDefs = [
+   151→    "dashboard.view", "locations.view", "locations.manage",
+   152→    "reviews.view", "reviews.reply", "reviews.ai_reply",
+   153→    "posts.view", "posts.manage", "analytics.view",
+   154→    "seo.view", "seo.manage", "ai.use",
+   155→    "notifications.view", "audit.view", "settings.view",
+   156→    "users.manage", "system.sync", "media.manage", "reports.generate",
+   157→  ];
+   158→  const perms: any[] = [];
+   159→  for (const p of permDefs) {
+   160→    perms.push(await db.permission.create({ data: { permissionName: p, description: p } }));
+   161→  }
+   162→  // Assign all perms to Super Admin
+   163→  for (const p of perms) {
+   164→    await db.rolePermission.create({ data: { roleId: roles[0].id, permissionId: p.id } });
+   165→  }
+   166→  // Marketing Manager: most except users.manage
+   167→  for (const p of perms) {
+   168→    if (p.permissionName !== "users.manage") {
+   169→      await db.rolePermission.create({ data: { roleId: roles[1].id, permissionId: p.id } });
+   170→    }
+   171→  }
+   172→  // Branch Manager: limited
+   173→  const bmPerms = ["dashboard.view","locations.view","reviews.view","reviews.reply","reviews.ai_reply","posts.view","posts.manage","analytics.view","seo.view","ai.use","notifications.view","media.manage"];
+   174→  for (const pn of bmPerms) {
+   175→    const p = perms.find(x => x.permissionName === pn);
+   176→    if (p) await db.rolePermission.create({ data: { roleId: roles[2].id, permissionId: p.id } });
+   177→  }
+   178→  // Customer Support
+   179→  const csPerms = ["dashboard.view","reviews.view","reviews.reply","reviews.ai_reply","ai.use","notifications.view"];
+   180→  for (const pn of csPerms) {
+   181→    const p = perms.find(x => x.permissionName === pn);
+   182→    if (p) await db.rolePermission.create({ data: { roleId: roles[3].id, permissionId: p.id } });
+   183→  }
+   184→  // Viewer
+   185→  const vwPerms = ["dashboard.view","locations.view","reviews.view","posts.view","analytics.view","seo.view","notifications.view","audit.view"];
+   186→  for (const pn of vwPerms) {
+   187→    const p = perms.find(x => x.permissionName === pn);
+   188→    if (p) await db.rolePermission.create({ data: { roleId: roles[4].id, permissionId: p.id } });
+   189→  }
+   190→
+   191→  // ── Users (5 roles) ───────────────────────────────────────────────
+   192→  const pw = await hashPassword("MyFNG@2025");
+   193→  const users = [
+   194→    { email: "admin@myfng.in", name: "Ananya Deshpande", role: "super_admin", roleId: roles[0].id },
+   195→    { email: "marketing@myfng.in", name: "Rohit Malhotra", role: "marketing_manager", roleId: roles[1].id },
+   196→    { email: "thane@myfng.in", name: "Smita Kulkarni", role: "branch_manager", roleId: roles[2].id },
+   197→    { email: "support@myfng.in", name: "Imran Shaikh", role: "customer_support", roleId: roles[3].id },
+   198→    { email: "viewer@myfng.in", name: "Guest Viewer", role: "viewer", roleId: roles[4].id },
+   199→  ];
+   200→  const createdUsers: any[] = [];
+   201→  for (const u of users) {
+   202→    createdUsers.push(await db.user.create({ data: { ...u, password: pw } }));
+   203→  }
+   204→
+   205→  // ─── Seed default end-client (for Google Third-Party Policy compliance) ────
+   206→  const selfClient = await db.client.upsert({
+   207→    where: { clientCode: "MYFNG-SELF" },
+   208→    update: {},
+   209→    create: {
+   210→      clientCode: "MYFNG-SELF",
+   211→      name: "MyFNG (Self)",
+   212→      legalName: "MyFNG Interiors Pvt. Ltd.",
+   213→      contactName: "Operations Team",
+   214→      contactEmail: "ops@myfng.in",
+   215→      contactPhone: "+91 90000 00000",
+   216→      status: "active",
+   217→      notes: "Default self-client. All MyFNG-owned locations belong to this client.",
+   218→    },
+   219→  });
+   220→
+   221→  // Create an active authorization record for the self-client
+   222→  await db.clientAuthorization.upsert({
+   223→    where: { id: "self-auth-default" },
+   224→    update: { status: "active" },
+   225→    create: {
+   226→      id: "self-auth-default",
+   227→      clientId: selfClient.id,
+   228→      authorizedScopes: JSON.stringify(["review.reply", "post.create", "post.update", "post.delete", "profile.update", "analytics.sync", "media.upload", "media.delete"]),
+   229→      status: "active",
+   230→      grantedAt: new Date(),
+   231→      notes: "Default authorization for self-managed locations.",
+   232→    },
+   233→  });
+   234→
+   235→  // ── Google Account — NOT created in seed. Real Google OAuth connects via UI. ──
+   236→  // When user deploys and clicks "Connect Google", a real Google account record is created.
+   237→  const gAccount = { id: "seed-placeholder" }; // placeholder for GBP linking below
+   238→
+   239→  // ── Locations + GoogleBusinessProfile + BusinessInfo + Hours + Photos + etc ──
+   240→  const createdLocations: any[] = [];
+   241→  for (let i = 0; i < LOCATIONS.length; i++) {
+   242→    const L = LOCATIONS[i];
+   243→    const avgRating = 3.8 + rand(i + 1, 12) / 10;
+   244→    const reviewCount = 40 + rand(i + 7, 180);
+   245→    const healthScore = 55 + rand(i + 3, 45);
+   246→    const visibilityScore = 45 + rand(i + 9, 55);
+   247→    const syncStatuses = ["synced", "synced", "synced", "pending", "error"];
+   248→
+   249→    const loc = await db.location.create({
+   250→      data: {
+   251→        locationCode: L.code,
+   252→        name: L.name,
+   253→        city: L.city,
+   254→        region: "Maharashtra",
+   255→        state: "Maharashtra",
+   256→        pincode: L.pincode,
+   257→        address: L.address,
+   258→        phone: L.phone,
+   259→        email: `${L.city.toLowerCase().replace(/\s+/g, "")}@myfng.in`,
+   260→        website: "https://myfng.in",
+   261→        timezone: "Asia/Kolkata",
+   262→        latitude: L.lat,
+   263→        longitude: L.lng,
+   264→        status: i === 9 ? "paused" : "active",
+   265→        syncStatus: pick(syncStatuses, i),
+   266→        lastSyncedAt: new Date(Date.now() - rand(i + 2, 60) * 60 * 1000),
+   267→        avgRating: Math.round(avgRating * 10) / 10,
+   268→        reviewCount,
+   269→        healthScore,
+   270→        visibilityScore,
+   271→        categoriesJson: JSON.stringify(CATEGORIES.map(c => c.name)),
+   272→        servicesJson: JSON.stringify(SERVICES_LIST.map(s => s.name)),
+   273→        hoursJson: JSON.stringify(BUSINESS_HOURS),
+   274→        attributesJson: JSON.stringify(Object.fromEntries(ATTRIBUTES.map(a => [a.name, a.value === "true"]))),
+   275→        clientId: selfClient.id,
+   276→      },
+   277→    });
+   278→    createdLocations.push(loc);
+   279→
+   280→    // Google Business Profile
+   281→    const gbp = await db.googleBusinessProfile.create({
+   282→      data: {
+   283→        googleLocationId: `myfng-gbp-${L.city.toLowerCase().replace(/\s+/g, "-")}`,
+   284→        locationId: loc.id,
+   285→        googleAccountId: null, // Will be linked when real Google OAuth connects
+   286→        profileName: L.name,
+   287→        primaryCategory: "Interior Designer",
+   288→        additionalCategoriesJson: JSON.stringify(["Home Improvement Store", "Furniture Store"]),
+   289→        averageRating: Math.round(avgRating * 10) / 10,
+   290→        totalReviews: reviewCount,
+   291→        verificationState: "verified",
+   292→        profileStatus: "active",
+   293→        mapUrl: `https://maps.google.com/?cid=myfng_${L.city.toLowerCase()}`,
+   294→      },
+   295→    });
+   296→
+   297→    // Business Information
+   298→    await db.businessInformation.create({
+   299→      data: {
+   300→        profileId: gbp.id,
+   301→        locationId: loc.id,
+   302→        description: `MyFNG ${L.city} — Premium home interiors & modular kitchen experience centre. Visit us for free 3D design consultation.`,
+   303→        openingHoursJson: JSON.stringify(BUSINESS_HOURS),
+   304→        servicesJson: JSON.stringify(SERVICES_LIST.map(s => s.name)),
+   305→        attributesJson: JSON.stringify(Object.fromEntries(ATTRIBUTES.map(a => [a.name, a.value === "true"]))),
+   306→        website: "https://myfng.in",
+   307→        appointmentUrl: "https://myfng.in/book",
+   308→      },
+   309→    });
+   310→
+   311→    // Categories
+   312→    for (const c of CATEGORIES) {
+   313→      await db.businessCategory.create({ data: { locationId: loc.id, categoryName: c.name, isPrimary: c.primary } });
+   314→    }
+   315→
+   316→    // Services
+   317→    for (const s of SERVICES_LIST) {
+   318→      await db.service.create({ data: { locationId: loc.id, serviceName: s.name, description: s.desc, category: s.category, status: "active" } });
+   319→    }
+   320→
+   321→    // Products
+   322→    for (const p of PRODUCTS_LIST) {
+   323→      await db.product.create({ data: { locationId: loc.id, productName: p.name, category: p.category, price: p.price, currency: "INR", status: "active" } });
+   324→    }
+   325→
+   326→    // Attributes
+   327→    for (const a of ATTRIBUTES) {
+   328→      await db.businessAttribute.create({ data: { locationId: loc.id, attributeName: a.name, attributeValue: a.value } });
+   329→    }
+   330→
+   331→    // Business Hours
+   332→    for (const h of BUSINESS_HOURS) {
+   333→      await db.businessHour.create({ data: { locationId: loc.id, dayOfWeek: h.day, openTime: h.open, closeTime: h.close, isClosed: h.closed } });
+   334→    }
+   335→
+   336→    // Special hours (a couple of holidays)
+   337→    await db.specialHour.create({ data: { locationId: loc.id, date: new Date("2025-08-15"), isClosed: true } });
+   338→    await db.specialHour.create({ data: { locationId: loc.id, date: new Date("2025-10-02"), isClosed: true } });
+   339→
+   340→    // Business Photos (using placeholder image URLs)
+   341→    for (let p = 0; p < 4 + rand(i + 3, 4); p++) {
+   342→      await db.businessPhoto.create({
+   343→        data: {
+   344→          locationId: loc.id,
+   345→          googlePhotoId: `photo_${loc.id}_${p}`,
+   346→          imageUrl: `https://placehold.co/600x400/059669/ffffff?text=MyFNG+${L.city}+${p + 1}`,
+   347→          thumbnailUrl: `https://placehold.co/150x150/059669/ffffff?text=${L.city}`,
+   348→          source: pick(["manual", "google", "ai"], p),
+   349→          status: "active",
+   350→        },
+   351→      });
+   352→    }
+   353→  }
+   354→
+   355→  // Assign branch manager to Thane + Mumbai
+   356→  await db.user.update({
+   357→    where: { id: createdUsers[2].id },
+   358→    data: { assignedLocationIds: [createdLocations[0].id, createdLocations[2].id].join(",") },
+   359→  });
+   360→
+   361→  // ── Reviews + ReviewReplies + Labels ──────────────────────────────
+   362→  let reviewSeed = 100;
+   363→  for (let li = 0; li < createdLocations.length; li++) {
+   364→    const loc = createdLocations[li];
+   365→    const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId: loc.id } });
+   366→    const count = 8 + rand(li + 11, 12);
+   367→    for (let r = 0; r < count; r++) {
+   368→      reviewSeed++;
+   369→      const bucket = rand(reviewSeed, 10);
+   370→      let rating: number, text: string, sentiment: string;
+   371→      if (bucket < 6) { rating = 5; text = pick(POSITIVE_REVIEWS, reviewSeed); sentiment = "positive"; }
+   372→      else if (bucket < 8) { rating = 4; text = pick(POSITIVE_REVIEWS, reviewSeed + 1); sentiment = "positive"; }
+   373→      else if (bucket < 9) { rating = 3; text = pick(NEUTRAL_REVIEWS, reviewSeed); sentiment = "neutral"; }
+   374→      else { rating = rand(reviewSeed, 2) === 0 ? 1 : 2; text = pick(NEGATIVE_REVIEWS, reviewSeed); sentiment = "negative"; }
+   375→
+   376→      const createdAt = new Date(Date.now() - rand(reviewSeed, 45) * 24 * 60 * 60 * 1000);
+   377→      const replied = rating >= 3 && rand(reviewSeed, 3) === 0;
+   378→      const replyText = replied
+   379→        ? `Hi ${pick(REVIEW_AUTHORS, reviewSeed).split(" ")[0]}, thank you so much for sharing your experience with MyFNG ${loc.city}. We're glad you chose us for your home interiors. Our team would love to stay in touch — reach us anytime at care@myfng.in. — Team MyFNG`
+   380→        : null;
+   381→      const review = await db.review.create({
+   382→        data: {
+   383→          locationId: loc.id,
+   384→          profileId: gbp?.id,
+   385→          googleReviewId: `rev_${loc.city.toLowerCase().replace(/\s+/g, "")}_${reviewSeed}`,
+   386→          authorName: pick(REVIEW_AUTHORS, reviewSeed),
+   387→          authorPhoto: null,
+   388→          rating,
+   389→          text,
+   390→          sentiment,
+   391→          sentimentScore: sentiment === "positive" ? 0.7 + rand(reviewSeed, 30) / 100 : sentiment === "negative" ? -0.7 - rand(reviewSeed, 30) / 100 : 0,
+   392→          replyText,
+   393→          replySource: replied ? (rand(reviewSeed, 2) === 0 ? "ai" : "manual") : null,
+   394→          replyStatus: replied ? "replied" : (rating <= 2 ? "pending" : (rand(reviewSeed, 2) === 0 ? "pending" : "ignored")),
+   395→          repliedAt: replied ? new Date(createdAt.getTime() + 36 * 60 * 60 * 1000) : null,
+   396→          createdAt,
+   397→        },
+   398→      });
+   399→
+   400→      // Labels
+   401→      if (sentiment === "positive") await db.reviewLabel.create({ data: { reviewId: review.id, label: "Appreciation" } });
+   402→      if (sentiment === "negative") {
+   403→        await db.reviewLabel.create({ data: { reviewId: review.id, label: "Complaint" } });
+   404→        if (rand(reviewSeed, 2) === 0) await db.reviewLabel.create({ data: { reviewId: review.id, label: "Delayed Service" } });
+   405→        else await db.reviewLabel.create({ data: { reviewId: review.id, label: "Pricing" } });
+   406→      }
+   407→
+   408→      // Review reply record (for replied reviews)
+   409→      if (replied) {
+   410→        await db.reviewReply.create({
+   411→          data: {
+   412→            reviewId: review.id,
+   413→            replyText: replyText!,
+   414→            replySource: rand(reviewSeed, 2) === 0 ? "ai" : "manual",
+   415→            publishedBy: createdUsers[3].id,
+   416→            createdBy: createdUsers[3].id,
+   417→            googleReplyTime: new Date(createdAt.getTime() + 36 * 60 * 60 * 1000),
+   418→            status: "published",
+   419→          },
+   420→        });
+   421→      }
+   422→    }
+   423→  }
+   424→
+   425→  // ── Review Reply Templates ────────────────────────────────────────
+   426→  const templates = [
+   427→    { title: "Positive 5-star", rating: 5, template: "Hi {name}, thank you so much for your kind words! We're thrilled you loved your MyFNG experience. Welcome to the MyFNG family — reach us anytime at care@myfng.in." },
+   428→    { title: "Positive 4-star", rating: 4, template: "Hi {name}, thank you for the wonderful review! It was a pleasure working on your home. We'd love to see the final result — tag us @myfng on social!" },
+   429→    { title: "Neutral 3-star", rating: 3, template: "Hi {name}, thank you for your feedback. We're glad you're satisfied with the quality. We'd love to understand how we could have earned 5 stars — please write to care@myfng.in." },
+   430→    { title: "Negative - Delay", rating: 2, template: "Hi {name}, we sincerely apologise for the delay and inconvenience. This isn't our standard. Please write to care@myfng.in with your project ID and our escalation team will resolve this within 48 hours." },
+   431→    { title: "Negative - Quality", rating: 1, template: "Hi {name}, we're truly sorry to hear about the quality issue. We stand behind our work with a 5-year warranty. Please contact care@myfng.in so we can schedule a free inspection and fix." },
+   432→  ];
+   433→  for (const t of templates) {
+   434→    await db.reviewReplyTemplate.create({ data: { title: t.title, rating: t.rating, template: t.template, language: "en", isActive: true, createdBy: createdUsers[1].id } });
+   435→  }
+   436→
+   437→  // ── Posts ─────────────────────────────────────────────────────────
+   438→  const postTopics = [
+   439→    { type: "whats_new", title: "New Monsoon Modular Kitchen Collection Launched", content: "Introducing our all-new monsoon-ready modular kitchen range with anti-moisture ply and soft-close hardware across all MyFNG experience centres. Visit us this weekend for an exclusive preview and complimentary 3D design consultation.", ctaType: "learn_more" },
+   440→    { type: "offer", title: "Flat 25% Off on Wardrobe Packages — This Month Only", content: "Upgrade your bedroom with custom sliding wardrobes at 25% off. Free site measurement, free 3D design, and zero-cost EMI for 6 months. Limited slots per city — book your free design visit today.", ctaType: "book" },
+   441→    { type: "event", title: "Home Interiors Design Expo — Pune", content: "Join us at the MyFNG Design Expo in Baner, Pune. Meet our senior designers, explore live mock-up homes, and avail expo-only discounts on full home interior packages. Saturday & Sunday, 10 AM to 8 PM.", ctaType: "sign_up" },
+   442→    { type: "update", title: "New Experience Centre Now Open in Kalyan", content: "We're excited to announce the opening of our newest MyFNG experience centre at Station Road, Kalyan. Walk in for free design consultations, material sampling, and meet our certified interior designers.", ctaType: "call" },
+   443→    { type: "whats_new", title: "Smart Home Integration Now Available", content: "MyFNG now offers smart lighting, automated curtains, and voice-controlled ambiance as part of selected full home interior packages. Experience the future of living at any MyFNG studio.", ctaType: "learn_more" },
+   444→  ];
+   445→  for (let li = 0; li < createdLocations.length; li++) {
+   446→    const loc = createdLocations[li];
+   447→    const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId: loc.id } });
+   448→    const postCount = 2 + rand(li + 5, 4);
+   449→    for (let p = 0; p < postCount; p++) {
+   450→      const t = pick(postTopics, li + p);
+   451→      const statusBucket = rand(li + p + 3, 4);
+   452→      const status = statusBucket === 0 ? "draft" : statusBucket === 1 ? "scheduled" : "published";
+   453→      const createdAt = new Date(Date.now() - rand(li + p + 1, 40) * 24 * 60 * 60 * 1000);
+   454→      await db.post.create({
+   455→        data: {
+   456→          locationId: loc.id,
+   457→          profileId: gbp?.id,
+   458→          type: t.type,
+   459→          title: t.title,
+   460→          content: t.content,
+   461→          ctaType: t.ctaType,
+   462→          ctaUrl: "https://myfng.in/offers",
+   463→          imageUrl: rand(li + p, 3) === 0 ? `https://placehold.co/600x400/059669/ffffff?text=MyFNG+Post` : null,
+   464→          status,
+   465→          source: rand(li + p, 3) === 0 ? "ai" : "manual",
+   466→          authorId: createdUsers[1].id,
+   467→          scheduledAt: status === "scheduled" ? new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) : null,
+   468→          publishedAt: status === "published" ? createdAt : null,
+   469→          createdAt,
+   470→        },
+   471→      });
+   472→    }
+   473→  }
+   474→
+   475→  // ── Analytics (daily, 30 days) + Monthly ──────────────────────────
+   476→  const today = new Date();
+   477→  for (const loc of createdLocations) {
+   478→    for (let d = 29; d >= 0; d--) {
+   479→      const date = new Date(today);
+   480→      date.setDate(today.getDate() - d);
+   481→      date.setHours(0, 0, 0, 0);
+   482→      const base = 60 + rand(loc.latitude! * 1000 + d, 220);
+   483→      await db.analyticDaily.create({
+   484→        data: {
+   485→          locationId: loc.id,
+   486→          date,
+   487→          searchViews: base + rand(d + 1, 80),
+   488→          mapsViews: Math.floor(base * 0.7) + rand(d + 2, 50),
+   489→          websiteClicks: Math.floor(base * 0.25) + rand(d + 3, 20),
+   490→          phoneCalls: Math.floor(base * 0.08) + rand(d + 4, 8),
+   491→          directionRequests: Math.floor(base * 0.12) + rand(d + 5, 12),
+   492→          bookings: Math.floor(base * 0.03) + rand(d + 6, 4),
+   493→        },
+   494→      });
+   495→    }
+   496→    // Monthly aggregates
+   497→    const monthAgo = new Date(today); monthAgo.setMonth(monthAgo.getMonth() - 1);
+   498→    await db.analyticsMonthly.create({
+   499→      data: {
+   500→        locationId: loc.id,
+   501→        month: monthAgo.getMonth() + 1,
+   502→        year: monthAgo.getFullYear(),
+   503→        totalViews: 2000 + rand(loc.latitude! * 100, 3000),
+   504→        websiteClicks: 500 + rand(loc.latitude! * 100, 800),
+   505→        phoneCalls: 150 + rand(loc.latitude! * 100, 200),
+   506→        directionRequests: 200 + rand(loc.latitude! * 100, 250),
+   507→        totalReviews: 8 + rand(loc.latitude! * 100, 20),
+   508→        averageRating: loc.avgRating,
+   509→      },
+   510→    });
+   511→  }
+   512→
+   513→  // ── Keywords + Geo-grid + Competitors ─────────────────────────────
+   514→  for (const loc of createdLocations) {
+   515→    for (const kw of KEYWORDS_BY_CITY) {
+   516→      const keyword = kw.replace("{city}", loc.city);
+   517→      const k = await db.keyword.create({
+   518→        data: { locationId: loc.id, keyword, city: loc.city, state: "Maharashtra", status: "active" },
+   519→      });
+   520→      // 5x5 geo grid
+   521→      for (let gx = -2; gx <= 2; gx++) {
+   522→        for (let gy = -2; gy <= 2; gy++) {
+   523→          const lat = (loc.latitude ?? 19) + gy * 0.012;
+   524→          const lng = (loc.longitude ?? 73) + gx * 0.012;
+   525→          const rankBucket = Math.abs(gx) + Math.abs(gy);
+   526→          const rank = rankBucket === 0 ? 1 + rand(gx + 5, 2) : rankBucket === 1 ? 1 + rand(gx + 6, 5) : rankBucket === 2 ? 3 + rand(gx + 7, 8) : rankBucket === 3 ? 8 + rand(gx + 8, 12) : 15 + rand(gx + 9, 20);
+   527→          await db.keywordRanking.create({
+   528→            data: { keywordId: k.id, locationId: loc.id, lat, lng, rank, searchDate: new Date(), checkedAt: new Date() },
+   529→          });
+   530→          await db.geoGridResult.create({
+   531→            data: { keywordId: k.id, latitude: lat, longitude: lng, ranking: rank, checkedAt: new Date() },
+   532→          });
+   533→        }
+   534→      }
+   535→    }
+   536→
+   537→    // Competitors + rankings
+   538→    for (let ci = 0; ci < COMPETITORS.length; ci++) {
+   539→      const c = COMPETITORS[ci];
+   540→      const comp = await db.competitor.create({
+   541→        data: {
+   542→          locationId: loc.id,
+   543→          businessName: c.name,
+   544→          googlePlaceId: `comp_${loc.id}_${ci}`,
+   545→          category: c.category,
+   546→          address: `${c.name}, ${loc.city}`,
+   547→          latitude: (loc.latitude ?? 19) + (ci + 1) * 0.005,
+   548→          longitude: (loc.longitude ?? 73) + (ci + 1) * 0.005,
+   549→          isActive: true,
+   550→        },
+   551→      });
+   552→      // Competitor rankings for first keyword of this location
+   553→      const firstKw = await db.keyword.findFirst({ where: { locationId: loc.id } });
+   554→      if (firstKw) {
+   555→        await db.competitorRanking.create({
+   556→          data: { competitorId: comp.id, keywordId: firstKw.id, ranking: 3 + rand(ci + loc.latitude! * 10, 15), checkedAt: new Date() },
+   557→        });
+   558→      }
+   559→    }
+   560→
+   561→    // SEO Audit
+   562→    await db.seoAudit.create({
+   563→      data: {
+   564→        locationId: loc.id,
+   565→        auditScore: loc.healthScore,
+   566→        profileStrength: loc.visibilityScore,
+   567→        missingCategoriesJson: JSON.stringify(rand(loc.latitude! * 10, 3) === 0 ? ["Kitchen Furniture Store"] : []),
+   568→        missingPhotos: rand(loc.latitude! * 10, 5),
+   569→        missingServices: rand(loc.latitude! * 10, 3),
+   570→        recommendationsJson: JSON.stringify(["Add more photos of completed projects", "Update business hours for holidays", "Respond to all pending reviews within 24h"]),
+   571→      },
+   572→    });
+   573→  }
+   574→
+   575→  // ── Media Library ─────────────────────────────────────────────────
+   576→  const mediaBuckets = ["business-photos", "post-images", "reports", "ai-generated"];
+   577→  for (let m = 0; m < 30; m++) {
+   578→    const loc = pick(createdLocations, m);
+   579→    await db.mediaLibrary.create({
+   580→      data: {
+   581→        locationId: loc.id,
+   582→        fileName: `media_${loc.city.toLowerCase()}_${m}.jpg`,
+   583→        bucket: pick(mediaBuckets, m),
+   584→        fileUrl: `https://placehold.co/600x400/059669/ffffff?text=Media+${m}`,
+   585→        mimeType: "image/jpeg",
+   586→        fileSize: 200000 + rand(m, 800000),
+   587→        uploadedBy: createdUsers[1].id,
+   588→        aiGenerated: rand(m, 4) === 0,
+   589→      },
+   590→    });
+   591→  }
+   592→
+   593→  // ── Reports ───────────────────────────────────────────────────────
+   594→  const reportTypes = ["daily", "weekly", "monthly", "quarterly"];
+   595→  for (let r = 0; r < 20; r++) {
+   596→    const loc = pick(createdLocations, r);
+   597→    const type = pick(reportTypes, r);
+   598→    await db.report.create({
+   599→      data: {
+   600→        reportType: type,
+   601→        locationId: loc.id,
+   602→        reportName: `MyFNG ${loc.city} ${type} report — ${new Date(Date.now() - r * 24 * 60 * 60 * 1000).toLocaleDateString("en-IN")}`,
+   603→        fileUrl: `https://myfng.in/reports/${type}_${loc.id}_${r}.pdf`,
+   604→        generatedBy: createdUsers[1].id,
+   605→      },
+   606→    });
+   607→  }
+   608→
+   609→  // ── AI Jobs + Suggestions + Usage ─────────────────────────────────
+   610→  for (let a = 0; a < 25; a++) {
+   611→    const jobTypes = ["review_reply", "google_post", "seo_audit", "monthly_report", "suggestion"];
+   612→    await db.aiJob.create({
+   613→      data: {
+   614→        jobType: pick(jobTypes, a),
+   615→        entityType: pick(["review", "post", "location"], a),
+   616→        entityId: `ent_${a}`,
+   617→        model: "glm-4.6",
+   618→        tokens: 200 + rand(a, 1800),
+   619→        durationMs: 2000 + rand(a, 12000),
+   620→        status: rand(a, 8) === 0 ? "failed" : "completed",
+   621→        createdBy: createdUsers[1].id,
+   622→      },
+   623→    });
+   624→  }
+   625→
+   626→  const aiSugs = [
+   627→    { category: "review", title: "12 reviews awaiting reply", desc: "5 are 1-2 star. Respond within 24h to protect local SEO.", priority: "critical" },
+   628→    { category: "seo", title: "Ranking dropped on 'modular kitchen mumbai'", desc: "Position slipped from #2 to #7. Refresh photos and publish a post.", priority: "high" },
+   629→    { category: "post", title: "3 locations haven't posted in 14 days", desc: "Vasai, Virar, Badlapur need fresh content. Generate with MiSA AI.", priority: "medium" },
+   630→    { category: "profile", title: "Incomplete business info on Mira Road", desc: "Missing 2 services and 3 attributes. Complete for better visibility.", priority: "medium" },
+   631→    { category: "performance", title: "Nashik call volume down 18%", desc: "Investigate phone tracking and consider call-only campaign.", priority: "low" },
+   632→  ];
+   633→  for (const s of aiSugs) {
+   634→    await db.aiSuggestion.create({ data: { category: s.category, title: s.title, description: s.desc, priority: s.priority, status: "pending" } });
+   635→  }
+   636→
+   637→  // AI usage for last 7 days
+   638→  for (let d = 0; d < 7; d++) {
+   639→    const date = new Date(today); date.setDate(today.getDate() - d); date.setHours(0, 0, 0, 0);
+   640→    await db.aiUsage.create({
+   641→      data: { usageDate: date, model: "glm-4.6", totalRequests: 20 + rand(d, 60), totalTokens: 8000 + rand(d, 40000), estimatedCost: (0.5 + rand(d, 3)) as any },
+   642→    });
+   643→  }
+   644→
+   645→  // ── Notifications ─────────────────────────────────────────────────
+   646→  const notifs = [
+   647→    { type: "review", title: "New 1-star review on MyFNG Pune", message: "A customer posted a 1-star review mentioning delay and uneven finish. Needs immediate attention.", severity: "critical", link: "reviews" },
+   648→    { type: "sync", title: "Google sync failed for MyFNG Bhiwandi", message: "OAuth token expired. Re-authorize Google Business Profile to resume sync.", severity: "warning", link: "locations" },
+   649→    { type: "ranking", title: "Ranking dropped for 'modular kitchen mumbai'", message: "Position dropped from #2 to #7 in last 7 days. Consider refreshing photos and posts.", severity: "warning", link: "seo" },
+   650→    { type: "ai_alert", title: "MiSA AI flagged 4 locations needing attention", message: "Lower than average health score detected on Mira Road, Vasai, Virar, Badlapur.", severity: "info", link: "ai" },
+   651→    { type: "system", title: "Daily analytics sync completed", message: "Performance metrics updated for all 15 locations.", severity: "success", link: "analytics" },
+   652→    { type: "review", title: "12 new reviews this week", message: "Average rating improved by 0.1 across all locations.", severity: "info", link: "reviews" },
+   653→  ];
+   654→  for (const n of notifs) {
+   655→    await db.notification.create({
+   656→      data: { userId: null, type: n.type, title: n.title, message: n.message, severity: n.severity as any, read: false, link: n.link },
+   657→    });
+   658→  }
+   659→
+   660→  // ── Audit + Activity Logs ─────────────────────────────────────────
+   661→  const auditActions = [
+   662→    { action: "login", entity: "auth", module: "auth" },
+   663→    { action: "review.reply", entity: "review", module: "reviews" },
+   664→    { action: "post.publish", entity: "post", module: "posts" },
+   665→    { action: "ai.generate", entity: "ai", module: "ai" },
+   666→    { action: "sync.run", entity: "location", module: "sync" },
+   667→    { action: "settings.update", entity: "settings", module: "settings" },
+   668→  ];
+   669→  for (let i = 0; i < 30; i++) {
+   670→    const a = pick(auditActions, i);
+   671→    const u = pick(createdUsers, i);
+   672→    await db.auditLog.create({
+   673→      data: {
+   674→        userId: u.id, userName: u.name, action: a.action, entity: a.entity, entityId: `ent_${i}`,
+   675→        status: rand(i, 8) === 0 ? "failed" : "success", ip: `10.0.${rand(i, 20)}.${rand(i + 3, 200)}`,
+   676→        createdAt: new Date(Date.now() - i * 3 * 60 * 60 * 1000),
+   677→      },
+   678→    });
+   679→    await db.activityLog.create({
+   680→      data: {
+   681→        userId: u.id, module: a.module, action: a.action, entityType: a.entity, entityId: `ent_${i}`,
+   682→        ipAddress: `10.0.${rand(i, 20)}.${rand(i + 3, 200)}`, userAgent: "Mozilla/5.0 (Chrome)",
+   683→        createdAt: new Date(Date.now() - i * 3 * 60 * 60 * 1000),
+   684→      },
+   685→    });
+   686→  }
+   687→
+   688→  // ── Sync Logs ─────────────────────────────────────────────────────
+   689→  const syncModules = ["reviews", "posts", "profile", "analytics", "photos"];
+   690→  for (let i = 0; i < 25; i++) {
+   691→    const loc = pick(createdLocations, i);
+   692→    const mod = pick(syncModules, i);
+   693→    const status = rand(i, 5) === 0 ? "failed" : "success";
+   694→    const startedAt = new Date(Date.now() - i * 2 * 60 * 60 * 1000);
+   695→    await db.syncLog.create({
+   696→      data: {
+   697→        module: mod, locationId: loc.id, startedAt,
+   698→        completedAt: new Date(startedAt.getTime() + 5000 + rand(i, 20000)),
+   699→        status,
+   700→        recordsProcessed: 10 + rand(i, 100),
+   701→        recordsInserted: rand(i, 20),
+   702→        recordsUpdated: rand(i, 30),
+   703→        recordsFailed: status === "failed" ? 1 + rand(i, 5) : 0,
+   704→        errorMessage: status === "failed" ? "OAuth token expired" : null,
+   705→      },
+   706→    });
+   707→  }
+   708→
+   709→  // ── Background Jobs + Scheduled Jobs ──────────────────────────────
+   710→  const jobStatuses = ["queued", "processing", "completed", "failed", "retrying"];
+   711→  const queues = ["google-sync", "review-sync", "analytics-sync", "ai-processing", "notifications", "reports"];
+   712→  for (let i = 0; i < 20; i++) {
+   713→    await db.backgroundJob.create({
+   714→      data: {
+   715→        queueName: pick(queues, i), jobName: `${pick(queues, i)}-job-${i}`,
+   716→        status: pick(jobStatuses, i), attempts: 1 + rand(i, 3),
+   717→        startedAt: new Date(Date.now() - i * 30 * 60 * 1000),
+   718→        completedAt: rand(i, 3) === 0 ? null : new Date(Date.now() - i * 30 * 60 * 1000 + 60000),
+   719→        errorMessage: rand(i, 5) === 0 ? "Rate limit exceeded" : null,
+   720→      },
+   721→    });
+   722→  }
+   723→
+   724→  const cronJobs = [
+   725→    { name: "Review Sync", cron: "*/5 * * * *", enabled: true },
+   726→    { name: "Business Profile Sync", cron: "*/30 * * * *", enabled: true },
+   727→    { name: "Analytics Sync", cron: "0 2 * * *", enabled: true },
+   728→    { name: "Dashboard Cache Refresh", cron: "*/15 * * * *", enabled: true },
+   729→    { name: "Cleanup Logs", cron: "0 3 * * 0", enabled: true },
+   730→    { name: "Generate Daily Report", cron: "0 3 * * *", enabled: true },
+   731→    { name: "AI Suggestions", cron: "0 8 * * *", enabled: true },
+   732→  ];
+   733→  for (const j of cronJobs) {
+   734→    await db.scheduledJob.create({
+   735→      data: {
+   736→        jobName: j.name, cronExpression: j.cron, isEnabled: j.enabled,
+   737→        lastRun: new Date(Date.now() - 30 * 60 * 1000),
+   738→        nextRun: new Date(Date.now() + 5 * 60 * 1000),
+   739→      },
+   740→    });
+   741→  }
+   742→
+   743→  // ── Error Logs ────────────────────────────────────────────────────
+   744→  const errors = [
+   745→    { module: "google-sync", code: "OAUTH_EXPIRED", msg: "Google OAuth token expired for Bhiwandi location" },
+   746→    { module: "ai-processing", code: "TIMEOUT", msg: "AI request timed out after 30s" },
+   747→    { module: "analytics-sync", code: "API_LIMIT", msg: "Google Business Profile API quota exceeded" },
+   748→  ];
+   749→  for (let i = 0; i < errors.length; i++) {
+   750→    await db.errorLog.create({
+   751→      data: { module: errors[i].module, errorCode: errors[i].code, errorMessage: errors[i].msg, resolved: i > 1, createdAt: new Date(Date.now() - i * 60 * 60 * 1000) },
+   752→    });
+   753→  }
+   754→
+   755→  // ── API Tokens ────────────────────────────────────────────────────
+   756→  const tokens = [
+   757→    { provider: "google", name: "Google Business Profile", status: "active" },
+   758→    { provider: "openai", name: "MiSA AI (glm-4.6)", status: "active" },
+   759→    { provider: "smtp", name: "Email Notifications", status: "active" },
+   760→    { provider: "supabase", name: "Supabase Service Role", status: "active" },
+   761→  ];
+   762→  for (const t of tokens) {
+   763→    await db.apiToken.create({ data: { provider: t.provider, tokenName: t.name, encryptedValue: "encrypted_placeholder", status: t.status, expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) } });
+   764→  }
+   765→
+   766→  // ── Storage Files ─────────────────────────────────────────────────
+   767→  const storageBuckets = ["business-photos", "post-images", "reports", "exports", "documents", "ai-cache"];
+   768→  for (let i = 0; i < 15; i++) {
+   769→    await db.storageFile.create({
+   770→      data: { bucket: pick(storageBuckets, i), objectName: `obj_${i}`, originalName: `file_${i}.jpg`, mimeType: pick(["image/jpeg", "image/png", "application/pdf"], i), fileSize: 100000 + rand(i, 900000) },
+   771→    });
+   772→  }
+   773→
+   774→  // ── Dashboard Widgets ─────────────────────────────────────────────
+   775→  const widgets = [
+   776→    { key: "overview", title: "Business Overview", order: 1 },
+   777→    { key: "reviews", title: "Latest Reviews", order: 2 },
+   778→    { key: "analytics", title: "Analytics", order: 3 },
+   779→    { key: "keyword_rankings", title: "Keyword Rankings", order: 4 },
+   780→    { key: "latest_posts", title: "Latest Posts", order: 5 },
+   781→    { key: "notifications", title: "Notifications", order: 6 },
+   782→    { key: "ai_suggestions", title: "AI Suggestions", order: 7 },
+   783→  ];
+   784→  for (const w of widgets) {
+   785→    await db.dashboardWidget.create({ data: { widgetKey: w.key, title: w.title, displayOrder: w.order, isEnabled: true } });
+   786→  }
+   787→
+   788→  // ── User Preferences ──────────────────────────────────────────────
+   789→  for (const u of createdUsers) {
+   790→    await db.userPreference.create({ data: { userId: u.id, theme: "light", language: "en", timezone: "Asia/Kolkata", defaultDashboard: "dashboard" } });
+   791→  }
+   792→
+   793→  // ── Settings ──────────────────────────────────────────────────────
+   794→  await db.setting.create({ data: { key: "brand", value: JSON.stringify({ name: "MyFNG", tagline: "Home Interiors & Services", supportEmail: "care@myfng.in", supportPhone: "+91 22 4000 1000" }) } });
+   795→  await db.setting.create({ data: { key: "ai", value: JSON.stringify({ assistantName: "MiSA AI", defaultModel: "glm-4.6", autoApprove: false, maxTokensPerDay: 200000 }) } });
+   796→  await db.setting.create({ data: { key: "sync", value: JSON.stringify({ reviewsInterval: "5m", businessInfoInterval: "30m", postsInterval: "30m", analyticsInterval: "daily" }) } });
+   797→
+   798→  console.log("Seed complete.");
+   799→  console.log("Login: admin@myfng.in / marketing@myfng.in / thane@myfng.in / support@myfng.in / viewer@myfng.in | password: MyFNG@2025");
+   800→}
+   801→
+   802→main().catch((e) => { console.error(e); process.exit(1); }).finally(async () => { await db.$disconnect(); });
+   803→

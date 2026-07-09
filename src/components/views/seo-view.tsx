@@ -1114,7 +1114,7 @@ function KeywordFormDialog({
               id="kw"
               value={formKeyword}
               onChange={(e) => setFormKeyword(e.target.value)}
-              placeholder="e.g. interior designer mumbai"
+              placeholder="e.g. car service mumbai"
               autoFocus
             />
           </div>

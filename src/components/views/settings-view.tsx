@@ -1317,7 +1317,7 @@ function GeneralTab({ readonly }: { readonly: boolean }) {
             <Input value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} disabled={readonly} placeholder="MyFNG" aria-invalid={!!errors.name} />
           </Field>
           <Field label="Tagline" icon={Sparkles}>
-            <Input value={form.tagline ?? ""} onChange={(e) => set("tagline", e.target.value)} disabled={readonly} placeholder="Home Interiors & Services" />
+            <Input value={form.tagline ?? ""} onChange={(e) => set("tagline", e.target.value)} disabled={readonly} placeholder="Multi-Brand Car Service & Repair" />
           </Field>
           <Field label="Logo URL" icon={Building2} error={errors.logoUrl}>
             <Input value={form.logoUrl ?? ""} onChange={(e) => set("logoUrl", e.target.value)} disabled={readonly} placeholder="https://…" aria-invalid={!!errors.logoUrl} />

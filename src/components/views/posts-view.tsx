@@ -1563,7 +1563,7 @@ function PostEditorDialog({
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Tell MiSA the topic (e.g. “Monsoon modular kitchen offer”) and we&apos;ll draft title, body &amp; CTA.
+                  Tell MiSA the topic (e.g. “Monsoon car AC service offer”) and we&apos;ll draft title, body &amp; CTA.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-2">
                   <Input
@@ -1776,7 +1776,7 @@ function PostEditorDialog({
                   value={state.title}
                   maxLength={80}
                   onChange={(e) => update("title", e.target.value.slice(0, 60))}
-                  placeholder="e.g. Monsoon Sale — Up to 30% off modular kitchens"
+                  placeholder="e.g. Monsoon Sale — Up to 30% off car AC service"
                 />
               </div>
 

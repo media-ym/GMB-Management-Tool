@@ -374,7 +374,7 @@ function UploadDialog({
             <Label htmlFor="upload-filename">File name</Label>
             <Input
               id="upload-filename"
-              placeholder="e.g. thane_showroom_hero.jpg"
+              placeholder="e.g. thane_centre_hero.jpg"
               value={fileName}
               onChange={(e) => setFileName(e.target.value)}
               autoComplete="off"
@@ -725,7 +725,7 @@ export function MediaView() {
               value={stats.businessPhotos}
               icon={ImageIcon}
               accent="teal"
-              hint="Storefront & interior shots"
+              hint="Storefront & workshop shots"
             />
             <StatCard
               label="AI-Generated"
