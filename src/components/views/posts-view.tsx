@@ -339,8 +339,11 @@ export function PostsView() {
   }
 
   function handleSaved() {
-    qc.invalidateQueries({ queryKey: ["posts"] });
-    qc.invalidateQueries({ queryKey: ["posts-stats"] });
+    // Force immediate refetch (not just invalidation) so calendar/list/queue
+    // update instantly after save. invalidateQueries marks stale but the
+    // refetch might not fire immediately if staleTime hasn't elapsed.
+    qc.refetchQueries({ queryKey: ["posts"] });
+    qc.refetchQueries({ queryKey: ["posts-stats"] });
     closeEditor();
   }
 
