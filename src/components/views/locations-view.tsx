@@ -307,6 +307,7 @@ export function LocationsView() {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [bulkRunning, setBulkRunning] = useState<"sync" | "archive" | "activate" | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [bulkVerifyOpen, setBulkVerifyOpen] = useState(false);
 
   const { data: locations, isLoading } = useQuery<LocationWithStats[]>({
     queryKey: ["locations"],
@@ -317,6 +318,39 @@ export function LocationsView() {
     queryKey: ["dashboard-summary"],
     queryFn: () => api<DashboardSummary>("/api/dashboard"),
   });
+
+  // Available-to-import count shown as a badge on the Add Location button.
+  // Hidden when Google OAuth isn't configured/connected OR every GMB location
+  // is already imported. Refetched every 60s so newly-added GMB locations
+  // surface automatically.
+  const { data: availableGmb } = useQuery<{ status: string; available: number } | undefined>({
+    queryKey: ["available-gmb-locations"],
+    queryFn: async () => {
+      try {
+        const res = await fetch("/api/google/available-locations");
+        const json = await res.json();
+        if (json.success) {
+          return {
+            status: json.data.status,
+            available: json.data.available ?? 0,
+          };
+        }
+        return undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    refetchInterval: 60_000,
+    // Only the Add Location button is gated on canManage — but the badge is
+    // informational for any logged-in user with locations.view. We still gate
+    // on canManage so non-managers don't waste a Google API call they can't
+    // act on.
+    enabled: canManage,
+  });
+  const availableToImport =
+    availableGmb && availableGmb.status === "connected" && availableGmb.available > 0
+      ? availableGmb.available
+      : 0;
 
   // Reset detail when locations list refetches & detail no longer exists
   useEffect(() => {
@@ -476,8 +510,22 @@ export function LocationsView() {
         actions={
           <>
             {canManage && (
-              <Button size="sm" onClick={() => setAddOpen(true)}>
+              <Button size="sm" variant="outline" onClick={() => setBulkVerifyOpen(true)}>
+                <ShieldCheck className="size-3.5 mr-1.5" /> Bulk Verify
+              </Button>
+            )}
+            {canManage && (
+              <Button size="sm" onClick={() => setAddOpen(true)} className="relative">
                 <Plus className="size-3.5 mr-1.5" /> Add Location
+                {availableToImport > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className="ml-1.5 bg-primary/15 text-primary border-primary/30 hover:bg-primary/15"
+                    title={`${availableToImport} location(s) available to import from Google Business Profile`}
+                  >
+                    {availableToImport} available
+                  </Badge>
+                )}
               </Button>
             )}
             {canSync ? (
@@ -704,6 +752,15 @@ export function LocationsView() {
 
       {/* Add Location Dialog */}
       <AddLocationDialog open={addOpen} onOpenChange={setAddOpen} />
+
+      {/* Bulk Verify Dialog */}
+      {canManage && (
+        <BulkVerifyDialog
+          open={bulkVerifyOpen}
+          onOpenChange={setBulkVerifyOpen}
+          locationIds={(locations ?? []).map((l) => l.id)}
+        />
+      )}
     </div>
   );
 }
@@ -1519,6 +1576,22 @@ function BusinessInfoTab({ detail, canManage }: { detail: LocationDetailResponse
                     </Badge>
                   }
                 />
+                {/* Verification actions — surface the single-location verify
+                    flow + history viewer right under the state badge so a
+                    branch manager doesn't have to dig through the Bulk
+                    Verify dialog for a one-off. */}
+                {googleProfile.verificationState !== "verified" && canManage && (
+                  <LocationVerifyActions
+                    locationId={location.id}
+                    locationName={location.name}
+                  />
+                )}
+                {googleProfile.verificationState === "verified" && (
+                  <LocationVerifyHistoryButton
+                    locationId={location.id}
+                    locationName={location.name}
+                  />
+                )}
                 <DetailRow
                   icon={Activity}
                   label="Profile Status"
@@ -2380,6 +2453,7 @@ function DetailRow({
 function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const qc = useQueryClient();
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [gmbLocations, setGmbLocations] = useState<any[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -2387,35 +2461,52 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   const [message, setMessage] = useState<string>("");
   const [setupSteps, setSetupSteps] = useState<string[]>([]);
   const [fetched, setFetched] = useState(false);
+  // "Sync after import" — when checked, after importing the selected
+  // locations, kick off a full sync for each newly-imported location so the
+  // user gets a one-click "import + sync everything" experience.
+  const [syncAfterImport, setSyncAfterImport] = useState(true);
+  // Progress text for the import-then-sync flow ("Importing 3 of 5…").
+  const [progressLabel, setProgressLabel] = useState<string>("");
+
+  // Fetch available GMB locations from Google. Called once on open and again
+  // whenever the user clicks the Refresh button inside the dialog.
+  async function fetchGmbLocations(isRefresh = false) {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    if (!isRefresh) {
+      setFetched(false);
+      setSelected(new Set());
+      setGmbLocations([]);
+    }
+    try {
+      const res = await fetch("/api/google/available-locations");
+      const json = await res.json();
+      if (json.success) {
+        setGmbLocations(json.data.locations || []);
+        setStatus(json.data.status || "");
+        setMessage(json.data.message || "");
+        setSetupSteps(json.data.setupSteps || []);
+        if (isRefresh) {
+          toast.success(`Refreshed — ${json.data.available ?? 0} location(s) available`);
+        }
+      } else {
+        toast.error(json.message || "Failed to fetch GMB locations");
+        setStatus("not_connected");
+      }
+    } catch {
+      toast.error("Failed to fetch GMB locations");
+      setStatus("not_connected");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setFetched(true);
+    }
+  }
 
   // Fetch available GMB locations when dialog opens
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
-    setFetched(false);
-    setSelected(new Set());
-    setGmbLocations([]);
-    fetch("/api/google/available-locations")
-      .then((r) => r.json())
-      .then((json) => {
-        if (json.success) {
-          setGmbLocations(json.data.locations || []);
-          setStatus(json.data.status || "");
-          setMessage(json.data.message || "");
-          setSetupSteps(json.data.setupSteps || []);
-        } else {
-          toast.error(json.message || "Failed to fetch GMB locations");
-          setStatus("not_connected");
-        }
-      })
-      .catch(() => {
-        toast.error("Failed to fetch GMB locations");
-        setStatus("not_connected");
-      })
-      .finally(() => {
-        setLoading(false);
-        setFetched(true);
-      });
+    fetchGmbLocations(false);
   }, [open]);
 
   function toggleSelect(googleLocationId: string) {
@@ -2442,6 +2533,7 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     setImporting(true);
     try {
       const toImport = gmbLocations.filter((l) => selected.has(l.googleLocationId));
+      setProgressLabel(`Importing ${toImport.length} location${toImport.length === 1 ? "" : "s"}…`);
       const res = await fetch("/api/locations/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2449,8 +2541,39 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
       });
       const json = await res.json();
       if (json.success) {
-        toast.success(json.message || `${json.data.count} location(s) imported from Google Business Profile`);
+        const imported: { id: string; name: string; city: string }[] = json.data.imported || [];
+
+        // Optional sync-after-import: kick off a full sync for each imported
+        // location in sequence. We deliberately do NOT parallelise — Google's
+        // 10 QPS quota is shared with every other bulk operation in the
+        // app, and a serial loop with `await` keeps the dev-server UX
+        // informative (the progress label ticks up 1-by-1).
+        if (syncAfterImport && imported.length > 0) {
+          const total = imported.length;
+          for (let i = 0; i < total; i++) {
+            const loc = imported[i];
+            setProgressLabel(`Syncing ${i + 1} of ${total} — ${loc.name}…`);
+            try {
+              await api(`/api/locations/${loc.id}/sync`, {
+                method: "POST",
+                body: JSON.stringify({ module: "full" }),
+              });
+            } catch {
+              // Best-effort: a sync failure on a freshly imported location
+              // doesn't fail the whole import — the location exists in our
+              // DB and the user can re-sync from the Locations grid later.
+            }
+          }
+        }
+
+        toast.success(
+          syncAfterImport && imported.length > 0
+            ? `${imported.length} location(s) imported & synced from Google Business Profile`
+            : json.message || `${json.data.count} location(s) imported from Google Business Profile`,
+        );
         qc.invalidateQueries({ queryKey: ["locations"] });
+        qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
+        qc.invalidateQueries({ queryKey: ["available-gmb-locations"] });
         onOpenChange(false);
       } else {
         toast.error(json.message || "Import failed");
@@ -2459,6 +2582,7 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
       toast.error(e.message || "Import failed");
     } finally {
       setImporting(false);
+      setProgressLabel("");
     }
   }
 
@@ -2527,11 +2651,22 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         {/* ─── State: Connected — show locations list ─────────────────────── */}
         {!loading && fetched && status === "connected" && gmbLocations.length > 0 && (
           <>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 gap-2">
               <span className="text-sm text-muted-foreground">
                 {gmbLocations.length} location(s) available · {selected.size} selected
               </span>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => fetchGmbLocations(true)}
+                  disabled={refreshing || importing}
+                  className="text-xs h-7 gap-1.5"
+                  title="Re-fetch GMB locations from Google"
+                >
+                  {refreshing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                  Refresh
+                </Button>
                 <Button variant="ghost" size="sm" onClick={selectAll} className="text-xs h-7">Select All</Button>
                 <Button variant="ghost" size="sm" onClick={deselectAll} className="text-xs h-7">Deselect All</Button>
               </div>
@@ -2586,6 +2721,45 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
               All your Google Business Profile locations are already connected to MyFNG Local AI Manager.
               New locations will appear here automatically when you add them to your Google Business Profile.
             </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fetchGmbLocations(true)}
+              disabled={refreshing}
+              className="mt-2"
+            >
+              {refreshing ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="size-3.5 mr-1.5" />}
+              Refresh list
+            </Button>
+          </div>
+        )}
+
+        {/* Sync-after-import option (visible only on the connected state) */}
+        {!loading && fetched && status === "connected" && gmbLocations.length > 0 && (
+          <label
+            htmlFor="sync-after-import"
+            className="flex items-start gap-2.5 mt-3 p-3 rounded-lg border bg-muted/30 cursor-pointer hover:bg-muted/50 transition"
+          >
+            <Checkbox
+              id="sync-after-import"
+              checked={syncAfterImport}
+              onCheckedChange={(v) => setSyncAfterImport(v === true)}
+              className="mt-0.5"
+            />
+            <div className="space-y-0.5">
+              <span className="text-sm font-medium">Sync after import</span>
+              <p className="text-xs text-muted-foreground">
+                After importing, automatically trigger a full Google sync for each new location (reviews, photos, hours, services, analytics). Slower, but means your dashboard is fully populated the moment the dialog closes.
+              </p>
+            </div>
+          </label>
+        )}
+
+        {/* Progress label while import + optional sync runs */}
+        {importing && progressLabel && (
+          <div className="flex items-center gap-2 text-sm text-primary -mt-1">
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>{progressLabel}</span>
           </div>
         )}
 
@@ -2594,7 +2768,7 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           {status === "connected" && gmbLocations.length > 0 && (
             <Button onClick={handleImport} disabled={importing || selected.size === 0}>
               {importing
-                ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> Importing…</>
+                ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> {syncAfterImport ? "Importing & Syncing…" : "Importing…"}</>
                 : <><Plus className="size-4 mr-1.5" /> Import {selected.size > 0 ? `(${selected.size})` : ""} Location{selected.size !== 1 ? "s" : ""}</>
               }
             </Button>
@@ -2611,5 +2785,1079 @@ function EmptyRow({ icon: Icon, message }: { icon: React.ComponentType<{ classNa
       <Icon className="size-6 mx-auto mb-2 opacity-50" />
       {message}
     </div>
+  );
+}
+
+// ═══ Bulk GMB Verification Dialog ══════════════════════════════════════════
+// Surfaces the verification state for every location in the agency and lets
+// the user either (a) initiate ADDRESS/PHONE/SMS/EMAIL verification for a
+// batch of unverified locations, or (b) submit PINs for locations that have
+// a pending verification. All operations go through /api/locations/bulk-verify.
+interface BulkVerifyLocation {
+  locationId: string;
+  name: string;
+  city: string;
+  verificationState: string; // "verified" | "unverified" (reconciled)
+  pendingVerifications: any[];
+  canInitiate: boolean;
+  canComplete: boolean;
+  linked: boolean;
+  configured: boolean;
+  connected: boolean;
+  error?: string;
+}
+
+const VERIFY_METHODS = [
+  { value: "ADDRESS", label: "Postcard (Address)", hint: "Google mails a postcard with the PIN — arrives in 5–14 days." },
+  { value: "PHONE_CALL", label: "Phone Call", hint: "Google calls the phone number with an automated PIN." },
+  { value: "SMS", label: "SMS", hint: "Google texts the PIN to the phone number." },
+  { value: "EMAIL", label: "Email", hint: "Google emails the PIN to the email address." },
+] as const;
+
+function BulkVerifyDialog({
+  open,
+  onOpenChange,
+  locationIds,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  locationIds: string[];
+}) {
+  const qc = useQueryClient();
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [items, setItems] = useState<BulkVerifyLocation[]>([]);
+  const [error, setError] = useState<string>("");
+
+  // Initiate tab state
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [method, setMethod] = useState<"ADDRESS" | "PHONE_CALL" | "SMS" | "EMAIL">("ADDRESS");
+  const [mailerContactName, setMailerContactName] = useState("Operations Team");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [emailAddress, setEmailAddress] = useState("");
+  const [initiating, setInitiating] = useState(false);
+  const [initiateProgress, setInitiateProgress] = useState("");
+  const [initiateResult, setInitiateResult] = useState<any>(null);
+
+  // Complete PIN tab state — map of locationId → PIN
+  const [pins, setPins] = useState<Record<string, string>>({});
+  const [completing, setCompleting] = useState(false);
+  const [completeProgress, setCompleteProgress] = useState("");
+  const [completeResult, setCompleteResult] = useState<any>(null);
+
+  async function fetchStatus(isRefresh = false) {
+    if (locationIds.length === 0) return;
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError("");
+    try {
+      const data = await api<{ locations: BulkVerifyLocation[] }>(
+        `/api/locations/bulk-verify?locationIds=${encodeURIComponent(locationIds.join(","))}`,
+      );
+      setItems(data.locations || []);
+      // Reset transient state when we re-pull — selections and PINs may no
+      // longer apply (e.g. an unverified location is now pending).
+      setSelected(new Set());
+      setPins({});
+      setInitiateResult(null);
+      setCompleteResult(null);
+      if (isRefresh) {
+        toast.success(`Refreshed — ${data.locations.length} location(s) checked`);
+      }
+    } catch (e: any) {
+      setError(e.message || "Failed to load verification status");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  // Fetch when the dialog opens or the location set changes meaningfully.
+  useEffect(() => {
+    if (!open) return;
+    fetchStatus(false);
+  }, [open, locationIds.join(",")]);
+
+  // Derived counts for the UI
+  const verified = items.filter((i) => i.verificationState === "verified");
+  const unverified = items.filter((i) => i.canInitiate);
+  const pending = items.filter((i) => i.canComplete);
+  const notLinked = items.filter((i) => !i.linked);
+
+  function toggleSelect(locationId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(locationId)) next.delete(locationId);
+      else next.add(locationId);
+      return next;
+    });
+  }
+  function selectAllUnverified() {
+    setSelected(new Set(unverified.map((i) => i.locationId)));
+  }
+  function clearSelection() {
+    setSelected(new Set());
+  }
+  function setPin(locationId: string, value: string) {
+    setPins((prev) => ({ ...prev, [locationId]: value }));
+  }
+
+  // Initiate flow — validates per-method input before hitting the API.
+  async function handleInitiate() {
+    if (selected.size === 0) {
+      toast.error("Select at least one unverified location");
+      return;
+    }
+    const input: any = {};
+    if (method === "ADDRESS") {
+      if (!mailerContactName.trim()) {
+        toast.error("Mailer contact name is required for ADDRESS verification");
+        return;
+      }
+      input.mailerContactName = mailerContactName.trim();
+    } else if (method === "PHONE_CALL" || method === "SMS") {
+      if (!phoneNumber.trim()) {
+        toast.error("Phone number is required for PHONE/SMS verification");
+        return;
+      }
+      input.phoneNumber = phoneNumber.trim();
+    } else if (method === "EMAIL") {
+      if (!emailAddress.trim()) {
+        toast.error("Email address is required for EMAIL verification");
+        return;
+      }
+      input.emailAddress = emailAddress.trim();
+    }
+
+    setInitiating(true);
+    setInitiateResult(null);
+    setInitiateProgress(`Initiating verification for ${selected.size} location(s)…`);
+    try {
+      const res = await fetch("/api/locations/bulk-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "initiate",
+          locationIds: Array.from(selected),
+          method,
+          input,
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setInitiateResult(json.data);
+        toast.success(json.message || `Initiated verification for ${json.data.initiated?.length ?? 0} location(s)`);
+        qc.invalidateQueries({ queryKey: ["locations"] });
+        // Auto-refresh so the table reflects the new pending state.
+        await fetchStatus(true);
+      } else {
+        toast.error(json.message || "Bulk initiate failed");
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Bulk initiate failed");
+    } finally {
+      setInitiating(false);
+      setInitiateProgress("");
+    }
+  }
+
+  // Complete flow — submits PINs for every location with a non-empty PIN
+  // value AND a pending verification. We don't require the user to fill in
+  // every PIN — they can complete a subset.
+  async function handleComplete() {
+    const pinsToSubmit = pending
+      .map((p) => ({ locationId: p.locationId, pin: (pins[p.locationId] || "").trim() }))
+      .filter((p) => p.pin.length > 0);
+    if (pinsToSubmit.length === 0) {
+      toast.error("Enter at least one PIN to submit");
+      return;
+    }
+    setCompleting(true);
+    setCompleteResult(null);
+    setCompleteProgress(`Submitting ${pinsToSubmit.length} PIN(s) to Google…`);
+    try {
+      const res = await fetch("/api/locations/bulk-verify", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pins: pinsToSubmit }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setCompleteResult(json.data);
+        toast.success(json.message || `Completed ${json.data.completed?.length ?? 0} verification(s)`);
+        qc.invalidateQueries({ queryKey: ["locations"] });
+        // Clear submitted PINs + refresh.
+        setPins({});
+        await fetchStatus(true);
+      } else {
+        toast.error(json.message || "Bulk complete failed");
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Bulk complete failed");
+    } finally {
+      setCompleting(false);
+      setCompleteProgress("");
+    }
+  }
+
+  const inputLabel =
+    method === "ADDRESS"
+      ? "Mailer contact name"
+      : method === "EMAIL"
+        ? "Email address"
+        : "Phone number";
+  const inputValue =
+    method === "ADDRESS"
+      ? mailerContactName
+      : method === "EMAIL"
+        ? emailAddress
+        : phoneNumber;
+  const setInputValue =
+    method === "ADDRESS"
+      ? setMailerContactName
+      : method === "EMAIL"
+        ? setEmailAddress
+        : setPhoneNumber;
+  const inputPlaceholder =
+    method === "ADDRESS"
+      ? "Operations Team"
+      : method === "EMAIL"
+        ? "verify@example.com"
+        : "+91 98765 43210";
+  const methodHint = VERIFY_METHODS.find((m) => m.value === method)?.hint;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[820px] max-h-[92vh] overflow-y-auto scroll-area">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ShieldCheck className="size-5 text-primary" /> Bulk GMB Verification
+          </DialogTitle>
+          <DialogDescription>
+            Initiate or complete Google Business Profile verification for multiple locations at once. Google dispatches a PIN (postcard / call / SMS / email) which you then enter to confirm.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Status summary + refresh */}
+        <div className="flex flex-wrap items-center gap-2 -mt-1">
+          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+            <CircleCheck className="size-3 mr-1" /> {verified.length} verified
+          </Badge>
+          <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+            <Clock className="size-3 mr-1" /> {pending.length} pending PIN
+          </Badge>
+          <Badge variant="outline" className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20">
+            <CircleAlert className="size-3 mr-1" /> {unverified.length} unverified
+          </Badge>
+          {notLinked.length > 0 && (
+            <Badge variant="outline" className="text-muted-foreground">
+              <Inbox className="size-3 mr-1" /> {notLinked.length} not linked
+            </Badge>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-7 text-xs gap-1.5"
+            onClick={() => fetchStatus(true)}
+            disabled={refreshing || loading || initiating || completing}
+          >
+            {refreshing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            Refresh
+          </Button>
+        </div>
+
+        {/* Initial loading state */}
+        {loading && (
+          <div className="py-10 text-center space-y-3">
+            <Loader2 className="size-8 mx-auto animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">
+              Loading verification status from Google for {locationIds.length} location(s)…
+            </p>
+            <p className="text-xs text-muted-foreground/70">
+              This paces Google API calls to stay under the 10 QPS quota — about 5 locations per second.
+            </p>
+          </div>
+        )}
+
+        {/* Error state */}
+        {!loading && error && (
+          <div className="py-8 text-center space-y-3">
+            <div className="size-12 mx-auto rounded-full bg-rose-500/10 flex items-center justify-center">
+              <AlertTriangle className="size-6 text-rose-500" />
+            </div>
+            <p className="text-sm font-medium">Couldn&apos;t load verification status</p>
+            <p className="text-xs text-muted-foreground max-w-sm mx-auto">{error}</p>
+            <Button size="sm" variant="outline" onClick={() => fetchStatus(true)}>
+              <RefreshCw className="size-3.5 mr-1.5" /> Retry
+            </Button>
+          </div>
+        )}
+
+        {/* Empty state — no locations at all */}
+        {!loading && !error && items.length === 0 && (
+          <div className="py-10 text-center space-y-2">
+            <MapPin className="size-8 mx-auto text-muted-foreground/50" />
+            <p className="text-sm font-medium">No locations to verify</p>
+            <p className="text-xs text-muted-foreground">
+              Import locations from Google first, then come back here to verify them.
+            </p>
+          </div>
+        )}
+
+        {/* Main tabs — Initiate + Complete PIN */}
+        {!loading && !error && items.length > 0 && (
+          <Tabs defaultValue="initiate" className="w-full">
+            <TabsList className="w-full">
+              <TabsTrigger value="initiate" className="flex-1">
+                <ShieldCheck className="size-3.5 mr-1.5" /> Initiate ({unverified.length})
+              </TabsTrigger>
+              <TabsTrigger value="complete" className="flex-1">
+                <CircleCheck className="size-3.5 mr-1.5" /> Complete PIN ({pending.length})
+              </TabsTrigger>
+            </TabsList>
+
+            {/* ─── Initiate Tab ──────────────────────────────────────────── */}
+            <TabsContent value="initiate" className="mt-4 space-y-4">
+              {unverified.length === 0 ? (
+                <div className="py-8 text-center space-y-2">
+                  <CircleCheck className="size-8 mx-auto text-emerald-500" />
+                  <p className="text-sm font-medium">No unverified locations</p>
+                  <p className="text-xs text-muted-foreground">
+                    Every linked location is either verified or has a pending verification. Switch to the Complete PIN tab to finish any pending ones.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {selected.size} of {unverified.length} unverified selected
+                    </span>
+                    <div className="flex gap-2">
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={selectAllUnverified}>Select all unverified</Button>
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={clearSelection} disabled={selected.size === 0}>Clear</Button>
+                    </div>
+                  </div>
+
+                  {/* Locations table */}
+                  <div className="max-h-[34vh] overflow-y-auto scroll-area rounded-lg border">
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-background z-10">
+                        <TableRow>
+                          <TableHead className="w-10"></TableHead>
+                          <TableHead>Location</TableHead>
+                          <TableHead className="w-24">City</TableHead>
+                          <TableHead className="w-32">Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {items.map((loc) => {
+                          const isVerified = loc.verificationState === "verified";
+                          const isPending = loc.canComplete;
+                          const isUnverified = loc.canInitiate;
+                          const isNotLinked = !loc.linked;
+                          const isSelected = selected.has(loc.locationId);
+                          const disabled = !isUnverified;
+                          return (
+                            <TableRow
+                              key={loc.locationId}
+                              data-state={isSelected ? "selected" : undefined}
+                              className={cn(
+                                "cursor-pointer",
+                                disabled && "opacity-60 cursor-not-allowed",
+                              )}
+                              onClick={() => !disabled && toggleSelect(loc.locationId)}
+                            >
+                              <TableCell>
+                                <Checkbox
+                                  checked={isSelected}
+                                  disabled={disabled}
+                                  onCheckedChange={() => !disabled && toggleSelect(loc.locationId)}
+                                  aria-label={`Select ${loc.name}`}
+                                />
+                              </TableCell>
+                              <TableCell className="font-medium">{loc.name}</TableCell>
+                              <TableCell className="text-muted-foreground text-xs">{loc.city || "—"}</TableCell>
+                              <TableCell>
+                                {isVerified && (
+                                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 text-[10px]">
+                                    <CircleCheck className="size-3 mr-1" /> Verified
+                                  </Badge>
+                                )}
+                                {isPending && (
+                                  <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 text-[10px]">
+                                    <Clock className="size-3 mr-1" /> Pending
+                                  </Badge>
+                                )}
+                                {isUnverified && (
+                                  <Badge variant="outline" className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20 text-[10px]">
+                                    <CircleAlert className="size-3 mr-1" /> Unverified
+                                  </Badge>
+                                )}
+                                {isNotLinked && (
+                                  <Badge variant="outline" className="text-muted-foreground text-[10px]">
+                                    <Inbox className="size-3 mr-1" /> Not linked
+                                  </Badge>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Method + input */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="bv-method" className="text-xs">Verification method</Label>
+                      <Select value={method} onValueChange={(v) => setMethod(v as typeof method)}>
+                        <SelectTrigger id="bv-method" size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {VERIFY_METHODS.map((m) => (
+                            <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="bv-input" className="text-xs">{inputLabel}</Label>
+                      <Input
+                        id="bv-input"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        placeholder={inputPlaceholder}
+                        disabled={initiating}
+                        className="h-9"
+                      />
+                    </div>
+                  </div>
+                  {methodHint && (
+                    <p className="text-xs text-muted-foreground -mt-2">{methodHint}</p>
+                  )}
+
+                  {/* Progress + result */}
+                  {initiating && initiateProgress && (
+                    <div className="flex items-center gap-2 text-sm text-primary">
+                      <Loader2 className="size-3.5 animate-spin" />
+                      <span>{initiateProgress}</span>
+                    </div>
+                  )}
+                  {initiateResult && (
+                    <BulkActionResultCard
+                      title="Initiate results"
+                      success={initiateResult.initiated || []}
+                      failed={initiateResult.failed || []}
+                      skipped={initiateResult.skipped || []}
+                    />
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={initiating}>Close</Button>
+                    <Button onClick={handleInitiate} disabled={initiating || selected.size === 0}>
+                      {initiating
+                        ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> Initiating…</>
+                        : <><ShieldCheck className="size-4 mr-1.5" /> Initiate Verification for {selected.size} Location{selected.size === 1 ? "" : "s"}</>
+                      }
+                    </Button>
+                  </div>
+                </>
+              )}
+            </TabsContent>
+
+            {/* ─── Complete PIN Tab ───────────────────────────────────────── */}
+            <TabsContent value="complete" className="mt-4 space-y-4">
+              {pending.length === 0 ? (
+                <div className="py-8 text-center space-y-2">
+                  <Inbox className="size-8 mx-auto text-muted-foreground/50" />
+                  <p className="text-sm font-medium">No pending verifications</p>
+                  <p className="text-xs text-muted-foreground">
+                    Once you initiate verification for a location, the dispatched PIN can be entered here to complete the process.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Enter the PIN Google dispatched for each location (postcard in the mail, SMS, call, or email). You can complete a subset — empty PINs are skipped.
+                  </p>
+
+                  <div className="max-h-[40vh] overflow-y-auto scroll-area rounded-lg border">
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-background z-10">
+                        <TableRow>
+                          <TableHead>Location</TableHead>
+                          <TableHead className="w-24">City</TableHead>
+                          <TableHead className="w-32">Method</TableHead>
+                          <TableHead className="w-40">PIN</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pending.map((loc) => {
+                          const v = loc.pendingVerifications?.[0];
+                          return (
+                            <TableRow key={loc.locationId}>
+                              <TableCell className="font-medium">{loc.name}</TableCell>
+                              <TableCell className="text-muted-foreground text-xs">{loc.city || "—"}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className="text-[10px]">
+                                  {v?.method === "ADDRESS" ? "Postcard" : v?.method || "—"}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  value={pins[loc.locationId] || ""}
+                                  onChange={(e) => setPin(loc.locationId, e.target.value)}
+                                  placeholder="6-digit PIN"
+                                  maxLength={10}
+                                  className="h-8 font-mono"
+                                  disabled={completing}
+                                  aria-label={`PIN for ${loc.name}`}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {completing && completeProgress && (
+                    <div className="flex items-center gap-2 text-sm text-primary">
+                      <Loader2 className="size-3.5 animate-spin" />
+                      <span>{completeProgress}</span>
+                    </div>
+                  )}
+                  {completeResult && (
+                    <BulkActionResultCard
+                      title="Complete results"
+                      success={completeResult.completed || []}
+                      failed={completeResult.failed || []}
+                    />
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={completing}>Close</Button>
+                    <Button
+                      onClick={handleComplete}
+                      disabled={completing || Object.values(pins).every((p) => !p?.trim())}
+                    >
+                      {completing
+                        ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> Submitting…</>
+                        : <><CircleCheck className="size-4 mr-1.5" /> Complete {Object.values(pins).filter((p) => p?.trim()).length} Verification{Object.values(pins).filter((p) => p?.trim()).length === 1 ? "" : "s"}</>
+                      }
+                    </Button>
+                  </div>
+                </>
+              )}
+            </TabsContent>
+          </Tabs>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Small results card shown after a bulk initiate/complete action — surfaces
+// per-location success/failure/skip so the user knows exactly what happened.
+function BulkActionResultCard({
+  title,
+  success,
+  failed,
+  skipped,
+}: {
+  title: string;
+  success: { locationId: string; name: string }[];
+  failed: { locationId: string; name: string; error?: string; reason?: string }[];
+  skipped?: { locationId: string; name: string; reason?: string }[];
+}) {
+  return (
+    <Card className="bg-muted/30">
+      <CardContent className="p-3 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="font-semibold">{title}:</span>
+          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+            {success.length} succeeded
+          </Badge>
+          {failed.length > 0 && (
+            <Badge variant="outline" className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20">
+              {failed.length} failed
+            </Badge>
+          )}
+          {skipped && skipped.length > 0 && (
+            <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+              {skipped.length} skipped
+            </Badge>
+          )}
+        </div>
+        {(failed.length > 0 || (skipped && skipped.length > 0)) && (
+          <div className="space-y-1 max-h-32 overflow-y-auto scroll-area">
+            {failed.map((f) => (
+              <div key={f.locationId} className="text-xs flex items-start gap-1.5">
+                <X className="size-3 text-rose-500 mt-0.5 shrink-0" />
+                <span className="font-medium">{f.name}:</span>
+                <span className="text-muted-foreground">{f.error}</span>
+              </div>
+            ))}
+            {skipped?.map((s) => (
+              <div key={s.locationId} className="text-xs flex items-start gap-1.5">
+                <Inbox className="size-3 text-amber-500 mt-0.5 shrink-0" />
+                <span className="font-medium">{s.name}:</span>
+                <span className="text-muted-foreground">{s.reason}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ═══ Single-Location Verify Actions ═════════════════════════════════════════
+// Shown in the Google Profile card under the verification state badge.
+// Provides one-click access to the single-location verify flow (POST +
+// PATCH on /api/locations/[id]/verify) without having to open the bulk
+// dialog for a one-off.
+
+function LocationVerifyActions({
+  locationId,
+  locationName,
+}: {
+  locationId: string;
+  locationName: string;
+}) {
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  return (
+    <div className="flex flex-wrap gap-2 pt-1">
+      <Button size="sm" variant="outline" onClick={() => setVerifyOpen(true)}>
+        <ShieldCheck className="size-3.5 mr-1.5" /> Verify now
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => setHistoryOpen(true)}>
+        <History className="size-3.5 mr-1.5" /> View history
+      </Button>
+      <SingleVerifyDialog
+        open={verifyOpen}
+        onOpenChange={setVerifyOpen}
+        locationId={locationId}
+        locationName={locationName}
+      />
+      <VerificationHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        locationId={locationId}
+        locationName={locationName}
+      />
+    </div>
+  );
+}
+
+function LocationVerifyHistoryButton({
+  locationId,
+  locationName,
+}: {
+  locationId: string;
+  locationName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="pt-1">
+      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+        <History className="size-3.5 mr-1.5" /> View verification history
+      </Button>
+      <VerificationHistoryDialog
+        open={open}
+        onOpenChange={setOpen}
+        locationId={locationId}
+        locationName={locationName}
+      />
+    </div>
+  );
+}
+
+function SingleVerifyDialog({
+  open,
+  onOpenChange,
+  locationId,
+  locationName,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  locationId: string;
+  locationName: string;
+}) {
+  const qc = useQueryClient();
+  const [method, setMethod] = useState<"ADDRESS" | "PHONE_CALL" | "SMS" | "EMAIL">("ADDRESS");
+  const [mailerContactName, setMailerContactName] = useState("Operations Team");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [emailAddress, setEmailAddress] = useState("");
+  const [initiating, setInitiating] = useState(false);
+  const [pinEntryFor, setPinEntryFor] = useState<string | null>(null);
+  const [pin, setPin] = useState("");
+  const [completing, setCompleting] = useState(false);
+  const [historyTick, setHistoryTick] = useState(0);
+
+  // Fetch pending verifications for this location so we can show a "complete
+  // with PIN" panel below the initiate form when there's something to
+  // complete. historyTick bumps after each initiate/complete to refresh.
+  const { data: verifyData, isLoading: verifyLoading } = useQuery<{
+    verifications: any[];
+    linked?: boolean;
+    configured?: boolean;
+    connected?: boolean;
+  }>({
+    queryKey: ["location-verify", locationId, historyTick],
+    queryFn: () => api(`/api/locations/${locationId}/verify`),
+    enabled: open,
+  });
+
+  const pending = (verifyData?.verifications || []).filter((v) => v.state === "PENDING");
+
+  const inputLabel =
+    method === "ADDRESS"
+      ? "Mailer contact name"
+      : method === "EMAIL"
+        ? "Email address"
+        : "Phone number";
+  const inputValue =
+    method === "ADDRESS"
+      ? mailerContactName
+      : method === "EMAIL"
+        ? emailAddress
+        : phoneNumber;
+  const setInputValue =
+    method === "ADDRESS"
+      ? setMailerContactName
+      : method === "EMAIL"
+        ? setEmailAddress
+        : setPhoneNumber;
+  const inputPlaceholder =
+    method === "ADDRESS"
+      ? "Operations Team"
+      : method === "EMAIL"
+        ? "verify@example.com"
+        : "+91 98765 43210";
+  const methodHint = VERIFY_METHODS.find((m) => m.value === method)?.hint;
+
+  async function handleInitiate() {
+    const input: any = {};
+    if (method === "ADDRESS") {
+      if (!mailerContactName.trim()) {
+        toast.error("Mailer contact name is required");
+        return;
+      }
+      input.mailerContactName = mailerContactName.trim();
+    } else if (method === "PHONE_CALL" || method === "SMS") {
+      if (!phoneNumber.trim()) {
+        toast.error("Phone number is required");
+        return;
+      }
+      input.phoneNumber = phoneNumber.trim();
+    } else if (method === "EMAIL") {
+      if (!emailAddress.trim()) {
+        toast.error("Email address is required");
+        return;
+      }
+      input.emailAddress = emailAddress.trim();
+    }
+
+    setInitiating(true);
+    try {
+      const data = await api<{ verification: { name: string } }>(
+        `/api/locations/${locationId}/verify`,
+        { method: "POST", body: JSON.stringify({ method, input }) },
+      );
+      toast.success(
+        `Verification via ${method} initiated for "${locationName}". Google will dispatch the PIN shortly.`,
+      );
+      // Auto-select the freshly-initiated verification so the user can
+      // immediately enter the PIN when it arrives.
+      if (data.verification?.name) setPinEntryFor(data.verification.name);
+      setHistoryTick((n) => n + 1);
+      qc.invalidateQueries({ queryKey: ["locations"] });
+    } catch (e: any) {
+      toast.error(e.message || "Initiate failed");
+    } finally {
+      setInitiating(false);
+    }
+  }
+
+  async function handleComplete() {
+    if (!pinEntryFor) return;
+    if (!pin.trim()) {
+      toast.error("Enter the PIN Google dispatched");
+      return;
+    }
+    setCompleting(true);
+    try {
+      await api(`/api/locations/${locationId}/verify`, {
+        method: "PATCH",
+        body: JSON.stringify({ verificationName: pinEntryFor, pin: pin.trim() }),
+      });
+      toast.success("PIN submitted. If correct, the location is now verified on Google.");
+      setPin("");
+      setPinEntryFor(null);
+      setHistoryTick((n) => n + 1);
+      qc.invalidateQueries({ queryKey: ["locations"] });
+      qc.invalidateQueries({ queryKey: ["location-detail", locationId] });
+    } catch (e: any) {
+      toast.error(e.message || "Complete failed");
+    } finally {
+      setCompleting(false);
+    }
+  }
+
+  // Pre-conditions: not linked / not configured / not connected — surface a
+  // helpful message instead of a broken form. Mirrors the single-location
+  // verify route's empty-state cascade.
+  const notLinked = verifyData && verifyData.linked === false;
+  const notConfigured = verifyData && verifyData.linked === true && verifyData.configured === false;
+  const notConnected = verifyData && verifyData.linked === true && verifyData.configured === true && verifyData.connected === false;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto scroll-area">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ShieldCheck className="size-5 text-primary" /> Verify &ldquo;{locationName}&rdquo;
+          </DialogTitle>
+          <DialogDescription>
+            Initiate Google Business Profile verification. Google will dispatch a PIN (postcard / call / SMS / email) which you then enter to complete the process.
+          </DialogDescription>
+        </DialogHeader>
+
+        {verifyLoading && (
+          <div className="py-8 text-center">
+            <Loader2 className="size-6 mx-auto animate-spin text-primary" />
+            <p className="text-xs text-muted-foreground mt-2">Loading verification status…</p>
+          </div>
+        )}
+
+        {!verifyLoading && notLinked && (
+          <p className="text-sm text-muted-foreground py-4">
+            No Google Business Profile linked to this location. Import this location from Google first.
+          </p>
+        )}
+        {!verifyLoading && notConfigured && (
+          <p className="text-sm text-muted-foreground py-4">
+            Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file.
+          </p>
+        )}
+        {!verifyLoading && notConnected && (
+          <p className="text-sm text-muted-foreground py-4">
+            Google account not connected. Reconnect Google OAuth from the Google Integration page.
+          </p>
+        )}
+
+        {/* Pending verification complete panel — show first if there's
+            already a pending verification the user can complete. */}
+        {!verifyLoading && !notLinked && !notConfigured && !notConnected && pending.length > 0 && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+            <p className="text-sm font-semibold flex items-center gap-1.5">
+              <Clock className="size-4 text-amber-500" /> Pending verification
+            </p>
+            <p className="text-xs text-muted-foreground">
+              A verification is already in progress for this location. Enter the PIN Google dispatched to complete it.
+            </p>
+            <Select
+              value={pinEntryFor ?? pending[0]?.name ?? ""}
+              onValueChange={(v) => setPinEntryFor(v)}
+            >
+              <SelectTrigger size="sm">
+                <SelectValue placeholder="Select verification record" />
+              </SelectTrigger>
+              <SelectContent>
+                {pending.map((v) => (
+                  <SelectItem key={v.name} value={v.name}>
+                    {v.method === "ADDRESS" ? "Postcard" : v.method} · initiated {v.createTime ? relativeTime(v.createTime) : "recently"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              placeholder="6-digit PIN"
+              maxLength={10}
+              className="font-mono"
+              disabled={completing}
+              aria-label="PIN"
+            />
+            <Button size="sm" onClick={handleComplete} disabled={completing || !pin.trim()} className="w-full">
+              {completing
+                ? <><Loader2 className="size-3.5 mr-1.5 animate-spin" /> Submitting…</>
+                : <><CircleCheck className="size-3.5 mr-1.5" /> Complete verification</>
+              }
+            </Button>
+          </div>
+        )}
+
+        {/* Initiate form — only relevant if no pending verification. */}
+        {!verifyLoading && !notLinked && !notConfigured && !notConnected && pending.length === 0 && (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="sv-method" className="text-xs">Verification method</Label>
+              <Select value={method} onValueChange={(v) => setMethod(v as typeof method)}>
+                <SelectTrigger id="sv-method" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VERIFY_METHODS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="sv-input" className="text-xs">{inputLabel}</Label>
+              <Input
+                id="sv-input"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder={inputPlaceholder}
+                disabled={initiating}
+              />
+            </div>
+            {methodHint && (
+              <p className="text-xs text-muted-foreground">{methodHint}</p>
+            )}
+            <Button onClick={handleInitiate} disabled={initiating} className="w-full">
+              {initiating
+                ? <><Loader2 className="size-4 mr-1.5 animate-spin" /> Initiating…</>
+                : <><ShieldCheck className="size-4 mr-1.5" /> Initiate verification</>
+              }
+            </Button>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function VerificationHistoryDialog({
+  open,
+  onOpenChange,
+  locationId,
+  locationName,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  locationId: string;
+  locationName: string;
+}) {
+  const { data, isLoading } = useQuery<{
+    verifications: any[];
+    linked?: boolean;
+    configured?: boolean;
+    connected?: boolean;
+  }>({
+    queryKey: ["location-verify-history", locationId],
+    queryFn: () => api(`/api/locations/${locationId}/verify`),
+    enabled: open,
+  });
+
+  const verifications = data?.verifications || [];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto scroll-area">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <History className="size-5 text-primary" /> Verification history — {locationName}
+          </DialogTitle>
+          <DialogDescription>
+            All verification attempts Google has recorded for this location.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading && (
+          <div className="py-8 text-center">
+            <Loader2 className="size-6 mx-auto animate-spin text-primary" />
+          </div>
+        )}
+
+        {!isLoading && data?.linked === false && (
+          <p className="text-sm text-muted-foreground py-4">No Google Business Profile linked.</p>
+        )}
+        {!isLoading && data?.linked === true && data.configured === false && (
+          <p className="text-sm text-muted-foreground py-4">Google OAuth is not configured.</p>
+        )}
+        {!isLoading && data?.linked === true && data.configured === true && data.connected === false && (
+          <p className="text-sm text-muted-foreground py-4">Google account not connected.</p>
+        )}
+
+        {!isLoading && verifications.length === 0 && data?.linked === true && data.configured === true && data.connected === true && (
+          <div className="py-8 text-center space-y-2">
+            <Inbox className="size-8 mx-auto text-muted-foreground/50" />
+            <p className="text-sm font-medium">No verification attempts yet</p>
+            <p className="text-xs text-muted-foreground">Initiate a verification to start the process.</p>
+          </div>
+        )}
+
+        {!isLoading && verifications.length > 0 && (
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto scroll-area">
+            {verifications.map((v) => {
+              const state = v.state as string;
+              const isCompleted = state === "COMPLETED";
+              const isPending = state === "PENDING";
+              const isFailed = state === "FAILED";
+              return (
+                <div
+                  key={v.name}
+                  className={cn(
+                    "rounded-lg border p-3 flex items-start gap-3",
+                    isCompleted && "bg-emerald-500/5 border-emerald-500/20",
+                    isPending && "bg-amber-500/5 border-amber-500/20",
+                    isFailed && "bg-rose-500/5 border-rose-500/20",
+                  )}
+                >
+                  <div className="shrink-0 mt-0.5">
+                    {isCompleted && <CircleCheck className="size-4 text-emerald-500" />}
+                    {isPending && <Clock className="size-4 text-amber-500" />}
+                    {isFailed && <CircleAlert className="size-4 text-rose-500" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">
+                        {v.method === "ADDRESS" ? "Postcard" : v.method === "PHONE_CALL" ? "Phone call" : v.method === "SMS" ? "SMS" : v.method === "EMAIL" ? "Email" : v.method}
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-[10px]",
+                          isCompleted && "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                          isPending && "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                          isFailed && "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+                        )}
+                      >
+                        {state}
+                      </Badge>
+                    </div>
+                    {v.createTime && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Initiated {relativeTime(v.createTime)}
+                      </p>
+                    )}
+                    {v.announceTimeoutSec && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        PIN expires in ~{Math.round(v.announceTimeoutSec / 86400)} day(s).
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -2782,3 +2782,43 @@ Verification:
 
 Stage Summary:
 All source files rebranded to multi-brand car service context. The platform's user-facing copy, AI prompts, default new-location seed data, and placeholder text now consistently describe MyFNG Autocare as a multi-brand car service & repair brand operating in Mumbai, Navi Mumbai, Thane, and Pune. Google API integration constants (photo category enums, gcid examples) preserved untouched to avoid breaking the GBP integration contract. Work record saved to /agent-ctx/REBRAND-CODE-frontend-backend-engineer.md.
+
+---
+Task ID: BULK-IMPORT-VERIFY
+Agent: Full-Stack Engineer
+Task: Enhance bulk import + add bulk GMB verification (initiate + complete with PIN)
+
+Work Log:
+- Enhanced AddLocationDialog: extracted `fetchGmbLocations(isRefresh)` callable from a new Refresh button + on-open effect; added "Refresh" button next to Select All / Deselect All and a "Refresh list" CTA in the "all already imported" empty state; added a "Sync after import" Checkbox (default ON) that runs a serial full-sync per imported location with live progress label ("Syncing 2 of 5 — MyFNG Thane…") and best-effort error swallowing per location.
+- Added `available-count` badge in Locations header: `useQuery(["available-gmb-locations"])` with 60s refetchInterval, gated on `canManage`. Renders an "N available" badge on the Add Location button only when `status === "connected" && available > 0`.
+- Created `/api/locations/bulk-verify` (NEW route):
+  * GET `?locationIds=loc1,loc2,...` — returns per-location verification state (verified/unverified/pending + pendingVerifications[], canInitiate, canComplete, linked/configured/connected). `scopeLocationIds` honors branch-manager scope. Paces Google `listVerifications` 200ms apart. Reconciles local verificationState against Google's COMPLETED flag.
+  * POST `{ action: "initiate", locationIds[], method, input }` — per-method input validated (mailerContactName/phoneNumber/emailAddress). Per-location: skip if verified/no-GBP, gate via `requireClientAuth(id, "profile.update")`, listVerifications to detect existing PENDING (skip), then initiateVerification. Returns { initiated, failed, skipped }. Logs `bulk.verify_initiated` + per-location `location.verify_initiated`.
+  * PATCH `{ pins: [{ locationId, pin }] }` — per-location: gate, listVerifications to find most-recent PENDING, completeVerification. Returns { completed, failed }. Logs `bulk.verify_completed` + per-location `location.verify_completed`.
+- Created BulkVerifyDialog component with Initiate + Complete PIN tabs:
+  * Initiate tab: table of all locations with status badges (Verified/Pending/Unverified/Not linked), only `canInitiate` rows selectable, "Select all unverified" + "Clear" helpers, method Select (ADDRESS/PHONE_CALL/SMS/EMAIL) + per-method Input, per-method validation, live progress + BulkActionResultCard with success/failed/skipped badges.
+  * Complete PIN tab: table of `canComplete` locations with per-row 6-digit PIN Input; only non-empty PINs submitted; result card.
+  * Refresh button at top auto-refetches verification status. Loading copy mentions 10 QPS pacing.
+- Added "Bulk Verify" button in Locations header (outline variant, ShieldCheck icon), gated on `canManage`. Wired to BulkVerifyDialog with all visible location IDs.
+- Added client-auth gates on initiate (`profile.update` scope per location).
+- Added rate-limit pacing (200ms between Google calls) inside both POST initiate and PATCH complete loops.
+- Added verification status section to location detail Google Profile card: `LocationVerifyActions` (Verify now + View history) shown when not verified and canManage; `LocationVerifyHistoryButton` shown when verified. Wired to:
+  * `SingleVerifyDialog` — method-select + per-method input → POST `/api/locations/[id]/verify`; auto-switches to complete-with-PIN panel when PENDING verifications exist; PATCH to complete. Same empty-state cascade (not linked / not configured / not connected) as the backend route.
+  * `VerificationHistoryDialog` — lists every verification Google has on file (COMPLETED/PENDING/FAILED) with method, badge, initiation time, and PIN expiry hint.
+- Lint: 0 errors, 0 warnings ✅
+- `bunx tsc --noEmit`: 0 errors ✅
+- Smoke tests: GET /api/locations/bulk-verify → 401; POST → 401; PATCH → 401; /api/health → 200; / → 200. Dev log: only pre-existing `[next-auth][warn][NEXTAUTH_URL]` warning (unrelated). Work record saved to /agent-ctx/BULK-IMPORT-VERIFY-full-stack-engineer.md.
+
+Stage Summary:
+- Files created:
+  * `src/app/api/locations/bulk-verify/route.ts` — GET (status), POST (initiate), PATCH (complete with PINs)
+- Files modified:
+  * `src/components/views/locations-view.tsx` — enhanced AddLocationDialog (refresh + sync-after-import), added available-count badge in Locations header, added Bulk Verify button + BulkVerifyDialog + BulkActionResultCard, added LocationVerifyActions / LocationVerifyHistoryButton / SingleVerifyDialog / VerificationHistoryDialog in location detail
+- Key decisions:
+  * Per-location `requireClientAuth(id, "profile.update")` gate — initiating a verification dispatches a postcard/SMS/call/email; completing one mutates verification state on Google. Both are profile-modifying actions. Failing the gate skips the location (failed[] bucket) rather than aborting the whole bulk job.
+  * 200ms pacing between Google calls inside bulk loops — proactive quota management on top of `withRetry`'s 429/5xx backoff.
+  * Three-bucket response (`initiated` / `failed` / `skipped`) for POST — distinguishes "tried and failed" from "didn't try because pre-conditions weren't met".
+  * Serial sync-after-import loop (not parallel) — keeps Google QPS usage predictable and the progress label ticks up 1-by-1 with the location name.
+  * `available` badge hidden when count is 0 OR status is not_configured/not_connected — per task spec.
+  * `verificationState` reconciliation: GET handler upgrades to "verified" if Google reports a COMPLETED verification even when our cached DB state hasn't caught up.
+  * No new permissions: POST/PATCH gated on `locations.manage` (super_admin only — matches the existing single-location verify route); GET on `locations.view`.
