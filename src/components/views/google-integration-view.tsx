@@ -61,6 +61,7 @@ interface OauthState {
   tokenExpiry: string | null;
   scopes: string[];
   lastConnectedAt: string | null;
+  redirectUri: string | null;
 }
 interface ConnectedAccount {
   id: string;

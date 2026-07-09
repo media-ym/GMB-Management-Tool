@@ -274,10 +274,11 @@ export async function aiMonthlySummary(opts: {
 Tone: professional, insightful. 120–180 words. Highlight trends, deltas, and one priority for next month. No markdown headings.`;
 
   const m = opts.metrics;
-  const ratingDelta = (m.avgRating - m.prevAvgRating).toFixed(2);
+  const ratingDeltaNum = m.avgRating - m.prevAvgRating;
+  const ratingDelta = ratingDeltaNum.toFixed(2);
   const userMsg = `Location: MyFNG — ${opts.locationName}
 This month: ${m.searchViews} search views, ${m.mapsViews} maps views, ${m.websiteClicks} website clicks, ${m.phoneCalls} calls, ${m.directionRequests} direction requests, ${m.newReviews} new reviews.
-Avg rating: ${m.avgRating} (prev ${m.prevAvgRating}, delta ${ratingDelta > 0 ? "+" : ""}${ratingDelta}).
+Avg rating: ${m.avgRating} (prev ${m.prevAvgRating}, delta ${ratingDeltaNum > 0 ? "+" : ""}${ratingDelta}).
 
 Write the summary as plain text.`;
 

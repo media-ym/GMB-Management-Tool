@@ -1,0 +1,1171 @@
+     1→// ═══════════════════════════════════════════════════════════════════════════
+     2→// Google Business Profile Service Layer — Production Only
+     3→// All Google API calls are real. Requires GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET.
+     4→// ═══════════════════════════════════════════════════════════════════════════
+     5→
+     6→import { db } from "./db";
+     7→import { encryptToken, decryptToken } from "./token-crypto";
+     8→import { withRetry, sanitizeGoogleError } from "./google-rate-limit";
+     9→
+    10→const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+    11→const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+    12→const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/google/callback`;
+    13→export const IS_CONFIGURED = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+    14→
+    15→const GBP_SCOPES = [
+    16→  "https://www.googleapis.com/auth/business.manage",
+    17→  "openid",
+    18→  "email",
+    19→  "profile",
+    20→].join(" ");
+    21→
+    22→// ─── OAuth Flow ───────────────────────────────────────────────────────────
+    23→
+    24→export function getGoogleAuthUrl(state?: string): { url: string; state: string } {
+    25→  // Generate a high-entropy CSRF state if none provided.
+    26→  // The caller is responsible for storing this value (typically in a cookie)
+    27→  // and validating it on the OAuth callback.
+    28→  const finalState = state || crypto.randomUUID();
+    29→  const params = new URLSearchParams({
+    30→    client_id: GOOGLE_CLIENT_ID,
+    31→    redirect_uri: GOOGLE_REDIRECT_URI,
+    32→    response_type: "code",
+    33→    scope: GBP_SCOPES,
+    34→    access_type: "offline",
+    35→    prompt: "consent",
+    36→    state: finalState,
+    37→  });
+    38→  return { url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`, state: finalState };
+    39→}
+    40→
+    41→export async function exchangeCodeForTokens(code: string): Promise<{
+    42→  accessToken: string;
+    43→  refreshToken: string;
+    44→  expiryDate: number;
+    45→  scope?: string;
+    46→}> {
+    47→  const body = new URLSearchParams({
+    48→    code,
+    49→    client_id: GOOGLE_CLIENT_ID,
+    50→    client_secret: GOOGLE_CLIENT_SECRET,
+    51→    redirect_uri: GOOGLE_REDIRECT_URI,
+    52→    grant_type: "authorization_code",
+    53→  });
+    54→
+    55→  const res = await fetch("https://oauth2.googleapis.com/token", {
+    56→    method: "POST",
+    57→    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    58→    body,
+    59→  });
+    60→
+    61→  if (!res.ok) {
+    62→    const err = await res.text();
+    63→    throw new Error(sanitizeGoogleError(`Google token exchange failed: ${res.status} ${err}`));
+    64→  }
+    65→
+    66→  const tokens = await res.json();
+    67→  return {
+    68→    accessToken: tokens.access_token,
+    69→    refreshToken: tokens.refresh_token,
+    70→    expiryDate: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+    71→    scope: typeof tokens.scope === "string" ? tokens.scope : undefined,
+    72→  };
+    73→}
+    74→
+    75→export async function refreshAccessToken(refreshToken: string): Promise<{
+    76→  accessToken: string;
+    77→  expiryDate: number;
+    78→}> {
+    79→  const body = new URLSearchParams({
+    80→    client_id: GOOGLE_CLIENT_ID,
+    81→    client_secret: GOOGLE_CLIENT_SECRET,
+    82→    refresh_token: refreshToken,
+    83→    grant_type: "refresh_token",
+    84→  });
+    85→
+    86→  const res = await fetch("https://oauth2.googleapis.com/token", {
+    87→    method: "POST",
+    88→    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    89→    body,
+    90→  });
+    91→
+    92→  if (!res.ok) throw new Error(sanitizeGoogleError(`Token refresh failed: ${res.status}`));
+    93→  const tokens = await res.json();
+    94→  return {
+    95→    accessToken: tokens.access_token,
+    96→    expiryDate: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+    97→  };
+    98→}
+    99→
+   100→export async function getValidAccessToken(): Promise<string | null> {
+   101→  const account = await db.googleAccount.findFirst();
+   102→  if (!account) return null;
+   103→
+   104→  // Defensive: if the stored token is the legacy "no_token" placeholder, treat as no token.
+   105→  if (account.accessToken === "no_token") return null;
+   106→
+   107→  // Check if token is still valid (5 min buffer)
+   108→  if (account.tokenExpiry && new Date(account.tokenExpiry) > new Date(Date.now() + 5 * 60 * 1000)) {
+   109→    const decrypted = decryptToken(account.accessToken);
+   110→    if (!decrypted) {
+   111→      await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
+   112→      return null;
+   113→    }
+   114→    return decrypted;
+   115→  }
+   116→
+   117→  // Try to refresh — decrypt the refresh token first
+   118→  if (account.refreshToken) {
+   119→    const decryptedRefresh = decryptToken(account.refreshToken);
+   120→    if (!decryptedRefresh) {
+   121→      await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
+   122→      return null;
+   123→    }
+   124→    try {
+   125→      const { accessToken, expiryDate } = await refreshAccessToken(decryptedRefresh);
+   126→      await db.googleAccount.update({
+   127→        where: { id: account.id },
+   128→        data: {
+   129→          accessToken: encryptToken(accessToken), // ENCRYPT before saving
+   130→          tokenExpiry: new Date(expiryDate),
+   131→          status: "active",
+   132→        },
+   133→      });
+   134→      return accessToken; // return decrypted
+   135→    } catch (e) {
+   136→      console.error("Token refresh failed:", e);
+   137→      await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
+   138→      return null;
+   139→    }
+   140→  }
+   141→
+   142→  return null;
+   143→}
+   144→
+   145→/** Revoke a Google OAuth token (access or refresh) — called on disconnect. */
+   146→export async function revokeGoogleToken(token: string): Promise<boolean> {
+   147→  try {
+   148→    const res = await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, {
+   149→      method: "POST",
+   150→      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+   151→    });
+   152→    return res.ok;
+   153→  } catch {
+   154→    return false;
+   155→  }
+   156→}
+   157→
+   158→// ─── Google Business Profile API Calls ────────────────────────────────────
+   159→
+   160→const GBP_API_BASE = "https://mybusinessbusinessinformation.googleapis.com/v1";
+   161→const GBP_PERF_BASE = "https://businessprofileperformance.googleapis.com/v1";
+   162→const GBP_ACCOUNTS_BASE = "https://mybusinessaccountmanagement.googleapis.com/v1";
+   163→// v4 API — kept alive ONLY for reviews and localPosts (per Google's supported-apis matrix)
+   164→const GBP_V4_BASE = "https://mybusiness.googleapis.com/v4";
+   165→
+   166→export async function listGoogleAccounts(accessToken: string): Promise<any[]> {
+   167→  const data = await withRetry<{ accounts?: any[] }>(() =>
+   168→    fetch(`${GBP_ACCOUNTS_BASE}/accounts`, {
+   169→      headers: { Authorization: `Bearer ${accessToken}` },
+   170→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   171→  );
+   172→  return data.accounts ?? [];
+   173→}
+   174→
+   175→export async function listGoogleLocations(accessToken: string, accountName: string): Promise<any[]> {
+   176→  const all: any[] = [];
+   177→  let pageToken: string | undefined;
+   178→  const maxPages = 20; // safety limit (2000 locations max)
+   179→
+   180→  for (let page = 0; page < maxPages; page++) {
+   181→    const url = new URL(`${GBP_API_BASE}/${accountName}/locations`);
+   182→    url.searchParams.set("pageSize", "100");
+   183→    url.searchParams.set("readMask", "name,title,storeCode,latlng,metadata,profile,regularHours,specialHours,serviceItems,categories,phoneNumbers,websiteUri,openInfo");
+   184→    if (pageToken) url.searchParams.set("pageToken", pageToken);
+   185→
+   186→    const data = await withRetry<any>(() =>
+   187→      fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } })
+   188→        .then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   189→    );
+   190→    if (Array.isArray(data.locations)) all.push(...data.locations);
+   191→    pageToken = data.nextPageToken;
+   192→    if (!pageToken) break;
+   193→  }
+   194→  return all;
+   195→}
+   196→
+   197→export async function getBusinessProfile(accessToken: string, locationName: string): Promise<any> {
+   198→  const data = await withRetry<any>(() =>
+   199→    fetch(`${GBP_API_BASE}/${locationName}?readMask=title,storeCode,latlng,metadata,profile,regularHours,categories,phoneNumbers,websiteUri,openInfo,serviceItems,attributes`, {
+   200→      headers: { Authorization: `Bearer ${accessToken}` },
+   201→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   202→  );
+   203→  return data;
+   204→}
+   205→
+   206→/**
+   207→ * Search Google's category database by name. Returns matching categories
+   208→ * with their gcid IDs (e.g. "gcid:interior_designer"). Used to resolve a
+   209→ * human-readable category display name into the stable categoryId required
+   210→ * by the Location patch endpoint.
+   211→ */
+   212→export async function searchGoogleCategories(
+   213→  accessToken: string,
+   214→  searchTerm: string,
+   215→  regionCode: string = "IN",
+   216→  languageCode: string = "en"
+   217→): Promise<{ categoryId: string; displayName: string }[]> {
+   218→  const url = new URL(`${GBP_API_BASE}/categories:search`);
+   219→  url.searchParams.set("searchTerm", searchTerm);
+   220→  url.searchParams.set("regionCode", regionCode);
+   221→  url.searchParams.set("languageCode", languageCode);
+   222→
+   223→  const data = await withRetry<any>(() =>
+   224→    fetch(url.toString(), {
+   225→      headers: { Authorization: `Bearer ${accessToken}` },
+   226→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   227→  );
+   228→  return (data.categories || []).map((c: any) => ({
+   229→    categoryId: c.name, // e.g. "gcid:interior_designer"
+   230→    displayName: c.displayName,
+   231→  }));
+   232→}
+   233→
+   234→/**
+   235→ * Resolve a category display name to its stable gcid by searching Google's
+   236→ * category DB. Prefers an exact (case-insensitive) display-name match and
+   237→ * falls back to the first search hit. Returns null if no match is found so
+   238→ * the caller can decide whether to skip that category entirely (Google
+   239→ * rejects null/empty categoryId values, so we must not send one).
+   240→ */
+   241→export async function resolveCategoryId(
+   242→  accessToken: string,
+   243→  displayName: string,
+   244→  regionCode: string = "IN"
+   245→): Promise<string | null> {
+   246→  const results = await searchGoogleCategories(accessToken, displayName, regionCode);
+   247→  // Exact match first (case-insensitive)
+   248→  const exact = results.find(r => r.displayName.toLowerCase() === displayName.toLowerCase());
+   249→  if (exact) return exact.categoryId;
+   250→  // Fall back to first result, if any
+   251→  return results[0]?.categoryId ?? null;
+   252→}
+   253→
+   254→export async function listReviews(accessToken: string, locationName: string, pageSize = 50): Promise<any[]> {
+   255→  // v4 reviews endpoint with full pagination — Google returns up to 50/page.
+   256→  // Loop on nextPageToken until exhausted, with a 10-page safety limit (500 reviews max).
+   257→  const allReviews: any[] = [];
+   258→  let pageToken: string | undefined;
+   259→  const maxPages = 10;
+   260→
+   261→  for (let page = 0; page < maxPages; page++) {
+   262→    const url = new URL(`${GBP_V4_BASE}/${locationName}/reviews`);
+   263→    url.searchParams.set("pageSize", String(pageSize));
+   264→    if (pageToken) url.searchParams.set("pageToken", pageToken);
+   265→
+   266→    const data = await withRetry<any>(() =>
+   267→      fetch(url.toString(), {
+   268→        headers: { Authorization: `Bearer ${accessToken}` },
+   269→      }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   270→    );
+   271→    if (Array.isArray(data.reviews)) allReviews.push(...data.reviews);
+   272→    pageToken = data.nextPageToken;
+   273→    if (!pageToken) break;
+   274→  }
+   275→
+   276→  return allReviews;
+   277→}
+   278→
+   279→export async function replyToReview(accessToken: string, reviewName: string, replyText: string): Promise<any> {
+   280→  const data = await withRetry<any>(() =>
+   281→    fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
+   282→      method: "PUT",
+   283→      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+   284→      body: JSON.stringify({ comment: replyText }),
+   285→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   286→  );
+   287→  return data;
+   288→}
+   289→
+   290→export async function deleteReviewReply(accessToken: string, reviewName: string): Promise<boolean> {
+   291→  // Deletes the owner reply from a Google review. reviewName is the full Google
+   292→  // review name like "accounts/{aid}/locations/{lid}/reviews/{rid}".
+   293→  await withRetry<any>(() =>
+   294→    fetch(`${GBP_V4_BASE}/${reviewName}/reply`, {
+   295→      method: "DELETE",
+   296→      headers: { Authorization: `Bearer ${accessToken}` },
+   297→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   298→  );
+   299→  return true;
+   300→}
+   301→
+   302→export async function createGooglePost(accessToken: string, locationName: string, post: any): Promise<any> {
+   303→  // Local posts remain exclusively on v4 — Business Information API v1 has no /localPosts endpoint.
+   304→  const data = await withRetry<any>(() =>
+   305→    fetch(`${GBP_V4_BASE}/${locationName}/localPosts`, {
+   306→      method: "POST",
+   307→      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+   308→      body: JSON.stringify(post),
+   309→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   310→  );
+   311→  return data;
+   312→}
+   313→
+   314→export async function deleteGooglePost(accessToken: string, postName: string): Promise<boolean> {
+   315→  // postName is the full Google post name like "accounts/{aid}/locations/{lid}/localPosts/{pid}"
+   316→  await withRetry<any>(() =>
+   317→    fetch(`${GBP_V4_BASE}/${postName}`, {
+   318→      method: "DELETE",
+   319→      headers: { Authorization: `Bearer ${accessToken}` },
+   320→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   321→  );
+   322→  return true;
+   323→}
+   324→
+   325→export async function patchGooglePost(
+   326→  accessToken: string,
+   327→  postName: string,
+   328→  updates: { title?: string; summary?: string; callToAction?: any; topicType?: string },
+   329→  fieldMask: string = "summary,title,callToAction"
+   330→): Promise<any> {
+   331→  // PATCH existing local post on Google. topicType is immutable and is NOT included
+   332→  // in the updateMask (only sent via fieldMask=topicType per Google docs, but ignored on update).
+   333→  const data = await withRetry<any>(() =>
+   334→    fetch(`${GBP_V4_BASE}/${postName}?updateMask=${fieldMask}&fieldMask=topicType`, {
+   335→      method: "PATCH",
+   336→      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+   337→      body: JSON.stringify(updates),
+   338→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   339→  );
+   340→  return data;
+   341→}
+   342→
+   343→// ─── Media / Photos (push TO Google + delete FROM Google) ──────────────────
+   344→//
+   345→// Google's Business Information API supports two upload flows for photos:
+   346→//   (1) 2-step byte upload: startUpload → PUT raw bytes to media upload endpoint
+   347→//       → POST {parent}/media with the resulting dataRef. Required when the
+   348→//       image only exists locally as a binary blob.
+   349→//   (2) sourceUrl method (single step): POST {parent}/media with body
+   350→//       `{ mediaFormat: { photo: { sourceUrl } }, locationAssociation: { category } }`.
+   351→//       Google fetches the image from the public URL itself. Simpler and
+   352→//       sufficient when the asset is already hosted at a publicly reachable URL.
+   353→//
+   354→// We use method (2) — every upload is first persisted to /public/uploads/media
+   355→// and exposed via NEXTAUTH_URL, then handed to Google as a sourceUrl. This
+   356→// keeps our upload path single-step and avoids the fragile media-upload
+   357→// endpoint, while still satisfying Google's requirement that the photo be
+   358→// reachable at the time of indexing.
+   359→
+   360→export type GooglePhotoCategory =
+   361→  | "COVER"
+   362→  | "PROFILE"
+   363→  | "INTERIOR"
+   364→  | "EXTERIOR"
+   365→  | "PRODUCT"
+   366→  | "TEAM"
+   367→  | "FOOD_AND_DRINK"
+   368→  | "MENU"
+   369→  | "AT_WORK"
+   370→  | "COMMON_AREA"
+   371→  | "ROOMS"
+   372→  | "LANDSCAPE";
+   373→
+   374→export interface UploadGooglePhotoInput {
+   375→  /** Publicly reachable URL Google can fetch the image bytes from. */
+   376→  sourceUrl: string;
+   377→  /** Optional caption / description shown on the Business Profile. */
+   378→  description?: string;
+   379→  /** Association category — controls where on the profile the photo appears. */
+   380→  category?: GooglePhotoCategory;
+   381→}
+   382→
+   383→export interface UploadGooglePhotoResult {
+   384→  /** Full Google media item name, e.g. "accounts/{aid}/locations/{lid}/media/{mid}". */
+   385→  name: string;
+   386→  /** Google-hosted URL of the published photo (may be null until Google finishes processing). */
+   387→  googleUrl?: string;
+   388→}
+   389→
+   390→/**
+   391→ * Upload a photo to a Google Business Profile location using the sourceUrl
+   392→ * method. `locationName` is the Google-side location name like
+   393→ * "accounts/{aid}/locations/{lid}". Throws on any non-2xx response (sanitized
+   394→ * by withRetry). Callers should wrap in try/catch and treat failures as
+   395→ * best-effort — the local MediaLibrary record remains the source of truth.
+   396→ */
+   397→export async function uploadGooglePhoto(
+   398→  accessToken: string,
+   399→  locationName: string,
+   400→  photo: UploadGooglePhotoInput,
+   401→): Promise<UploadGooglePhotoResult> {
+   402→  const body: any = {
+   403→    mediaFormat: {
+   404→      photo: {
+   405→        sourceUrl: photo.sourceUrl,
+   406→      },
+   407→    },
+   408→  };
+   409→  if (photo.description) {
+   410→    body.mediaFormat.photo.description = photo.description;
+   411→  }
+   412→  if (photo.category) {
+   413→    body.locationAssociation = { category: photo.category };
+   414→  }
+   415→
+   416→  const data = await withRetry<any>(() =>
+   417→    fetch(`${GBP_API_BASE}/${locationName}/media`, {
+   418→      method: "POST",
+   419→      headers: {
+   420→        Authorization: `Bearer ${accessToken}`,
+   421→        "Content-Type": "application/json",
+   422→      },
+   423→      body: JSON.stringify(body),
+   424→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   425→  );
+   426→
+   427→  return {
+   428→    name: data.name,
+   429→    googleUrl: data.googleUrl ?? undefined,
+   430→  };
+   431→}
+   432→
+   433→/**
+   434→ * Delete a media item from a Google Business Profile location. `mediaName` is
+   435→ * the full Google media name like "accounts/{aid}/locations/{lid}/media/{mid}".
+   436→ *
+   437→ * A 404 response is treated as success (the photo was already deleted on
+   438→ * Google's side — common during sync drift). All other non-2xx responses throw
+   439→ * via withRetry. Callers should treat the throw as best-effort and still
+   440→ * remove the local record so the operator sees a consistent state.
+   441→ */
+   442→export async function deleteGooglePhoto(
+   443→  accessToken: string,
+   444→  mediaName: string,
+   445→): Promise<boolean> {
+   446→  await withRetry<any>(() =>
+   447→    fetch(`${GBP_API_BASE}/${mediaName}`, {
+   448→      method: "DELETE",
+   449→      headers: { Authorization: `Bearer ${accessToken}` },
+   450→    }).then(async (r) => {
+   451→      // Idempotent: 404 means the photo is already gone on Google's side.
+   452→      // Normalize to a success-shape so withRetry doesn't throw.
+   453→      if (r.status === 404) {
+   454→        return { ok: true, status: 200, body: () => Promise.resolve("{}") };
+   455→      }
+   456→      return { ok: r.ok, status: r.status, body: () => r.text() };
+   457→    })
+   458→  );
+   459→  return true;
+   460→}
+   461→
+   462→// ─── Performance Metrics (real Google Business Performance API) ───────────
+   463→
+   464→export async function getPerformanceMetrics(
+   465→  accessToken: string,
+   466→  locationName: string,
+   467→  startDate: { year: number; month: number; day: number },
+   468→  endDate: { year: number; month: number; day: number },
+   469→  metricType: string = "BUSINESS_IMPRESSIONS_DESKTOP_MAPS"
+   470→): Promise<any[]> {
+   471→  const url = new URL(`${GBP_PERF_BASE}/locations/${locationName}:getDailyMetricsTimeSeries`);
+   472→  url.searchParams.set("dailyRange.startDate.date.year", String(startDate.year));
+   473→  url.searchParams.set("dailyRange.startDate.date.month", String(startDate.month));
+   474→  url.searchParams.set("dailyRange.startDate.date.day", String(startDate.day));
+   475→  url.searchParams.set("dailyRange.endDate.date.year", String(endDate.year));
+   476→  url.searchParams.set("dailyRange.endDate.date.month", String(endDate.month));
+   477→  url.searchParams.set("dailyRange.endDate.date.day", String(endDate.day));
+   478→  url.searchParams.set("dailyMetrics", metricType);
+   479→
+   480→  const data = await withRetry<any>(() =>
+   481→    fetch(url.toString(), {
+   482→      headers: { Authorization: `Bearer ${accessToken}` },
+   483→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   484→  );
+   485→  return data.timeSeries?.datedValues ?? [];
+   486→}
+   487→
+   488→// Fetch ALL 5 metric types for a date range and return as daily aggregates
+   489→export async function getFullPerformanceMetrics(
+   490→  accessToken: string,
+   491→  locationName: string,
+   492→  daysBack: number = 30
+   493→): Promise<{ date: Date; searchViews: number; mapsViews: number; websiteClicks: number; phoneCalls: number; directionRequests: number }[]> {
+   494→  const today = new Date();
+   495→  const start = new Date(today);
+   496→  start.setDate(today.getDate() - daysBack);
+   497→
+   498→  const startDate = { year: start.getFullYear(), month: start.getMonth() + 1, day: start.getDate() };
+   499→  const endDate = { year: today.getFullYear(), month: today.getMonth() + 1, day: today.getDate() };
+   500→
+   501→  // Google API returns one metric type per call, so fetch all 5 in parallel
+   502→  const metricTypes = {
+   503→    searchViews: "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
+   504→    mapsViews: "BUSINESS_IMPRESSIONS_DESKTOP_MAPS",
+   505→    websiteClicks: "WEBSITE_CLICKS",
+   506→    phoneCalls: "CALL_CLICKS",
+   507→    directionRequests: "BUSINESS_DIRECTION_REQUESTS",
+   508→  };
+   509→
+   510→  const [searchRes, mapsRes, websiteRes, callRes, directionRes] = await Promise.allSettled([
+   511→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.searchViews),
+   512→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.mapsViews),
+   513→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.websiteClicks),
+   514→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.phoneCalls),
+   515→    getPerformanceMetrics(accessToken, locationName, startDate, endDate, metricTypes.directionRequests),
+   516→  ]);
+   517→
+   518→  // Build a map of date → metrics
+   519→  const dailyMap = new Map<string, { date: Date; searchViews: number; mapsViews: number; websiteClicks: number; phoneCalls: number; directionRequests: number }>();
+   520→
+   521→  function populate(result: PromiseSettledResult<any[]>, key: keyof typeof metricTypes) {
+   522→    if (result.status !== "fulfilled") return;
+   523→    for (const entry of result.value) {
+   524→      const dateStr = entry.date?.year
+   525→        ? `${entry.date.year}-${String(entry.date.month).padStart(2, "0")}-${String(entry.date.day).padStart(2, "0")}`
+   526→        : null;
+   527→      if (!dateStr) continue;
+   528→      if (!dailyMap.has(dateStr)) {
+   529→        dailyMap.set(dateStr, {
+   530→          date: new Date(dateStr),
+   531→          searchViews: 0, mapsViews: 0, websiteClicks: 0, phoneCalls: 0, directionRequests: 0,
+   532→        });
+   533→      }
+   534→      const day = dailyMap.get(dateStr)!;
+   535→      const value = entry.value ?? 0;
+   536→      (day as any)[key] += value;
+   537→    }
+   538→  }
+   539→
+   540→  populate(searchRes, "searchViews");
+   541→  populate(mapsRes, "mapsViews");
+   542→  populate(websiteRes, "websiteClicks");
+   543→  populate(callRes, "phoneCalls");
+   544→  populate(directionRes, "directionRequests");
+   545→
+   546→  return Array.from(dailyMap.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
+   547→}
+   548→
+   549→// ─── Sync real analytics data into DB ─────────────────────────────────────
+   550→
+   551→export async function syncLocationAnalytics(locationId: string, daysBack: number = 30): Promise<{ synced: number; errors: string[] }> {
+   552→  const errors: string[] = [];
+   553→  const accessToken = await getValidAccessToken();
+   554→  if (!accessToken) return { synced: 0, errors: ["No valid Google access token"] };
+   555→
+   556→  const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
+   557→  if (!gbp) return { synced: 0, errors: ["No Google Business Profile linked"] };
+   558→
+   559→  try {
+   560→    const dailyMetrics = await getFullPerformanceMetrics(accessToken, gbp.googleLocationId, daysBack);
+   561→    let synced = 0;
+   562→
+   563→    for (const day of dailyMetrics) {
+   564→      const dateKey = day.date;
+   565→      dateKey.setHours(0, 0, 0, 0);
+   566→
+   567→      // Upsert — if record exists for this location+date, update; otherwise create
+   568→      await db.analyticDaily.upsert({
+   569→        where: { locationId_date: { locationId, date: dateKey } },
+   570→        create: {
+   571→          locationId,
+   572→          date: dateKey,
+   573→          searchViews: day.searchViews,
+   574→          mapsViews: day.mapsViews,
+   575→          websiteClicks: day.websiteClicks,
+   576→          phoneCalls: day.phoneCalls,
+   577→          directionRequests: day.directionRequests,
+   578→          bookings: 0,
+   579→        },
+   580→        update: {
+   581→          searchViews: day.searchViews,
+   582→          mapsViews: day.mapsViews,
+   583→          websiteClicks: day.websiteClicks,
+   584→          phoneCalls: day.phoneCalls,
+   585→          directionRequests: day.directionRequests,
+   586→        },
+   587→      });
+   588→      synced++;
+   589→    }
+   590→
+   591→    return { synced, errors };
+   592→  } catch (e: any) {
+   593→    return { synced: 0, errors: [e.message] };
+   594→  }
+   595→}
+   596→
+   597→// ─── Update Google Business Profile (push changes TO Google) ───────────────
+   598→
+   599→export async function updateGoogleBusinessProfile(
+   600→  accessToken: string,
+   601→  locationName: string,
+   602→  updates: {
+   603→    title?: string;
+   604→    phone?: string;
+   605→    website?: string;
+   606→    description?: string;
+   607→    appointmentUrl?: string;
+   608→    hours?: { dayOfWeek: string; openTime?: { hours: number; minutes: number }; closeTime?: { hours: number; minutes: number }; isClosed?: boolean }[];
+   609→    /**
+   610→     * Categories to push to Google. Callers may supply either the stable
+   611→     * gcid (preferred — e.g. "gcid:interior_designer") OR a display name
+   612→     * (fallback — will be resolved to a gcid via searchGoogleCategories).
+   613→     * Display-name resolution is best-effort: if a name cannot be resolved
+   614→     * to a gcid, that category is silently dropped from the patch (Google
+   615→     * rejects null/empty categoryId values).
+   616→     */
+   617→    categories?: {
+   618→      primaryCategoryId?: string;
+   619→      primaryDisplayName?: string;
+   620→      additionalCategoryIds?: string[];
+   621→      additionalDisplayNames?: string[];
+   622→    };
+   623→  }
+   624→): Promise<any> {
+   625→  const body: any = {};
+   626→  const fieldMask: string[] = [];
+   627→
+   628→  if (updates.title !== undefined) { body.title = updates.title; fieldMask.push("title"); }
+   629→  if (updates.phone !== undefined) { body.phoneNumbers = { primaryPhone: updates.phone }; fieldMask.push("phoneNumbers"); }
+   630→  if (updates.website !== undefined) { body.websiteUri = updates.website; fieldMask.push("websiteUri"); }
+   631→  if (updates.description !== undefined) {
+   632→    body.profile = { ...(body.profile || {}), description: updates.description };
+   633→    fieldMask.push("profile.description");
+   634→  }
+   635→  if (updates.appointmentUrl !== undefined) {
+   636→    body.profile = { ...(body.profile || {}), appointmentUrl: updates.appointmentUrl };
+   637→    fieldMask.push("profile.appointmentUrl");
+   638→  }
+   639→  if (updates.hours?.length > 0) {
+   640→    body.regularHours = {
+   641→      periods: updates.hours.map(h => ({
+   642→        openDay: h.dayOfWeek,
+   643→        openTime: h.openTime,
+   644→        closeDay: h.dayOfWeek,
+   645→        closeTime: h.closeTime,
+   646→      })),
+   647→    };
+   648→    fieldMask.push("regularHours");
+   649→  }
+   650→  if (updates.categories) {
+   651→    const cat = updates.categories;
+   652→    // Resolve primary category — prefer an explicit gcid, else resolve the
+   653→    // display name via Google's category search.
+   654→    let primaryId = cat.primaryCategoryId;
+   655→    if (!primaryId && cat.primaryDisplayName) {
+   656→      primaryId = await resolveCategoryId(accessToken, cat.primaryDisplayName);
+   657→    }
+   658→    // Resolve additional categories — explicit gcids first, then resolve
+   659→    // display names. Skip any that can't be resolved (Google rejects null
+   660→    // categoryId values, so dropping is safer than sending one).
+   661→    const additionalIds: string[] = [];
+   662→    if (cat.additionalCategoryIds) {
+   663→      additionalIds.push(...cat.additionalCategoryIds.filter(Boolean));
+   664→    }
+   665→    if (cat.additionalDisplayNames) {
+   666→      for (const name of cat.additionalDisplayNames) {
+   667→        if (!name) continue;
+   668→        const id = await resolveCategoryId(accessToken, name);
+   669→        if (id) additionalIds.push(id);
+   670→      }
+   671→    }
+   672→
+   673→    body.categories = {
+   674→      ...(primaryId ? { primaryCategory: { categoryId: primaryId } } : {}),
+   675→      additionalCategories: additionalIds.map(id => ({ categoryId: id })),
+   676→    };
+   677→    fieldMask.push("categories");
+   678→  }
+   679→
+   680→  const data = await withRetry<any>(() =>
+   681→    fetch(`${GBP_API_BASE}/${locationName}?updateMask=${fieldMask.join(",")}&validateOnly=false`, {
+   682→      method: "PATCH",
+   683→      headers: {
+   684→        Authorization: `Bearer ${accessToken}`,
+   685→        "Content-Type": "application/json",
+   686→      },
+   687→      body: JSON.stringify(body),
+   688→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+   689→  );
+   690→  return data;
+   691→}
+   692→
+   693→// ─── Google Business Profile Verifications API ─────────────────────────────
+   694→// Uses a separate base URL from the rest of the GBP APIs. See:
+   695→// https://developers.google.com/my-business/reference/verifications/v1/rest
+   696→const GBP_VERIFY_BASE = "https://mybusinessverifications.googleapis.com/v1";
+   697→
+   698→/**
+   699→ * Fetch the verification options available for a location.
+   700→ * The optional `dispatchMethod` lets the caller pre-select the channel they
+   701→ * intend to use (ADDRESS | EMAIL | PHONE_CALL | SMS) so Google can return
+   702→ * channel-specific metadata (e.g. the masked phone number for SMS).
+   703→ */
+   704→export async function fetchVerificationOptions(
+   705→  accessToken: string,
+   706→  locationName: string,
+   707→  dispatchMethod?: string,
+   708→): Promise<any> {
+   709→  const body: any = {};
+   710→  if (dispatchMethod) {
+   711→    body.context = { dispatchMethod };
+   712→  }
+   713→  const data = await withRetry<any>(() =>
+   714→    fetch(`${GBP_VERIFY_BASE}/${locationName}:fetchVerificationOptions`, {
+   715→      method: "POST",
+   716→      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+   717→      body: JSON.stringify(body),
+   718→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() })),
+   719→  );
+   720→  return data;
+   721→}
+   722→
+   723→/**
+   724→ * Initiate a verification flow for a location. Google will dispatch the PIN
+   725→ * (postcard for ADDRESS, SMS for SMS, automated call for PHONE_CALL, email
+   726→ * for EMAIL) and return a `verification` resource the client must later
+   727→ * complete via {@link completeVerification}.
+   728→ *
+   729→ * `input` shape depends on `method`:
+   730→ *   - ADDRESS → { mailerContactName: string }
+   731→ *   - PHONE_CALL | SMS → { phoneNumber: string }
+   732→ *   - EMAIL → { emailAddress: string }
+   733→ */
+   734→export async function initiateVerification(
+   735→  accessToken: string,
+   736→  locationName: string,
+   737→  method: string,
+   738→  input: any,
+   739→): Promise<any> {
+   740→  const body: any = { method };
+   741→  if (method === "ADDRESS") {
+   742→    body.addressInput = input;
+   743→  } else if (method === "PHONE_CALL" || method === "SMS") {
+   744→    body.phoneInput = input;
+   745→  } else if (method === "EMAIL") {
+   746→    body.emailInput = input;
+   747→  }
+   748→  const data = await withRetry<any>(() =>
+   749→    fetch(`${GBP_VERIFY_BASE}/${locationName}:verify`, {
+   750→      method: "POST",
+   751→      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+   752→      body: JSON.stringify(body),
+   753→    }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() })),
+   754→  );
+   755→  return data;
+   756→}
+   757→
+   758→/**
+   759→ * List the verification history for a location. Paginates through all
+   760→ * available pages (capped at 5 pages = 250 records) and returns the merged
+   761→ * `verifications` array.
+   762→ */
+   763→export async function listVerifications(
+   764→  accessToken: string,
+   765→  locationName: string,
+   766→  pageSize = 50,
+   767→): Promise<any[]> {
+   768→  const all: any[] = [];
+   769→  let pageToken: string | undefined;
+   770→  for (let page = 0; page < 5; page++) {
+   771→    const url = new URL(`${GBP_VERIFY_BASE}/${locationName}/verifications`);
+   772→    url.searchParams.set("pageSize", String(pageSize));
+   773→    if (pageToken) url.searchParams.set("pageToken", pageToken);
+   774→    const data = await withRetry<any>(() =>
+   775→      fetch(url.toString(), {
+   776→        headers: { Authorization: `Bearer ${accessToken}` },
+   777→      }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() })),
+   778→    );
+   779→    if (Array.isArray(data.verifications)) all.push(...data.verifications);
+   780→    pageToken = data.nextPageToken;
+   781→    if (!pageToken) break;
+   782→  }
+   783→  return all;
+   784→}
+   785→
+   786→/**
+   787→ * Complete a PIN-based verification by submitting the PIN the user received
+   788→ * (postcard in the mail, SMS code, etc.). Returns true on success.
+   789→ * A 404 response is treated as success — the verification may have already
+   790→ * been completed or expired, and the user-facing outcome is the same.
+   791→ */
+   792→export async function completeVerification(
+   793→  accessToken: string,
+   794→  verificationName: string,
+   795→  pin: string,
+   796→): Promise<boolean> {
+   797→  await withRetry<any>(() =>
+   798→    fetch(`${GBP_VERIFY_BASE}/${verificationName}:complete`, {
+   799→      method: "POST",
+   800→      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+   801→      body: JSON.stringify({ pin }),
+   802→    }).then(async (r) => {
+   803→      if (r.status === 404) return { ok: true, status: 200, body: () => "{}" };
+   804→      return { ok: r.ok, status: r.status, body: () => r.text() };
+   805→    }),
+   806→  );
+   807→  return true;
+   808→}
+   809→
+   810→// ─── Sync Engine ──────────────────────────────────────────────────────────
+   811→
+   812→export async function syncGoogleProfiles(): Promise<{ synced: number; errors: string[] }> {
+   813→  const errors: string[] = [];
+   814→  const accessToken = await getValidAccessToken();
+   815→  if (!accessToken) {
+   816→    return { synced: 0, errors: ["No valid Google access token. Please reconnect Google OAuth."] };
+   817→  }
+   818→
+   819→  try {
+   820→    const accounts = await listGoogleAccounts(accessToken);
+   821→    let synced = 0;
+   822→
+   823→    for (const account of accounts) {
+   824→      const locations = await listGoogleLocations(accessToken, account.name);
+   825→      for (const loc of locations) {
+   826→        try {
+   827→          const existing = await db.googleBusinessProfile.findFirst({
+   828→            where: { googleLocationId: loc.name },
+   829→          });
+   830→
+   831→          const locData = {
+   832→            googleLocationId: loc.name,
+   833→            profileName: loc.title || "Unknown",
+   834→            primaryCategory: loc.categories?.primaryCategory?.displayName || null,
+   835→            additionalCategoriesJson: JSON.stringify(loc.categories?.additionalCategories?.map((c: any) => c.displayName) || []),
+   836→            averageRating: loc.metadata?.averageRating || 0,
+   837→            totalReviews: loc.metadata?.reviewCount || 0,
+   838→            verificationState: loc.metadata?.isVerified ? "verified" : "unverified",
+   839→            profileStatus: loc.metadata?.canManage ? "active" : "disabled",
+   840→            mapUrl: loc.metadata?.mapsUri || null,
+   841→          };
+   842→
+   843→          if (existing) {
+   844→            await db.googleBusinessProfile.update({ where: { id: existing.id }, data: locData });
+   845→          } else {
+   846→            await db.googleBusinessProfile.create({ data: { ...locData, locationId: "" } });
+   847→          }
+   848→          synced++;
+   849→        } catch (e: any) {
+   850→          errors.push(`Location ${loc.name}: ${e.message}`);
+   851→        }
+   852→      }
+   853→    }
+   854→
+   855→    return { synced, errors };
+   856→  } catch (e: any) {
+   857→    return { synced: 0, errors: [e.message] };
+   858→  }
+   859→}
+   860→
+   861→export async function syncGoogleReviews(locationId: string, googleLocationId: string): Promise<{ synced: number; errors: string[] }> {
+   862→  const errors: string[] = [];
+   863→  const accessToken = await getValidAccessToken();
+   864→  if (!accessToken) return { synced: 0, errors: ["No valid access token"] };
+   865→
+   866→  try {
+   867→    const reviews = await listReviews(accessToken, googleLocationId);
+   868→    let synced = 0;
+   869→
+   870→    for (const review of reviews) {
+   871→      const googleReviewId = review.name;
+   872→      const existing = await db.review.findUnique({ where: { googleReviewId } });
+   873→
+   874→      if (!existing) {
+   875→        await db.review.create({
+   876→          data: {
+   877→            locationId,
+   878→            googleReviewId,
+   879→            authorName: review.reviewer?.displayName || "Anonymous",
+   880→            authorPhoto: review.reviewer?.profilePhotoUrl || null,
+   881→            rating: review.starRating === "FIVE" ? 5 : review.starRating === "FOUR" ? 4 : review.starRating === "THREE" ? 3 : review.starRating === "TWO" ? 2 : 1,
+   882→            text: review.comment || "",
+   883→            sentiment: "neutral",
+   884→            replyText: review.reviewReply?.comment || null,
+   885→            replySource: review.reviewReply ? "manual" : null,
+   886→            replyStatus: review.reviewReply ? "replied" : "pending",
+   887→            repliedAt: review.reviewReply ? new Date(review.reviewReply.updateTime) : null,
+   888→            createdAt: new Date(review.createTime),
+   889→          },
+   890→        });
+   891→        synced++;
+   892→      }
+   893→    }
+   894→
+   895→    return { synced, errors };
+   896→  } catch (e: any) {
+   897→    return { synced: 0, errors: [e.message] };
+   898→  }
+   899→}
+   900→
+   901→// ─── Full Location Sync — fetches ALL real GMB data for one location ──────
+   902→
+   903→export async function syncLocationFull(locationId: string): Promise<{
+   904→  success: boolean;
+   905→  synced: { reviews: number; photos: number; hours: number; services: number; categories: number };
+   906→  errors: string[];
+   907→}> {
+   908→  const errors: string[] = [];
+   909→  const result = { reviews: 0, photos: 0, hours: 0, services: 0, categories: 0 };
+   910→  const accessToken = await getValidAccessToken();
+   911→
+   912→  if (!accessToken) {
+   913→    return { success: false, synced: result, errors: ["No valid Google access token. Please reconnect Google OAuth."] };
+   914→  }
+   915→
+   916→  // Get the GoogleBusinessProfile linked to this location
+   917→  const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
+   918→  if (!gbp) {
+   919→    return { success: false, synced: result, errors: ["No Google Business Profile linked to this location. Import this location from Google first."] };
+   920→  }
+   921→
+   922→  const locationName = gbp.googleLocationId; // e.g. "locations/12345"
+   923→
+   924→  try {
+   925→    // ─── 1. Fetch full business profile from Google ─────────────────────
+   926→    const profile = await getBusinessProfile(accessToken, locationName);
+   927→
+   928→    // Update Location record with real data
+   929→    await db.location.update({
+   930→      where: { id: locationId },
+   931→      data: {
+   932→        name: profile.title || gbp.profileName,
+   933→        address: formatAddress(profile.address),
+   934→        phone: profile.phoneNumbers?.primaryPhone || null,
+   935→        website: profile.websiteUri || null,
+   936→        latitude: profile.latlng?.latitude || null,
+   937→        longitude: profile.latlng?.longitude || null,
+   938→        avgRating: profile.metadata?.averageRating || 0,
+   939→        reviewCount: profile.metadata?.reviewCount || 0,
+   940→        syncStatus: "synced",
+   941→        lastSyncedAt: new Date(),
+   942→        categoriesJson: JSON.stringify([
+   943→          profile.categories?.primaryCategory?.displayName,
+   944→          ...(profile.categories?.additionalCategories?.map((c: any) => c.displayName) || []),
+   945→        ].filter(Boolean)),
+   946→      },
+   947→    });
+   948→
+   949→    // Update GoogleBusinessProfile record
+   950→    await db.googleBusinessProfile.update({
+   951→      where: { id: gbp.id },
+   952→      data: {
+   953→        profileName: profile.title || gbp.profileName,
+   954→        primaryCategory: profile.categories?.primaryCategory?.displayName || gbp.primaryCategory,
+   955→        additionalCategoriesJson: JSON.stringify(profile.categories?.additionalCategories?.map((c: any) => c.displayName) || []),
+   956→        averageRating: profile.metadata?.averageRating || 0,
+   957→        totalReviews: profile.metadata?.reviewCount || 0,
+   958→        verificationState: profile.metadata?.isVerified ? "verified" : "unverified",
+   959→        profileStatus: profile.metadata?.canManage ? "active" : "disabled",
+   960→        mapUrl: profile.metadata?.mapsUri || gbp.mapUrl,
+   961→      },
+   962→    });
+   963→
+   964→    // ─── 2. Sync Business Hours ─────────────────────────────────────────
+   965→    if (profile.regularHours?.periods?.length > 0) {
+   966→      // Clear existing hours
+   967→      await db.businessHour.deleteMany({ where: { locationId } });
+   968→      // Map Google's day codes (0=Sun..6=Sat) to our dayOfWeek
+   969→      const dayMap: Record<string, number> = { SUNDAY: 0, MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6 };
+   970→      for (const period of profile.regularHours.periods) {
+   971→        const day = dayMap[period.openDay] ?? 0;
+   972→        await db.businessHour.create({
+   973→          data: {
+   974→            locationId,
+   975→            dayOfWeek: day,
+   976→            openTime: `${period.openTime?.hours?.toString().padStart(2, "0") || "10"}:${period.openTime?.minutes?.toString().padStart(2, "0") || "00"}`,
+   977→            closeTime: `${period.closeTime?.hours?.toString().padStart(2, "0") || "20"}:${period.closeTime?.minutes?.toString().padStart(2, "0") || "00"}`,
+   978→            isClosed: false,
+   979→          },
+   980→        });
+   981→        result.hours++;
+   982→      }
+   983→    }
+   984→
+   985→    // ─── 3. Sync Categories ─────────────────────────────────────────────
+   986→    if (profile.categories) {
+   987→      await db.businessCategory.deleteMany({ where: { locationId } });
+   988→      if (profile.categories.primaryCategory) {
+   989→        await db.businessCategory.create({
+   990→          data: { locationId, categoryName: profile.categories.primaryCategory.displayName || "Interior Designer", isPrimary: true },
+   991→        });
+   992→        result.categories++;
+   993→      }
+   994→      for (const cat of profile.categories.additionalCategories || []) {
+   995→        await db.businessCategory.create({
+   996→          data: { locationId, categoryName: cat.displayName || "", isPrimary: false },
+   997→        });
+   998→        result.categories++;
+   999→      }
+  1000→    }
+  1001→
+  1002→    // ─── 4. Sync Services ───────────────────────────────────────────────
+  1003→    if (profile.serviceItems?.length > 0) {
+  1004→      await db.service.deleteMany({ where: { locationId } });
+  1005→      for (const service of profile.serviceItems) {
+  1006→        await db.service.create({
+  1007→          data: {
+  1008→            locationId,
+  1009→            serviceName: service.displayName || service.name || "Service",
+  1010→            description: service.description || null,
+  1011→            category: service.category || null,
+  1012→            status: "active",
+  1013→          },
+  1014→        });
+  1015→        result.services++;
+  1016→      }
+  1017→    }
+  1018→
+  1019→    // ─── 5. Sync Reviews ────────────────────────────────────────────────
+  1020→    try {
+  1021→      const reviews = await listReviews(accessToken, locationName);
+  1022→      for (const review of reviews) {
+  1023→        const googleReviewId = review.name;
+  1024→        const existing = await db.review.findUnique({ where: { googleReviewId } });
+  1025→        if (!existing) {
+  1026→          await db.review.create({
+  1027→            data: {
+  1028→              locationId,
+  1029→              googleReviewId,
+  1030→              authorName: review.reviewer?.displayName || "Anonymous",
+  1031→              authorPhoto: review.reviewer?.profilePhotoUrl || null,
+  1032→              rating: review.starRating === "FIVE" ? 5 : review.starRating === "FOUR" ? 4 : review.starRating === "THREE" ? 3 : review.starRating === "TWO" ? 2 : 1,
+  1033→              text: review.comment || "",
+  1034→              sentiment: "neutral",
+  1035→              replyText: review.reviewReply?.comment || null,
+  1036→              replySource: review.reviewReply ? "manual" : null,
+  1037→              replyStatus: review.reviewReply ? "replied" : "pending",
+  1038→              repliedAt: review.reviewReply ? new Date(review.reviewReply.updateTime) : null,
+  1039→              createdAt: new Date(review.createTime),
+  1040→            },
+  1041→          });
+  1042→          result.reviews++;
+  1043→        }
+  1044→      }
+  1045→    } catch (e: any) {
+  1046→      errors.push(`Reviews sync: ${e.message}`);
+  1047→    }
+  1048→
+  1049→    // ─── 6. Sync Photos (metadata only — URLs from Google) ──────────────
+  1050→    try {
+  1051→      const mediaData = await withRetry<{ media?: any[] }>(() =>
+  1052→        fetch(`${GBP_API_BASE}/${locationName}/media`, {
+  1053→          headers: { Authorization: `Bearer ${accessToken}` },
+  1054→        }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
+  1055→      );
+  1056→      for (const photo of mediaData.media || []) {
+  1057→        const existing = await db.businessPhoto.findFirst({ where: { googlePhotoId: photo.name } });
+  1058→        if (!existing) {
+  1059→          await db.businessPhoto.create({
+  1060→            data: {
+  1061→              locationId,
+  1062→              googlePhotoId: photo.name,
+  1063→              imageUrl: photo.googleUrl || photo.locationUri || "",
+  1064→              thumbnailUrl: null,
+  1065→              source: "google",
+  1066→              status: "active",
+  1067→            },
+  1068→          });
+  1069→          result.photos++;
+  1070→        }
+  1071→      }
+  1072→    } catch (e: any) {
+  1073→      errors.push(`Photos sync: ${e.message}`);
+  1074→    }
+  1075→
+  1076→    // ─── 7. Sync Business Information (description, website, appointment URL) ──
+  1077→    try {
+  1078→      const description = profile.profile?.description || profile.metadata?.description || null;
+  1079→      const website = profile.websiteUri || null;
+  1080→      const appointmentUrl = profile.profile?.appointmentUrl || null;
+  1081→
+  1082→      if (gbp) {
+  1083→        const existingInfo = await db.businessInformation.findFirst({ where: { profileId: gbp.id } });
+  1084→        if (existingInfo) {
+  1085→          await db.businessInformation.update({
+  1086→            where: { id: existingInfo.id },
+  1087→            data: { description, website, appointmentUrl },
+  1088→          });
+  1089→        } else {
+  1090→          await db.businessInformation.create({
+  1091→            data: { profileId: gbp.id, locationId, description, website, appointmentUrl },
+  1092→          });
+  1093→        }
+  1094→      }
+  1095→    } catch (e: any) {
+  1096→      errors.push(`Business info sync: ${e.message}`);
+  1097→    }
+  1098→
+  1099→    // ─── 8. Sync Attributes (wheelchair accessible, appointments, etc.) ────
+  1100→    try {
+  1101→      if (profile.attributes?.length > 0) {
+  1102→        await db.businessAttribute.deleteMany({ where: { locationId } });
+  1103→        for (const attr of profile.attributes) {
+  1104→          await db.businessAttribute.create({
+  1105→            data: {
+  1106→              locationId,
+  1107→              attributeName: attr.name || attr.displayName || "Attribute",
+  1108→              attributeValue: Array.isArray(attr.value) ? attr.value.join(", ") : String(attr.value ?? "true"),
+  1109→            },
+  1110→          });
+  1111→        }
+  1112→      }
+  1113→    } catch (e: any) {
+  1114→      errors.push(`Attributes sync: ${e.message}`);
+  1115→    }
+  1116→
+  1117→    // ─── 9. Sync Special Hours (holidays) ─────────────────────────────────
+  1118→    try {
+  1119→      if (profile.specialHours?.specialHourRanges?.length > 0) {
+  1120→        await db.specialHour.deleteMany({ where: { locationId } });
+  1121→        for (const range of profile.specialHours.specialHourRanges) {
+  1122→          const startDate = range.startDate ? new Date(`${range.startDate.year}-${String(range.startDate.month).padStart(2, "0")}-${String(range.startDate.day).padStart(2, "0")}`) : new Date();
+  1123→          await db.specialHour.create({
+  1124→            data: {
+  1125→              locationId,
+  1126→              date: startDate,
+  1127→              openTime: range.openTime ? `${String(range.openTime.hours).padStart(2, "0")}:${String(range.openTime.minutes).padStart(2, "0")}` : null,
+  1128→              closeTime: range.closeTime ? `${String(range.closeTime.hours).padStart(2, "0")}:${String(range.closeTime.minutes).padStart(2, "0")}` : null,
+  1129→              isClosed: !range.openTime,
+  1130→            },
+  1131→          });
+  1132→        }
+  1133→      }
+  1134→    } catch (e: any) {
+  1135→      errors.push(`Special hours sync: ${e.message}`);
+  1136→    }
+  1137→
+  1138→    // ─── 10. Sync Analytics (real Google Business Performance API) ────────
+  1139→    try {
+  1140→      const analyticsResult = await syncLocationAnalytics(locationId, 30);
+  1141→      if (analyticsResult.errors.length > 0) {
+  1142→        errors.push(`Analytics sync: ${analyticsResult.errors.join("; ")}`);
+  1143→      }
+  1144→    } catch (e: any) {
+  1145→      errors.push(`Analytics sync: ${e.message}`);
+  1146→    }
+  1147→
+  1148→    return { success: true, synced: result, errors };
+  1149→  } catch (e: any) {
+  1150→    return { success: false, synced: result, errors: [e.message] };
+  1151→  }
+  1152→}
+  1153→
+  1154→function formatAddress(addr: any): string {
+  1155→  if (!addr) return "";
+  1156→  const parts = [
+  1157→    addr.addressLines?.join(", "),
+  1158→    addr.locality,
+  1159→    addr.administrativeArea,
+  1160→    addr.postalCode,
+  1161→  ].filter(Boolean);
+  1162→  return parts.join(", ");
+  1163→}
+  1164→
+  1165→export const googleServiceStatus = {
+  1166→  isConfigured: IS_CONFIGURED,
+  1167→  hasClientSecret: !!GOOGLE_CLIENT_SECRET,
+  1168→  redirectUri: GOOGLE_REDIRECT_URI,
+  1169→  mode: IS_CONFIGURED ? "production" : "not_configured",
+  1170→};
+  1171→

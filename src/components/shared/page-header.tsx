@@ -29,7 +29,7 @@ export function PageHeader({
 }
 
 export function CardSection({
-  title, description, action, children, className, noPadding,
+  title, description, action, children, className, noPadding, icon: Icon,
 }: {
   title: string;
   description?: string;
@@ -37,13 +37,17 @@ export function CardSection({
   children: React.ReactNode;
   className?: string;
   noPadding?: boolean;
+  icon?: React.ComponentType<{ className?: string }>;
 }) {
   return (
     <div className={cn("kt-card", className)}>
       <div className="kt-card-header flex-col sm:flex-row items-start sm:items-center gap-3">
-        <div className="min-w-0 w-full sm:w-auto">
-          <h3 className="kt-card-title">{title}</h3>
-          {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+        <div className="min-w-0 w-full sm:w-auto flex items-start gap-2.5">
+          {Icon && <Icon className="size-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />}
+          <div className="min-w-0">
+            <h3 className="kt-card-title">{title}</h3>
+            {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+          </div>
         </div>
         {action && <div className="shrink-0 w-full sm:w-auto">{action}</div>}
       </div>

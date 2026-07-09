@@ -1,7 +1,20 @@
-# ═══════════════════════════════════════════════════════════════════════════
-# MyFNG Local AI Manager — Prisma Schema for PostgreSQL (Production)
-# Copy this to prisma/schema.prisma when deploying to Hostinger with PostgreSQL.
-# ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// MyFNG Local AI Manager — Prisma Schema for PostgreSQL (Production)
+// ────────────────────────────────────────────────────────────────────────────
+// Copy this file over `prisma/schema.prisma` when deploying to Hostinger with
+// PostgreSQL:
+//
+//     cp prisma/schema.postgresql.prisma prisma/schema.prisma
+//     bun run db:generate
+//     bun run db:push
+//     bunx tsx prisma/seed.ts
+//
+// This schema is a complete, byte-identical copy of the SQLite schema
+// (prisma/schema.prisma) with only the datasource provider changed from
+// "sqlite" to "postgresql". All model definitions, relations, indexes and
+// default values are preserved. String?-typed JSON fields and Float-typed
+// decimal fields are kept as-is — PostgreSQL handles both natively.
+// ═══════════════════════════════════════════════════════════════════════════
 
 generator client {
   provider = "prisma-client-js"
@@ -12,13 +25,920 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-# ─── Then run: ────────────────────────────────────────────────────────────
-# 1. bun run db:generate    — regenerate Prisma client for PostgreSQL
-# 2. bun run db:push        — create all tables in PostgreSQL
-# 3. bunx tsx prisma/seed.ts — seed initial data (users, roles, locations, etc.)
-# ──────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
+// 1. AUTH & RBAC (§4-§5)
+// ────────────────────────────────────────────────────────────────────────────
 
-# The rest of the schema (all 49 models) is identical to the SQLite version.
-# Simply copy all model definitions from prisma/schema.prisma below this point.
-# PostgreSQL supports JSONB natively, so you can optionally change String? JSON
-# fields to Json? type for better querying. But String works fine too.
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  name                String
+  password            String? // scrypt hashed; nullable for invited users who haven't set password yet
+  role                String    @default("viewer") // super_admin | marketing_manager | branch_manager | customer_support | viewer
+  roleId              String? // FK to Role (normalized; role string kept for backward compat)
+  roleRef             Role?    @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  avatar              String?
+  phone               String?
+  assignedLocationIds String? // CSV of Location ids (branch_manager scope)
+  // Auth security fields (per doc 06 §11, §20)
+  status              String    @default("active") // active | invited | locked | suspended | inactive
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  invitationToken     String?
+  invitationExpiresAt DateTime?
+  resetToken          String?
+  resetExpiresAt      DateTime?
+  lastLoginAt         DateTime?
+  lastLoginIp         String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  reviews             Review[]  @relation("ReviewRepliedBy")
+  posts               Post[]    @relation("PostAuthor")
+  aiHistories         AIHistory[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  activityLogs        ActivityLog[]
+  reviewReplies       ReviewReply[]   @relation("ReplyCreatedBy")
+  approvedReplies     ReviewReply[]   @relation("ReplyApprovedBy")
+  publishedReplies    ReviewReply[]   @relation("ReplyPublishedBy")
+  mediaUploads        MediaLibrary[]
+  reports             Report[]
+  preferences         UserPreference?
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique // Super Admin | Marketing Manager | Branch Manager | Customer Support | Viewer
+  description String?
+  createdAt   DateTime @default(now())
+
+  users       User[]
+  rolePerms   RolePermission[]
+}
+
+model Permission {
+  id              String   @id @default(cuid())
+  permissionName  String   @unique // reviews.read | reviews.write | posts.create | ...
+  description     String?
+  rolePerms       RolePermission[]
+}
+
+model RolePermission {
+  id           String @id @default(cuid())
+  roleId       String
+  permissionId String
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2. LOCATIONS (§5)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Location {
+  id               String    @id @default(cuid())
+  locationCode     String?   @unique // e.g. MYFNG-MUM
+  name             String
+  city             String
+  region           String    @default("Maharashtra")
+  state            String    @default("Maharashtra")
+  pincode          String?
+  address          String
+  phone            String?
+  email            String?
+  website          String?
+  timezone         String    @default("Asia/Kolkata")
+  latitude         Float?
+  longitude        Float?
+  status           String    @default("active") // active | paused | error
+  syncStatus       String    @default("pending") // synced | syncing | pending | error
+  lastSyncedAt     DateTime?
+  avgRating        Float     @default(0)
+  reviewCount      Int       @default(0)
+  healthScore      Int       @default(0) // 0-100
+  visibilityScore  Int       @default(0) // 0-100
+  categoriesJson   String? // JSON
+  servicesJson     String? // JSON
+  hoursJson        String? // JSON (legacy; BusinessHour table is canonical now)
+  attributesJson   String? // JSON
+  clientId          String?   // FK to Client — which end-client owns this location
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  reviews          Review[]
+  posts            Post[]
+  analytics        AnalyticDaily[]
+  analyticsMonthly AnalyticsMonthly[]
+  keywords         Keyword[]
+  keywordRankings  KeywordRanking[]
+  googleProfiles   GoogleBusinessProfile[]
+  categories       BusinessCategory[]
+  photos           BusinessPhoto[]
+  products         Product[]
+  services         Service[]
+  attributes       BusinessAttribute[]
+  hours            BusinessHour[]
+  specialHours     SpecialHour[]
+  media            MediaLibrary[]
+  seoAudits        SeoAudit[]
+  competitors      Competitor[]
+  dashboardCache   DashboardCache[]
+  syncLogs         SyncLog[]
+  client           Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 2B. END-CLIENT AUTHORIZATION (Google Third-Party Policy Compliance)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Client {
+  id              String    @id @default(cuid())
+  clientCode      String?   @unique // e.g. MYFNG-SELF, FRANCHISEE-001
+  name            String    // Display name (e.g. "MyFNG (Self)" or franchisee name)
+  legalName       String?   // Legal entity name
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+  status          String    @default("active") // active | paused | terminated
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  locations       Location[]
+  authorizations  ClientAuthorization[]
+}
+
+// Tracks per-client authorization for managing their Google Business Profile.
+// Google's Third-Party Policy requires explicit authorization before managing
+// GBP on behalf of an end-client. Each GBP write operation (reply, post, profile update)
+// must verify authorization.status === "active".
+model ClientAuthorization {
+  id                String    @id @default(cuid())
+  clientId          String
+  // What the client has authorized us to do on their behalf
+  authorizedScopes  String?   // JSON array: ["review.reply", "post.create", "profile.update", "analytics.sync"]
+  // Authorization lifecycle
+  status            String    @default("active") // active | revoked | expired
+  grantedAt         DateTime  @default(now())
+  revokedAt         DateTime?
+  expiresAt         DateTime? // nullable = no expiry
+  // Audit trail
+  grantedByUserId   String?   // Which MyFNG user recorded the authorization
+  authorizationDoc  String?   // URL or path to signed authorization document
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  client            Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([status])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 3. GOOGLE INTEGRATION (§6-§9)
+// ────────────────────────────────────────────────────────────────────────────
+
+model GoogleAccount {
+  id            String    @id @default(cuid())
+  email         String
+  googleUserId  String?
+  refreshToken  String? // encrypted in production
+  accessToken   String?
+  tokenExpiry   DateTime?
+  scopesJson    String? // JSON array
+  clientId      String?   // multi-tenant: which end-client owns this OAuth token (nullable = platform-wide)
+  status        String    @default("active") // active | expired | revoked
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  profiles      GoogleBusinessProfile[]
+}
+
+model GoogleBusinessProfile {
+  id                  String    @id @default(cuid())
+  googleLocationId    String    @unique
+  locationId          String
+  googleAccountId     String?
+  profileName         String
+  primaryCategory     String?
+  additionalCategoriesJson String? // JSON array
+  averageRating       Float     @default(0)
+  totalReviews        Int       @default(0)
+  verificationState   String    @default("verified") // verified | unverified | pending
+  profileStatus       String    @default("active") // active | suspended | disabled
+  mapUrl              String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  location            Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  googleAccount       GoogleAccount? @relation(fields: [googleAccountId], references: [id], onDelete: SetNull)
+  businessInfo        BusinessInformation?
+  reviews             Review[]
+  posts               Post[]
+
+  @@index([locationId])
+  @@index([profileStatus])
+}
+
+model BusinessInformation {
+  id              String   @id @default(cuid())
+  profileId       String   @unique
+  locationId      String?  @unique
+  description     String?
+  openingHoursJson String? // JSON
+  specialHoursJson String? // JSON
+  servicesJson    String? // JSON
+  attributesJson  String? // JSON
+  website         String?
+  appointmentUrl  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  profile         GoogleBusinessProfile? @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+model BusinessCategory {
+  id           String  @id @default(cuid())
+  locationId   String
+  categoryName String
+  isPrimary    Boolean @default(false)
+
+  location     Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+}
+
+model BusinessPhoto {
+  id            String   @id @default(cuid())
+  locationId    String
+  googlePhotoId String?
+  imageUrl      String
+  thumbnailUrl  String?
+  uploadedBy    String?
+  source        String   @default("manual") // manual | google | ai
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+
+  location      Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 4. PRODUCTS & SERVICES (§11-§12)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Product {
+  id          String   @id @default(cuid())
+  locationId  String
+  productName String
+  description String?
+  category    String?
+  price       Float?
+  currency    String   @default("INR")
+  imageUrl    String?
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+
+  location    Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+}
+
+model Service {
+  id          String   @id @default(cuid())
+  locationId  String
+  serviceName String
+  description String?
+  category    String?
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
+
+  location    Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+}
+
+model BusinessAttribute {
+  id             String @id @default(cuid())
+  locationId     String
+  attributeName  String
+  attributeValue String
+
+  location       Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+}
+
+model BusinessHour {
+  id         String  @id @default(cuid())
+  locationId String
+  dayOfWeek  Int // 0=Sun ... 6=Sat
+  openTime   String?
+  closeTime  String?
+  isClosed   Boolean @default(false)
+
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+}
+
+model SpecialHour {
+  id        String  @id @default(cuid())
+  locationId String
+  date      DateTime
+  openTime  String?
+  closeTime String?
+  isClosed  Boolean @default(false)
+
+  location  Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 5. REVIEWS & REPLIES (§24-§27)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Review {
+  id             String    @id @default(cuid())
+  locationId     String
+  profileId      String? // FK to GoogleBusinessProfile
+  googleReviewId String    @unique
+  authorName     String
+  authorPhoto    String?
+  reviewerUrl    String?
+  rating         Int // 1-5
+  text           String
+  reviewLanguage String?   @default("en")
+  sentiment      String    @default("neutral") // positive | neutral | negative
+  sentimentScore Float?    // -1.0 to 1.0
+  aiSummary      String?
+  replyText      String? // denormalized latest reply (cache)
+  replyBy        String?
+  replySource    String? // manual | ai | template
+  replyStatus    String    @default("pending") // pending | replied | ignored
+  repliedAt      DateTime?
+  syncStatus     String    @default("synced")
+  createdAt      DateTime
+  updatedAt      DateTime  @updatedAt
+
+  location       Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  profile        GoogleBusinessProfile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  user           User?     @relation("ReviewRepliedBy", fields: [replyBy], references: [id])
+  replies        ReviewReply[]
+  labels         ReviewLabel[]
+
+  @@index([locationId])
+  @@index([replyStatus])
+  @@index([rating])
+  @@index([sentiment])
+}
+
+model ReviewReply {
+  id               String    @id @default(cuid())
+  reviewId         String
+  replyText        String
+  replySource      String    @default("manual") // manual | ai | template
+  approvedBy       String?
+  publishedBy      String?
+  googleReplyTime  DateTime?
+  status           String    @default("draft") // draft | approved | published | failed
+  createdBy        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  review           Review    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  approver         User?     @relation("ReplyApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
+  publisher        User?     @relation("ReplyPublishedBy", fields: [publishedBy], references: [id], onDelete: SetNull)
+  creator          User?     @relation("ReplyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([reviewId])
+  @@index([status])
+}
+
+model ReviewLabel {
+  id       String @id @default(cuid())
+  reviewId String
+  label    String // Positive | Negative | Delayed Service | Pricing | Complaint | Appreciation | Repeat Customer
+
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+}
+
+model ReviewReplyTemplate {
+  id        String   @id @default(cuid())
+  title     String
+  rating    Int // target rating 1-5
+  template  String
+  language  String   @default("en")
+  isActive  Boolean  @default(true)
+  createdBy String?
+  createdAt DateTime @default(now())
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 6. GOOGLE POSTS (§28)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Post {
+  id           String    @id @default(cuid())
+  locationId   String
+  profileId    String?
+  type         String // whats_new | offer | event | update
+  title        String
+  content      String
+  ctaType      String? // book | order | sign_up | call | learn_more
+  ctaUrl       String?
+  imageUrl     String?
+  startDate    DateTime?
+  endDate      DateTime?
+  status       String    @default("draft") // draft | scheduled | published | failed
+  source       String    @default("manual") // manual | ai
+  googlePostId String?
+  scheduledAt  DateTime?
+  publishedAt  DateTime?
+  authorId     String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  location     Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  profile      GoogleBusinessProfile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  author       User?     @relation("PostAuthor", fields: [authorId], references: [id])
+
+  @@index([locationId])
+  @@index([status])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 7. MEDIA LIBRARY (§29)
+// ────────────────────────────────────────────────────────────────────────────
+
+model MediaLibrary {
+  id          String   @id @default(cuid())
+  locationId  String?
+  profileId   String?
+  fileName    String
+  bucket       String   @default("business-photos") // business-photos | post-images | reports | exports | ai-generated
+  fileUrl     String
+  mimeType    String
+  fileSize    Int      @default(0) // bytes
+  uploadedBy  String?
+  aiGenerated Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  location    Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  uploader    User?     @relation(fields: [uploadedBy], references: [id], onDelete: SetNull)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 8. ANALYTICS (§30-§32)
+// ────────────────────────────────────────────────────────────────────────────
+
+model AnalyticDaily {
+  id                String   @id @default(cuid())
+  locationId        String
+  date              DateTime
+  searchViews       Int      @default(0)
+  mapsViews         Int      @default(0)
+  websiteClicks     Int      @default(0)
+  phoneCalls        Int      @default(0)
+  directionRequests Int      @default(0)
+  bookings          Int      @default(0)
+
+  location          Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, date])
+  @@index([date])
+}
+
+model AnalyticsMonthly {
+  id                String   @id @default(cuid())
+  locationId        String
+  month             Int // 1-12
+  year              Int
+  totalViews        Int      @default(0)
+  websiteClicks     Int      @default(0)
+  phoneCalls        Int      @default(0)
+  directionRequests Int      @default(0)
+  totalReviews      Int      @default(0)
+  averageRating     Float    @default(0)
+
+  location          Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, month, year])
+}
+
+model DashboardCache {
+  id        String   @id @default(cuid())
+  locationId String?
+  cacheKey  String
+  payloadJson String // JSON
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+
+  location  Location? @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([cacheKey])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 9. LOCAL SEO (§33-§38)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Keyword {
+  id         String   @id @default(cuid())
+  locationId String?
+  keyword    String
+  city       String?
+  state      String?
+  status     String   @default("active")
+  createdAt  DateTime @default(now())
+
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  rankings   KeywordRanking[]
+  geoGrid    GeoGridResult[]
+  competitorRankings CompetitorRanking[]
+
+  @@index([locationId])
+}
+
+model KeywordRanking {
+  id         String   @id @default(cuid())
+  keywordId  String
+  locationId String
+  lat        Float
+  lng        Float
+  rank       Int // 1-50; 0 = not ranked
+  searchDate DateTime @default(now())
+  checkedAt  DateTime @default(now())
+
+  keyword    Keyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([keywordId])
+  @@index([locationId])
+}
+
+model GeoGridResult {
+  id         String   @id @default(cuid())
+  keywordId  String
+  latitude   Float
+  longitude  Float
+  ranking    Int
+  checkedAt  DateTime @default(now())
+
+  keyword    Keyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  @@index([keywordId])
+}
+
+model Competitor {
+  id            String   @id @default(cuid())
+  locationId    String
+  businessName  String
+  googlePlaceId String?
+  category      String?
+  address       String?
+  latitude      Float?
+  longitude     Float?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  location      Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  rankings      CompetitorRanking[]
+}
+
+model CompetitorRanking {
+  id            String   @id @default(cuid())
+  competitorId  String
+  keywordId     String
+  ranking       Int
+  checkedAt     DateTime @default(now())
+
+  competitor    Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  keyword       Keyword    @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  @@index([competitorId])
+  @@index([keywordId])
+}
+
+model SeoAudit {
+  id                 String   @id @default(cuid())
+  locationId         String
+  auditScore         Int      @default(0)
+  profileStrength    Int      @default(0)
+  missingCategoriesJson String?
+  missingPhotos      Int      @default(0)
+  missingServices    Int      @default(0)
+  recommendationsJson String?
+  auditedAt          DateTime @default(now())
+
+  location           Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 10. AI (§39-§41)
+// ────────────────────────────────────────────────────────────────────────────
+
+model AIHistory {
+  id         String   @id @default(cuid())
+  userId     String
+  promptType String // review_reply | post | seo | summary | description | faq | audit | chat
+  model      String   @default("glm-4.6")
+  input      String // JSON
+  output     String // JSON
+  tokens     Int      @default(0)
+  durationMs Int      @default(0)
+  status     String   @default("success")
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([promptType])
+}
+
+model AiJob {
+  id         String   @id @default(cuid())
+  jobType    String // review_reply | google_post | seo_audit | business_description | monthly_report | suggestion
+  entityType String? // review | post | location | profile
+  entityId   String?
+  model      String   @default("glm-4.6")
+  prompt     String?
+  response   String?
+  tokens     Int      @default(0)
+  durationMs Int      @default(0)
+  status     String   @default("pending") // pending | processing | completed | failed
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  @@index([jobType])
+  @@index([status])
+}
+
+model AiSuggestion {
+  id          String   @id @default(cuid())
+  locationId  String?
+  category    String // review | post | seo | profile | performance
+  title       String
+  description String
+  priority    String   @default("medium") // low | medium | high | critical
+  status      String   @default("pending") // pending | actioned | dismissed
+  generatedAt DateTime @default(now())
+
+  @@index([status])
+  @@index([priority])
+}
+
+model AiUsage {
+  id             String   @id @default(cuid())
+  usageDate      DateTime
+  model          String   @default("glm-4.6")
+  totalRequests  Int      @default(0)
+  totalTokens    Int      @default(0)
+  estimatedCost  Float    @default(0)
+  createdAt      DateTime @default(now())
+
+  @@unique([usageDate, model])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 11. REPORTS (§42)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Report {
+  id          String   @id @default(cuid())
+  reportType  String // daily | weekly | monthly | quarterly | annual
+  locationId  String?
+  reportName  String
+  fileUrl     String?
+  generatedBy String?
+  generatedAt DateTime @default(now())
+
+  generator   User?    @relation(fields: [generatedBy], references: [id], onDelete: SetNull)
+
+  @@index([reportType])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 12. NOTIFICATIONS & LOGS (§46-§51)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String? // null = broadcast
+  type      String // review | sync | ai_alert | ranking | system | security | manual
+  title     String
+  message   String
+  severity  String   @default("info") // info | warning | critical | success
+  read      Boolean  @default(false)
+  link      String?
+  metadataJson String? // JSON
+  createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, read])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  module     String // reviews | posts | settings | sync | ai ...
+  action     String
+  entityType String?
+  entityId   String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  userId        String?
+  userName      String?
+  action        String
+  entity        String?
+  entityId      String?
+  previousValue String? // JSON
+  newValue      String? // JSON
+  ip            String?
+  status        String   @default("success")
+  createdAt     DateTime @default(now())
+
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model SyncLog {
+  id               String    @id @default(cuid())
+  module           String // reviews | posts | profile | analytics | photos
+  locationId       String?
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+  status           String    @default("running") // running | success | failed | partial
+  recordsProcessed Int       @default(0)
+  recordsInserted  Int       @default(0)
+  recordsUpdated   Int       @default(0)
+  recordsFailed    Int       @default(0)
+  errorMessage     String?
+
+  location         Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([module])
+  @@index([status])
+}
+
+model ApiLog {
+  id           String   @id @default(cuid())
+  endpoint     String
+  method       String
+  requestBodyJson String? // JSON
+  responseCode Int
+  durationMs   Int      @default(0)
+  userId       String?
+  createdAt    DateTime @default(now())
+
+  @@index([endpoint])
+  @@index([createdAt])
+}
+
+model ErrorLog {
+  id           String   @id @default(cuid())
+  module       String
+  errorCode    String?
+  errorMessage String
+  stackTrace   String?
+  payloadJson  String? // JSON
+  resolved     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([module])
+  @@index([resolved])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 13. BACKGROUND JOBS & SCHEDULE (§49-§50)
+// ────────────────────────────────────────────────────────────────────────────
+
+model BackgroundJob {
+  id           String    @id @default(cuid())
+  queueName    String // google-sync | review-sync | analytics-sync | ai-processing | notifications | reports
+  jobName      String
+  payloadJson  String? // JSON
+  status       String    @default("queued") // queued | processing | completed | failed | retrying
+  attempts     Int       @default(0)
+  startedAt    DateTime?
+  completedAt  DateTime?
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+
+  @@index([queueName])
+  @@index([status])
+}
+
+model ScheduledJob {
+  id             String    @id @default(cuid())
+  jobName        String
+  cronExpression String
+  isEnabled      Boolean   @default(true)
+  lastRun        DateTime?
+  nextRun        DateTime?
+  createdAt      DateTime  @default(now())
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 14. SECRETS & STORAGE (§52-§53)
+// ────────────────────────────────────────────────────────────────────────────
+
+model ApiToken {
+  id              String    @id @default(cuid())
+  provider        String // google | openai | gemini | smtp | supabase
+  tokenName       String
+  encryptedValue  String
+  expiresAt       DateTime?
+  status          String    @default("active") // active | expired | revoked
+  createdAt       DateTime  @default(now())
+}
+
+model StorageFile {
+  id            String   @id @default(cuid())
+  bucket        String // business-photos | post-images | reports | exports | documents | ai-cache | backups
+  objectName    String
+  originalName  String
+  mimeType      String
+  fileSize      Int      @default(0)
+  uploadedBy    String?
+  createdAt      DateTime @default(now())
+
+  @@index([bucket])
+}
+
+model Webhook {
+  id          String   @id @default(cuid())
+  provider    String // google | supabase | internal
+  eventName   String
+  payloadJson String? // JSON
+  processed   Boolean  @default(false)
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([processed])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 15. DASHBOARD & PREFERENCES (§55-§56)
+// ────────────────────────────────────────────────────────────────────────────
+
+model DashboardWidget {
+  id             String  @id @default(cuid())
+  widgetKey      String  @unique // overview | reviews | analytics | keyword_rankings | latest_posts | notifications | ai_suggestions
+  title          String
+  displayOrder   Int     @default(0)
+  isEnabled      Boolean @default(true)
+  configurationJson String? // JSON
+}
+
+model UserPreference {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  theme               String   @default("light") // light | dark
+  language            String   @default("en")
+  timezone            String   @default("Asia/Kolkata")
+  defaultDashboard    String   @default("dashboard")
+  notificationSettingsJson String? // JSON
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 16. SETTINGS (§18)
+// ────────────────────────────────────────────────────────────────────────────
+
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String // JSON
+  description String?
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+}

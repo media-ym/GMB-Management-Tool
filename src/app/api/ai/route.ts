@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
           phoneCalls: current._sum.phoneCalls ?? 0,
           directionRequests: current._sum.directionRequests ?? 0,
           newReviews: reviewsNow,
-          avgRating: Math.round((reviewsNow._avg.rating ?? loc.avgRating) * 100) / 100,
+          avgRating: Math.round((reviewsPrev._avg.rating ?? loc.avgRating) * 100) / 100,
           prevAvgRating: Math.round((prevAvgAgg._avg.rating ?? loc.avgRating) * 100) / 100,
         },
       });

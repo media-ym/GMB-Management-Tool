@@ -51,7 +51,6 @@ export async function GET(req: NextRequest) {
       where: { locationId: loc.id, date: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
       _sum: { searchViews: true, websiteClicks: true, phoneCalls: true },
     });
-    const locReviews = reviews.filter(r => r.locationId === loc.id || true); // simplified
     return {
       id: loc.id, name: loc.name, city: loc.city,
       searchViews: locAnalytics._sum.searchViews ?? 0,

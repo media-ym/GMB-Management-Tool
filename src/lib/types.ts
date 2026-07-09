@@ -66,6 +66,7 @@ export interface ApiResponse<T = unknown> {
 export interface DashboardSummary {
   totalLocations: number;
   activeLocations: number;
+  syncErrors: number;
   totalReviews: number;
   pendingReviews: number;
   avgRating: number;
@@ -78,6 +79,7 @@ export interface DashboardSummary {
   avgVisibilityScore: number;
   publishedPosts: number;
   scheduledPosts: number;
+  draftPosts: number;
 }
 
 export interface LocationWithStats {

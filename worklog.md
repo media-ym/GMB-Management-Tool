@@ -2660,3 +2660,70 @@ Stage Summary:
   * **404 normalized to success inside deleteGooglePhoto's operation**: Google's DELETE can return 404 if the photo was already removed (sync drift, manual delete on Google's side, race with another DELETE). withRetry would otherwise treat 404 as a hard failure and throw — we normalize it to `{ok:true, status:200, body:"{}"}` so the caller sees a clean success. Same pattern as the pre-existing `completeVerification` function (P1-B-GS).
   * **Local file removal is path-scoped**: DELETE only unlinks files whose URL pathname starts with `/uploads/media/`. External URLs (e.g. AI-generated images hosted elsewhere, Google-hosted URLs for synced photos) are left untouched — we never delete files we don't own.
   * **No new packages installed** — uses built-in `fetch`, `fs/promises`, `crypto.randomUUID`, and the existing `withRetry`/`sanitizeGoogleError` infrastructure from P1-B-GS.
+
+---
+Task ID: P3-FIXES
+Agent: Backend Engineer
+Task: P3 fixes — defensive no_token check, hours edge case, ErrorLog persistence, real bulk sync, drift detection
+
+Work Log:
+- Fixed getValidAccessToken() to decrypt + reject "no_token" defensively (token is decrypted BEFORE the validity check so callers always get a raw bearer token; refresh-token "no_token" also guarded against; decrypt failures mark the account "expired")
+- Fixed hours patch in updateGoogleBusinessProfile() to skip empty arrays (permanently-closed edge case — Google rejects `regularHours.periods: []` with 400); added a doc comment explaining that the route-side `!h.isClosed` filter is intentional and that the empty-array case must NOT be sent to Google
+- Added logError() helper near the top of google-service.ts (writes module/errorCode/errorMessage/payloadJson to ErrorLog, best-effort — never throws)
+- Wired logError into every sync catch block: syncLocationAnalytics (auth/lookup/fetch), syncGoogleProfiles (auth/per-location/outer), syncGoogleReviews (auth/fetch), syncLocationFull (auth/lookup/reviews/photos/business_info/attributes/special_hours/analytics/outer) — return shape unchanged, callers still get errors[] strings
+- Rewired bulk sync route (POST /api/locations/bulk action=sync) to call real syncLocationFull per location; creates a SyncLog with actual record counts (reviews+photos=inserted, hours+services+categories=updated, errors.length=failed); records real success/fail counts in the audit log; surfaces a fail-aware message ("Synced N, M failed. Errors: ..."); catches unexpected throws as a "failed" SyncLog row
+- Added getGoogleUpdated() function — fetches the Google-updated Location resource via `${GBP_API_BASE}/${locationName}:getGoogleUpdated`; 404 is normalized to JSON null inside withRetry so it doesn't throw; transient errors are swallowed so a single failed fetch can't abort the drift sweep
+- Added detectLocationDrift() function — diffs name/phone/website between DB and Google's canonical version; on drift, writes an ErrorLog (module "google.drift", errorCode "DRIFT_DETECTED") + an AuditLog (action "google.drift_detected", userName "System (drift detector)") so it shows up in both the System error panel and the per-location audit trail
+- Created /api/cron/drift-detection/route.ts — CRON_SECRET-protected GET endpoint; iterates active locations in batches of 5 (1s pause between batches to respect Google's 10-QPS quota); upserts the "drift-detection" ScheduledJob row (uses findFirst+update/create since jobName is not @unique in the schema); returns JSON envelope with checked/driftDetected/checkedAt
+- Lint: 0 errors, 0 warnings
+- Verification: curl /api/health → 200; curl /api/cron/drift-detection (no secret) → 401; dev log shows both responses, no errors
+
+Stage Summary:
+- Files modified:
+  * `src/lib/google-service.ts` — added logError() helper + getGoogleUpdated() + detectLocationDrift(); hardened getValidAccessToken() with early decryption + "no_token" guards; added empty-hours guard + doc comment in updateGoogleBusinessProfile; wired logError into 11 catch blocks across 4 sync functions (syncLocationAnalytics, syncGoogleProfiles, syncGoogleReviews, syncLocationFull). Net +180 lines.
+  * `src/app/api/locations/bulk/route.ts` — replaced fake-sync loop with real syncLocationFull calls; per-location SyncLog with actual record counts; success/fail/error tracking; OAuth-configured guard at the top. Removed unused `now` variable.
+- Files created:
+  * `src/app/api/cron/drift-detection/route.ts` — daily drift-detection cron endpoint (CRON_SECRET protected, batched, updates ScheduledJob row)
+- Pre-existing TS errors (category-resolution `primaryId = resolveCategoryId(...)` and completeVerification's 404-return-shape union widening) remain — both are in P1-B-GS code I was instructed not to refactor, both are unrelated to my changes, and neither affects lint. `bun run lint` is clean (0/0).
+- Key decisions:
+  * `getGoogleUpdated` 404 handling: normalized to `{ ok: true, status: 200, body: () => Promise.resolve("null") }` so withRetry returns JSON null cleanly — same pattern as `deleteGooglePhoto` (404 → success) but returns null instead of `{}`. Critical to use `Promise.resolve("null")` (returns Promise<string>) instead of `"null"` (returns string) so the TS union stays compatible with withRetry's expected `{ body: () => Promise<string> }` signature — the pre-existing completeVerification TS error exists precisely because it uses `body: () => "{}"` (string) and widens the union.
+  * `detectLocationDrift` only compares name/phone/website — address intentionally omitted because Google's structured address shape (addressLines[], locality, administrativeArea, postalCode, etc.) would generate noise from formatting differences, flooding the audit log with false-positive drift entries.
+  * Drift writes to BOTH ErrorLog (for monitoring/alerts) AND AuditLog (for the per-location audit trail). The ErrorLog is the primary signal; the AuditLog entry is best-effort (try/catch swallows failures).
+  * Cron route uses `findFirst + update/create` instead of `upsert` because the ScheduledJob schema does not mark `jobName` as @unique — Prisma's upsert requires a unique identifier in the where clause. The task brief's `upsert({ where: { jobName: ... } })` would throw at runtime.
+  * Bulk sync route blocks entirely when Google OAuth isn't configured (`googleServiceStatus.isConfigured === false`) — saves the user from N identical "No valid Google access token" errors and keeps the audit log clean.
+  * Bulk sync per-location try/catch logs a "failed" SyncLog even for unexpected throws (e.g., DB write failure inside syncLocationFull that escapes its internal try/catch) so the System view's sync history always reflects reality.
+
+---
+Task ID: PROD-READY
+Agent: DevOps Engineer
+Task: Hostinger production readiness — .env.example, PG schema, deployment guide, startup script, build verification
+
+Work Log:
+- Created `.env.example` documenting every env var the platform consumes: DATABASE_URL (SQLite + PostgreSQL examples), NEXTAUTH_SECRET, NEXTAUTH_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, TOKEN_ENCRYPTION_KEY, CRON_SECRET, NODE_ENV, optional SMTP_* — each with a generation hint (openssl rand …) and a pointer to where it is used.
+- Verified the PostgreSQL schema: the existing `prisma/schema.postgresql.prisma` was a 24-line stub (header only). Generated a full 944-line copy of the SQLite schema with `provider = "postgresql"`, preserving every model, relation, index and default value. Confirmed Client + ClientAuthorization models (lines 158, 179) are present. Validated with `bunx prisma validate --schema=prisma/schema.postgresql.prisma` → "The schema is valid 🚀".
+- Rewrote `DEPLOYMENT.md` as a complete 7-phase Hostinger deployment guide: Prerequisites, Phase 1 Google Cloud Console (project + APIs + OAuth consent + credentials), Phase 2 Hostinger server setup (Node 20 + Bun + PM2 + PostgreSQL + clone + .env + schema switch + db push + seed), Phase 3 Build & Start (manual + start-production.sh + PM2), Phase 4 Reverse proxy + SSL (Caddyfile with HSTS), Phase 5 Connect Google Business Profile, Phase 6 Cron jobs (drift-detection is implemented at /api/cron/drift-detection and validates x-cron-secret), Phase 7 post-deploy checklist, Security checklist, Troubleshooting (OAuth mismatch, 403, token refresh, db conn, build errors, app not starting, quota), and Maintenance (update / backup / restore / logs).
+- Created `start-production.sh` — executable (`chmod +x`) production bootstrap. Checks for `.env`, warns on missing required env vars, runs `bun install`, auto-switches to PG schema when `DATABASE_URL` starts with `postgres`, runs `db:generate` → `db:push` → seed → `bun run build`. Syntax-checked with `bash -n`.
+- Fixed `next.config.ts` — removed the invalid `eslint` key (Next.js 16 dropped support; was producing a startup warning in dev.log) and removed `typescript.ignoreBuildErrors: true` so real TS errors surface at build time.
+- Updated `tsconfig.json` `exclude` to skip SDK sample dirs (`examples`, `mini-services`, `skills`, `upload`) so pre-existing dev errors in non-app code don't block production builds.
+- Fixed 8 real TypeScript errors that the previously-suppressed build was hiding:
+  1. `src/app/api/ai/route.ts:79` — used `reviewsNow._avg.rating` on a `count()` result (number). Changed to `reviewsPrev._avg.rating` (the aggregate). Real production bug — avgRating would have been NaN.
+  2. `src/app/api/dashboard/executive/route.ts:54` — dead `locReviews` line referencing `r.locationId` on a `select`-ed review shape that doesn't include it. Removed.
+  3. `src/app/api/posts/bulk/route.ts:58` — `const created = []` inferred `never[]`; annotated `string[]`.
+  4. `src/app/api/reports/route.ts:26` — `include: { location: … }` on a model with no `location` relation. Rewrote to fetch locations in a separate query and join in JS.
+  5. `src/lib/types.ts:66` — `DashboardSummary` missing `syncErrors` and `draftPosts` fields that the dashboard API returns and `dashboard-view.tsx` consumes. Added both.
+  6. `src/components/shared/page-header.tsx:31` — `CardSection` rejected an `icon` prop passed in 11 places in `google-api-mapping-view.tsx`. Added optional `icon?: React.ComponentType<{ className?: string }>` prop and rendered it next to the title.
+  7. `src/components/views/google-integration-view.tsx:58` — `OauthState` type missing `redirectUri` field that `/api/google/status` returns and the not-configured banner displays. Added `redirectUri: string | null`.
+  8. `src/lib/ai.ts:280` — `ratingDelta.toFixed(2)` is a string but was compared with `> 0`. Split into `ratingDeltaNum` (number) for the comparison and `ratingDelta` (string) for display.
+  9. `src/lib/google-service.ts:818` — `let primaryId = cat.primaryCategoryId` inferred `string | undefined`, then assigned `string | null` from `resolveCategoryId`. Explicitly typed `string | null | undefined` and normalized initial value with `?? null`.
+  10. `src/lib/google-service.ts:967` — `completeVerification` returned a union with incompatible `body()` return types (`string` vs `Promise<string>`). Made the 404 branch `async () => "{}"` so both branches return `Promise<string>`.
+
+Verification:
+- `bun run lint` → 0 errors, 0 warnings.
+- `bun run build` → ✓ Compiled successfully in 23.2s, ✓ TypeScript clean, ✓ Generated static pages (3/3), exit code 0. Standalone bundle copied to `.next/standalone/`.
+- `bunx prisma validate --schema=prisma/schema.postgresql.prisma` → "The schema is valid 🚀".
+- Dev server auto-restarted after the next.config.ts edit; `GET /` returns 200 and `GET /api/cron/drift-detection` correctly returns 401 (CRON_SECRET unset in dev).
+
+Stage Summary:
+Files created: `.env.example`, `start-production.sh` (executable).
+Files modified: `prisma/schema.postgresql.prisma` (stub → 944-line complete schema), `DEPLOYMENT.md` (full rewrite), `next.config.ts` (removed invalid `eslint` key + `ignoreBuildErrors`), `tsconfig.json` (exclude SDK dirs), `src/app/api/ai/route.ts`, `src/app/api/dashboard/executive/route.ts`, `src/app/api/posts/bulk/route.ts`, `src/app/api/reports/route.ts`, `src/lib/types.ts`, `src/lib/ai.ts`, `src/lib/google-service.ts` (2 fixes), `src/components/shared/page-header.tsx`, `src/components/views/google-integration-view.tsx`.
+Build status: ✅ `bun run build` exits 0. Platform is production-ready for Hostinger deploy.

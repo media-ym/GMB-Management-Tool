@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { syncLocationFull, googleServiceStatus } from "@/lib/google-service";
 
 export const dynamic = "force-dynamic";
 
@@ -16,22 +17,92 @@ export async function POST(req: NextRequest) {
   const { action, locationIds } = body;
   if (!action || !Array.isArray(locationIds) || locationIds.length === 0) return fail("action and locationIds[] required");
 
-  const now = new Date();
-
   if (action === "sync") {
     if (!can(user.role, "system.sync")) return forbidden();
-    for (const id of locationIds) {
-      await db.location.update({ where: { id }, data: { syncStatus: "synced", lastSyncedAt: now } });
-      await db.syncLog.create({
-        data: {
-          module: "full", locationId: id, startedAt: now,
-          completedAt: new Date(now.getTime() + 3000), status: "success",
-          recordsProcessed: 50, recordsInserted: 2, recordsUpdated: 15, recordsFailed: 0,
-        },
-      });
+
+    // Block the action entirely if Google OAuth isn't configured — otherwise
+    // every syncLocationFull call would fail at the auth step and burn the
+    // user's time + the audit log with identical errors.
+    if (!googleServiceStatus.isConfigured) {
+      return fail("Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file.", 400);
     }
-    await logAudit({ userId: user.id, userName: user.name, action: "bulk.sync", entity: "location", newValue: { locationIds, count: locationIds.length }, ip: req.headers.get("x-forwarded-for") ?? undefined });
-    return ok({ synced: locationIds.length }, `Synced ${locationIds.length} locations`);
+
+    let successCount = 0;
+    let failCount = 0;
+    const errors: string[] = [];
+
+    for (const id of locationIds) {
+      const syncStart = new Date();
+      try {
+        const result = await syncLocationFull(id);
+
+        // Aggregate record counts across all sync sub-modules so the SyncLog
+        // reflects actual work done (not fake placeholder numbers).
+        const totalRecords =
+          result.synced.reviews +
+          result.synced.photos +
+          result.synced.hours +
+          result.synced.services +
+          result.synced.categories;
+        const recordsInserted = result.synced.reviews + result.synced.photos;
+        const recordsUpdated = result.synced.hours + result.synced.services + result.synced.categories;
+
+        await db.syncLog.create({
+          data: {
+            module: "full",
+            locationId: id,
+            startedAt: syncStart,
+            completedAt: new Date(),
+            status: result.success ? "success" : "partial",
+            recordsProcessed: totalRecords,
+            recordsInserted,
+            recordsUpdated,
+            recordsFailed: result.errors.length,
+            errorMessage: result.errors.length > 0 ? result.errors.join("; ").slice(0, 2000) : null,
+          },
+        });
+
+        if (result.success) {
+          successCount++;
+        } else {
+          failCount++;
+          errors.push(`${id}: ${result.errors.join("; ")}`);
+        }
+      } catch (e: any) {
+        // Unexpected error outside syncLocationFull's internal try/catch —
+        // log a failed SyncLog so the System view surfaces it.
+        failCount++;
+        errors.push(`${id}: ${e.message}`);
+        await db.syncLog.create({
+          data: {
+            module: "full",
+            locationId: id,
+            startedAt: syncStart,
+            completedAt: new Date(),
+            status: "failed",
+            recordsProcessed: 0,
+            recordsInserted: 0,
+            recordsUpdated: 0,
+            recordsFailed: 1,
+            errorMessage: (e?.message ?? String(e)).slice(0, 2000),
+          },
+        });
+      }
+    }
+
+    await logAudit({
+      userId: user.id,
+      userName: user.name,
+      action: "bulk.sync",
+      entity: "location",
+      newValue: { locationIds, successCount, failCount, errors: errors.slice(0, 5) },
+      ip: req.headers.get("x-forwarded-for") ?? undefined,
+    });
+
+    const message = failCount === 0
+      ? `Synced ${successCount} location(s) from Google`
+      : `Synced ${successCount}, ${failCount} failed. Errors: ${errors.slice(0, 3).join("; ")}`;
+    return ok({ synced: successCount, failed: failCount, errors: errors.slice(0, 10) }, message);
   }
 
   if (action === "archive") {

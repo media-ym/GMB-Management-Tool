@@ -2,13 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  // Production: ignore build errors to allow deployment even with minor TS issues
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
+  // Next.js 16 no longer accepts the `eslint` key in next.config — `bun run lint`
+  // is the canonical linter (see package.json). TypeScript build errors are
+  // fixed at source rather than suppressed.
   reactStrictMode: false,
   // Allow images from Google and placeholder services
   images: {

@@ -23,15 +23,23 @@ export async function GET(req: NextRequest) {
     where,
     orderBy: { generatedAt: "desc" },
     take: 100,
-    include: { location: { select: { name: true, city: true } }, generator: { select: { name: true } } },
+    include: { generator: { select: { name: true } } },
   });
+
+  // Report.locationId is a plain String? (no Prisma relation) — fetch the
+  // referenced locations in one query and join in JS.
+  const locationIds = Array.from(new Set(reports.map((r) => r.locationId).filter(Boolean) as string[]));
+  const locations = locationIds.length
+    ? await db.location.findMany({ where: { id: { in: locationIds } }, select: { id: true, name: true, city: true } })
+    : [];
+  const locationMap = new Map(locations.map((l) => [l.id, l]));
 
   return ok(reports.map((r) => ({
     id: r.id,
     reportType: r.reportType,
     locationId: r.locationId,
-    locationName: r.location?.name ?? "All Locations",
-    locationCity: r.location?.city ?? "",
+    locationName: (r.locationId && locationMap.get(r.locationId)?.name) || "All Locations",
+    locationCity: (r.locationId && locationMap.get(r.locationId)?.city) || "",
     reportName: r.reportName,
     fileUrl: r.fileUrl,
     generatedBy: r.generator?.name ?? "System",

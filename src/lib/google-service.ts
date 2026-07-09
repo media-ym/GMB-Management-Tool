@@ -12,6 +12,31 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/google/callback`;
 export const IS_CONFIGURED = !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 
+// ─── Error Persistence ────────────────────────────────────────────────────
+// Persist sync errors to the ErrorLog table for audit + monitoring. The sync
+// engine continues to return `errors[]` to its callers (callers depend on the
+// existing return shape), but ALSO writes each error to ErrorLog so it shows
+// up in the System view's error log panel and can trigger alerts.
+//
+// Failures inside logError itself are swallowed (best-effort) — we must never
+// let audit logging break a sync flow.
+async function logError(module: string, errorCode: string | null, message: string, payload?: unknown): Promise<void> {
+  try {
+    await db.errorLog.create({
+      data: {
+        module,
+        errorCode,
+        errorMessage: message.slice(0, 2000),
+        stackTrace: null,
+        payloadJson: payload ? JSON.stringify(payload).slice(0, 8000) : null,
+        resolved: false,
+      },
+    });
+  } catch (e) {
+    console.error("Failed to log error to ErrorLog:", e);
+  }
+}
+
 const GBP_SCOPES = [
   "https://www.googleapis.com/auth/business.manage",
   "openid",
@@ -101,23 +126,36 @@ export async function getValidAccessToken(): Promise<string | null> {
   const account = await db.googleAccount.findFirst();
   if (!account) return null;
 
-  // Defensive: if the stored token is the legacy "no_token" placeholder, treat as no token.
-  if (account.accessToken === "no_token") return null;
+  // Defensive: reject legacy "no_token" placeholder. This guard is in addition
+  // to the deletion of the no_token fake-account path in P0-FIX-1 — any rows
+  // that pre-date the cleanup (or were created by older seed scripts) will
+  // short-circuit here instead of producing `Bearer no_token` 401s downstream.
+  if (account.accessToken === "no_token") {
+    return null;
+  }
+
+  // Decrypt the stored access token (no-op if not encrypted / legacy plaintext).
+  // We must ALWAYS decrypt before returning so callers receive a raw bearer
+  // token, not the encrypted blob (which would produce `Bearer enc:...` and
+  // fail with 401 on Google's side).
+  const decryptedAccess = decryptToken(account.accessToken);
+  if (!decryptedAccess) {
+    // Decryption failed — mark expired so the UI surfaces a reconnect prompt.
+    await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
+    return null;
+  }
 
   // Check if token is still valid (5 min buffer)
   if (account.tokenExpiry && new Date(account.tokenExpiry) > new Date(Date.now() + 5 * 60 * 1000)) {
-    const decrypted = decryptToken(account.accessToken);
-    if (!decrypted) {
-      await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
-      return null;
-    }
-    return decrypted;
+    return decryptedAccess;
   }
 
   // Try to refresh — decrypt the refresh token first
   if (account.refreshToken) {
     const decryptedRefresh = decryptToken(account.refreshToken);
-    if (!decryptedRefresh) {
+    // Defensive: a legacy "no_token" refresh token can never produce a fresh
+    // access token — bail out and mark the account as expired.
+    if (!decryptedRefresh || decryptedRefresh === "no_token") {
       await db.googleAccount.update({ where: { id: account.id }, data: { status: "expired" } });
       return null;
     }
@@ -201,6 +239,111 @@ export async function getBusinessProfile(accessToken: string, locationName: stri
     }).then(async (r) => ({ ok: r.ok, status: r.status, body: () => r.text() }))
   );
   return data;
+}
+
+/**
+ * Fetch the Google-updated version of a location. Google may auto-update
+ * listings (e.g., user-submitted address changes, Google's own data-quality
+ * edits). This endpoint is the only way to detect drift between our DB and
+ * Google's canonical version.
+ *
+ * Returns the Google-updated Location resource, or `null` when:
+ *   - Google responds with 404 (no pending Google updates — the location is
+ *     in sync with our DB, which is the common case), OR
+ *   - any other transient error occurs (we treat the absence of drift info
+ *     as "no drift" rather than failing the entire drift-detection sweep).
+ *
+ * `locationName` is the Google-side location name like
+ * "accounts/{aid}/locations/{lid}".
+ */
+export async function getGoogleUpdated(accessToken: string, locationName: string): Promise<any | null> {
+  try {
+    const data = await withRetry<any>(() =>
+      fetch(`${GBP_API_BASE}/${locationName}:getGoogleUpdated`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).then(async (r) => {
+        // 404 is the expected "no drift" response — Google only returns a body
+        // when there ARE pending updates. Normalize to a JSON null so withRetry
+        // returns `null` cleanly to the caller.
+        if (r.status === 404) return { ok: true, status: 200, body: () => Promise.resolve("null") };
+        return { ok: r.ok, status: r.status, body: () => r.text() };
+      })
+    );
+    // withRetry parses "null" as JSON null — pass it through.
+    return data ?? null;
+  } catch {
+    // Don't propagate — a transient fetch failure on one location must not
+    // abort the entire drift-detection sweep.
+    return null;
+  }
+}
+
+/**
+ * Check a single location for drift between our DB and Google's canonical
+ * (Google-updated) version. Compares the high-churn fields: name, phone,
+ * website. (Address comparison is intentionally omitted — Google's address
+ * shape is structured and noisy to diff; the audit log would fill up with
+ * false positives from formatting differences.)
+ *
+ * When drift is detected:
+ *   - Writes an ErrorLog row (module "google.drift", errorCode "DRIFT_DETECTED")
+ *     so it appears in the System view's error panel and can trigger alerts.
+ *   - Writes an AuditLog row (action "google.drift_detected") attributed to
+ *     "System (drift detector)" so it shows up alongside other location
+ *     mutations in the per-location audit trail.
+ *
+ * @returns `{ drift: true, differences: [...] }` if drift detected, otherwise
+ *          `{ drift: false, differences: [] }`.
+ */
+export async function detectLocationDrift(locationId: string): Promise<{ drift: boolean; differences: string[] }> {
+  const accessToken = await getValidAccessToken();
+  if (!accessToken) return { drift: false, differences: [] };
+
+  const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
+  if (!gbp) return { drift: false, differences: [] };
+
+  const googleUpdated = await getGoogleUpdated(accessToken, gbp.googleLocationId);
+  if (!googleUpdated) return { drift: false, differences: [] };
+
+  const location = await db.location.findUnique({ where: { id: locationId } });
+  if (!location) return { drift: false, differences: [] };
+
+  const differences: string[] = [];
+  if (googleUpdated.title && googleUpdated.title !== location.name) {
+    differences.push(`name: DB="${location.name}" vs Google="${googleUpdated.title}"`);
+  }
+  if (googleUpdated.phoneNumbers?.primaryPhone && googleUpdated.phoneNumbers.primaryPhone !== location.phone) {
+    differences.push(`phone: DB="${location.phone}" vs Google="${googleUpdated.phoneNumbers.primaryPhone}"`);
+  }
+  if (googleUpdated.websiteUri && googleUpdated.websiteUri !== location.website) {
+    differences.push(`website: DB="${location.website}" vs Google="${googleUpdated.websiteUri}"`);
+  }
+
+  if (differences.length > 0) {
+    await logError(
+      "google.drift",
+      "DRIFT_DETECTED",
+      `Location ${location.name} (${locationId}) has drift: ${differences.join("; ")}`,
+      { locationId, differences },
+    );
+    try {
+      await db.auditLog.create({
+        data: {
+          action: "google.drift_detected",
+          entity: "location",
+          entityId: locationId,
+          userName: "System (drift detector)",
+          status: "success",
+          newValue: JSON.stringify({ differences }),
+        },
+      });
+    } catch {
+      // AuditLog write is best-effort — the ErrorLog entry above is the
+      // primary signal. Don't let an audit-write failure abort the sweep.
+    }
+  }
+
+  return { drift: differences.length > 0, differences };
 }
 
 /**
@@ -551,10 +694,16 @@ export async function getFullPerformanceMetrics(
 export async function syncLocationAnalytics(locationId: string, daysBack: number = 30): Promise<{ synced: number; errors: string[] }> {
   const errors: string[] = [];
   const accessToken = await getValidAccessToken();
-  if (!accessToken) return { synced: 0, errors: ["No valid Google access token"] };
+  if (!accessToken) {
+    await logError("google.sync.analytics", null, "No valid Google access token", { locationId, step: "auth" });
+    return { synced: 0, errors: ["No valid Google access token"] };
+  }
 
   const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
-  if (!gbp) return { synced: 0, errors: ["No Google Business Profile linked"] };
+  if (!gbp) {
+    await logError("google.sync.analytics", null, "No Google Business Profile linked", { locationId, step: "lookup" });
+    return { synced: 0, errors: ["No Google Business Profile linked"] };
+  }
 
   try {
     const dailyMetrics = await getFullPerformanceMetrics(accessToken, gbp.googleLocationId, daysBack);
@@ -590,6 +739,7 @@ export async function syncLocationAnalytics(locationId: string, daysBack: number
 
     return { synced, errors };
   } catch (e: any) {
+    await logError("google.sync.analytics", null, e.message, { locationId, step: "fetch", daysBack });
     return { synced: 0, errors: [e.message] };
   }
 }
@@ -636,7 +786,21 @@ export async function updateGoogleBusinessProfile(
     body.profile = { ...(body.profile || {}), appointmentUrl: updates.appointmentUrl };
     fieldMask.push("profile.appointmentUrl");
   }
-  if (updates.hours?.length > 0) {
+  // Hours — Google's `regularHours.periods` only lists OPEN periods; a day with
+  // no entry is implicitly closed. Callers that want to mark a day as closed
+  // should simply omit it from the array (the route handlers in
+  // /api/locations/[id]/route.ts already filter out `isClosed=true` rows before
+  // calling this function — that filtering is correct and intentional).
+  //
+  // Edge case: if ALL 7 days are `isClosed=true` (business is permanently
+  // closed), the filtered `hours` array will be EMPTY. We must NOT push an
+  // empty `regularHours.periods` to Google — Google rejects `periods: []` with
+  // a 400 ("periods must not be empty"). Skipping the field entirely leaves
+  // Google's existing hours untouched, which is the safest behavior for a
+  // permanently-closed business (Google recommends setting `openInfo.openNow`
+  // and `openInfo.status` instead of clearing hours for permanently-closed
+  // locations).
+  if (updates.hours && updates.hours.length > 0) {
     body.regularHours = {
       periods: updates.hours.map(h => ({
         openDay: h.dayOfWeek,
@@ -651,7 +815,7 @@ export async function updateGoogleBusinessProfile(
     const cat = updates.categories;
     // Resolve primary category — prefer an explicit gcid, else resolve the
     // display name via Google's category search.
-    let primaryId = cat.primaryCategoryId;
+    let primaryId: string | null | undefined = cat.primaryCategoryId ?? null;
     if (!primaryId && cat.primaryDisplayName) {
       primaryId = await resolveCategoryId(accessToken, cat.primaryDisplayName);
     }
@@ -800,7 +964,7 @@ export async function completeVerification(
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ pin }),
     }).then(async (r) => {
-      if (r.status === 404) return { ok: true, status: 200, body: () => "{}" };
+      if (r.status === 404) return { ok: true, status: 200, body: async () => "{}" };
       return { ok: r.ok, status: r.status, body: () => r.text() };
     }),
   );
@@ -813,6 +977,7 @@ export async function syncGoogleProfiles(): Promise<{ synced: number; errors: st
   const errors: string[] = [];
   const accessToken = await getValidAccessToken();
   if (!accessToken) {
+    await logError("google.sync.profiles", null, "No valid Google access token. Please reconnect Google OAuth.", { step: "auth" });
     return { synced: 0, errors: ["No valid Google access token. Please reconnect Google OAuth."] };
   }
 
@@ -848,12 +1013,14 @@ export async function syncGoogleProfiles(): Promise<{ synced: number; errors: st
           synced++;
         } catch (e: any) {
           errors.push(`Location ${loc.name}: ${e.message}`);
+          await logError("google.sync.profiles", null, e.message, { step: "per_location", googleLocationId: loc.name, accountName: account.name });
         }
       }
     }
 
     return { synced, errors };
   } catch (e: any) {
+    await logError("google.sync.profiles", null, e.message, { step: "outer" });
     return { synced: 0, errors: [e.message] };
   }
 }
@@ -861,7 +1028,10 @@ export async function syncGoogleProfiles(): Promise<{ synced: number; errors: st
 export async function syncGoogleReviews(locationId: string, googleLocationId: string): Promise<{ synced: number; errors: string[] }> {
   const errors: string[] = [];
   const accessToken = await getValidAccessToken();
-  if (!accessToken) return { synced: 0, errors: ["No valid access token"] };
+  if (!accessToken) {
+    await logError("google.sync.reviews", null, "No valid access token", { locationId, googleLocationId, step: "auth" });
+    return { synced: 0, errors: ["No valid access token"] };
+  }
 
   try {
     const reviews = await listReviews(accessToken, googleLocationId);
@@ -894,6 +1064,7 @@ export async function syncGoogleReviews(locationId: string, googleLocationId: st
 
     return { synced, errors };
   } catch (e: any) {
+    await logError("google.sync.reviews", null, e.message, { locationId, googleLocationId, step: "fetch" });
     return { synced: 0, errors: [e.message] };
   }
 }
@@ -910,12 +1081,14 @@ export async function syncLocationFull(locationId: string): Promise<{
   const accessToken = await getValidAccessToken();
 
   if (!accessToken) {
+    await logError("google.sync.full", null, "No valid Google access token. Please reconnect Google OAuth.", { locationId, step: "auth" });
     return { success: false, synced: result, errors: ["No valid Google access token. Please reconnect Google OAuth."] };
   }
 
   // Get the GoogleBusinessProfile linked to this location
   const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
   if (!gbp) {
+    await logError("google.sync.full", null, "No Google Business Profile linked to this location. Import this location from Google first.", { locationId, step: "lookup" });
     return { success: false, synced: result, errors: ["No Google Business Profile linked to this location. Import this location from Google first."] };
   }
 
@@ -1044,6 +1217,7 @@ export async function syncLocationFull(locationId: string): Promise<{
       }
     } catch (e: any) {
       errors.push(`Reviews sync: ${e.message}`);
+      await logError("google.sync.full", null, e.message, { locationId, step: "reviews" });
     }
 
     // ─── 6. Sync Photos (metadata only — URLs from Google) ──────────────
@@ -1071,6 +1245,7 @@ export async function syncLocationFull(locationId: string): Promise<{
       }
     } catch (e: any) {
       errors.push(`Photos sync: ${e.message}`);
+      await logError("google.sync.full", null, e.message, { locationId, step: "photos" });
     }
 
     // ─── 7. Sync Business Information (description, website, appointment URL) ──
@@ -1094,6 +1269,7 @@ export async function syncLocationFull(locationId: string): Promise<{
       }
     } catch (e: any) {
       errors.push(`Business info sync: ${e.message}`);
+      await logError("google.sync.full", null, e.message, { locationId, step: "business_info" });
     }
 
     // ─── 8. Sync Attributes (wheelchair accessible, appointments, etc.) ────
@@ -1112,6 +1288,7 @@ export async function syncLocationFull(locationId: string): Promise<{
       }
     } catch (e: any) {
       errors.push(`Attributes sync: ${e.message}`);
+      await logError("google.sync.full", null, e.message, { locationId, step: "attributes" });
     }
 
     // ─── 9. Sync Special Hours (holidays) ─────────────────────────────────
@@ -1133,6 +1310,7 @@ export async function syncLocationFull(locationId: string): Promise<{
       }
     } catch (e: any) {
       errors.push(`Special hours sync: ${e.message}`);
+      await logError("google.sync.full", null, e.message, { locationId, step: "special_hours" });
     }
 
     // ─── 10. Sync Analytics (real Google Business Performance API) ────────
@@ -1140,13 +1318,16 @@ export async function syncLocationFull(locationId: string): Promise<{
       const analyticsResult = await syncLocationAnalytics(locationId, 30);
       if (analyticsResult.errors.length > 0) {
         errors.push(`Analytics sync: ${analyticsResult.errors.join("; ")}`);
+        await logError("google.sync.full", null, analyticsResult.errors.join("; "), { locationId, step: "analytics" });
       }
     } catch (e: any) {
       errors.push(`Analytics sync: ${e.message}`);
+      await logError("google.sync.full", null, e.message, { locationId, step: "analytics" });
     }
 
     return { success: true, synced: result, errors };
   } catch (e: any) {
+    await logError("google.sync.full", null, e.message, { locationId, step: "outer" });
     return { success: false, synced: result, errors: [e.message] };
   }
 }

@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     const post = body.post;
     const scoped = scopeLocationIds(user);
     const validLocationIds = scoped ? locationIds.filter((id: string) => scoped.includes(id)) : locationIds;
-    const created = [];
+    const created: string[] = [];
     for (const locId of validLocationIds) {
       const p = await db.post.create({
         data: {
