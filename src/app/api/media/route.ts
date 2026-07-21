@@ -7,9 +7,13 @@ import {
   uploadGooglePhoto,
   getValidAccessToken,
   googleServiceStatus,
-  type GooglePhotoCategory,
+  resolveV4LocationName,
 } from "@/lib/google-service";
+import { normalizePhotoCategory } from "@/lib/media-categories";
 import { requireClientAuth } from "@/lib/client-auth";
+import { createBusinessPhotoRecord } from "@/lib/business-photo-db";
+import { buildLocationIdFilter, parseLocationIdsParam } from "@/lib/location-filter";
+import { getRequestOrigin, normalizeMediaFileUrl } from "@/lib/media-url";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
@@ -24,9 +28,10 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const locationId = url.searchParams.get("locationId") || undefined;
-  const scoped = scopeLocationIds(user, locationId);
-  const where: any = {};
-  if (scoped) where.locationId = { in: scoped };
+  const locationIds = parseLocationIdsParam(url.searchParams.get("locationIds"));
+  const where: Record<string, unknown> = {
+    ...buildLocationIdFilter(user, { locationId, locationIds }),
+  };
 
   const media = await db.mediaLibrary.findMany({
     where,
@@ -35,6 +40,8 @@ export async function GET(req: NextRequest) {
     include: { location: { select: { name: true, city: true } } },
   });
 
+  const origin = getRequestOrigin(req);
+
   return ok(media.map((m) => ({
     id: m.id,
     locationId: m.locationId,
@@ -42,7 +49,7 @@ export async function GET(req: NextRequest) {
     locationCity: m.location?.city ?? "",
     fileName: m.fileName,
     bucket: m.bucket,
-    fileUrl: m.fileUrl,
+    fileUrl: normalizeMediaFileUrl(m.fileUrl, origin),
     mimeType: m.mimeType,
     fileSize: m.fileSize,
     aiGenerated: m.aiGenerated,
@@ -53,7 +60,10 @@ export async function GET(req: NextRequest) {
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 const UPLOAD_DIR = join(process.cwd(), "public", "uploads", "media");
-const PUBLIC_BASE = (process.env.NEXTAUTH_URL || "http://localhost:3000").replace(/\/$/, "");
+
+function publicBaseFromRequest(req: NextRequest): string {
+  return getRequestOrigin(req);
+}
 
 const ALLOWED_MIME = new Set([
   "image/jpeg",
@@ -62,11 +72,6 @@ const ALLOWED_MIME = new Set([
   "image/gif",
 ]);
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10MB — Google's photo limit
-
-const VALID_CATEGORIES = new Set<GooglePhotoCategory>([
-  "COVER", "PROFILE", "INTERIOR", "EXTERIOR", "PRODUCT", "TEAM",
-  "FOOD_AND_DRINK", "MENU", "AT_WORK", "COMMON_AREA", "ROOMS", "LANDSCAPE",
-]);
 
 function extForMime(mime: string): string {
   switch (mime) {
@@ -124,9 +129,7 @@ export async function POST(req: NextRequest) {
 
   const description = formData.get("description") ? String(formData.get("description")) : undefined;
   const rawCategory = formData.get("category") ? String(formData.get("category")) : undefined;
-  const category: GooglePhotoCategory | undefined = rawCategory && VALID_CATEGORIES.has(rawCategory as GooglePhotoCategory)
-    ? (rawCategory as GooglePhotoCategory)
-    : undefined;
+  const category = normalizePhotoCategory(rawCategory);
   const publishToGoogle = String(formData.get("publishToGoogle") || "false").toLowerCase() === "true";
 
   // ─── 1. Persist file to local storage ─────────────────────────────────
@@ -143,7 +146,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Public URL — Google must be able to fetch this when publishToGoogle=true.
-  const fileUrl = `${PUBLIC_BASE}/uploads/media/${fileName}`;
+  const fileUrl = `${publicBaseFromRequest(req)}/uploads/media/${fileName}`;
 
   // ─── 2. Create MediaLibrary record (always) ──────────────────────────
   const media = await db.mediaLibrary.create({
@@ -173,19 +176,15 @@ export async function POST(req: NextRequest) {
       // we publish anything to the client's Google Business Profile.
       const authCheck = await requireClientAuth(locationId, "media.upload");
       if (!authCheck.ok) {
-        // Authorization revoked — surface 403 but the local upload already
-        // succeeded; do NOT silently keep going. The user sees the 403 and
-        // knows the photo was not pushed to Google.
+        googleError = "Client authorization required for Google publish — photo saved locally only.";
         await logAudit({
           userId: user.id, userName: user.name,
           action: "media.upload.google_blocked",
           entity: "media", entityId: media.id,
-          newValue: { locationId, fileName, reason: "client authorization missing media.upload scope" },
+          newValue: { locationId, fileName, reason: googleError },
           ip: req.headers.get("x-forwarded-for") ?? undefined,
         });
-        return authCheck.response;
-      }
-
+      } else {
       const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
       if (!gbp) {
         googleError = "No Google Business Profile linked to this location — photo saved locally only.";
@@ -195,7 +194,8 @@ export async function POST(req: NextRequest) {
           googleError = "Google access token unavailable — photo saved locally only. Please reconnect Google OAuth.";
         } else {
           try {
-            const result = await uploadGooglePhoto(accessToken, gbp.googleLocationId, {
+            const v4LocationName = await resolveV4LocationName(accessToken, gbp.googleLocationId);
+            const result = await uploadGooglePhoto(accessToken, v4LocationName, {
               sourceUrl: fileUrl,
               description,
               category,
@@ -203,37 +203,34 @@ export async function POST(req: NextRequest) {
             googlePhotoId = result.name;
             googleUrl = result.googleUrl ?? null;
             googleSynced = true;
-
-            // Mirror the published photo into BusinessPhoto so it shows up in
-            // location.photos alongside Google-synced photos. Use source="google"
-            // so the UI can distinguish "published to Google" photos from
-            // local-only uploads.
-            await db.businessPhoto.create({
-              data: {
-                locationId,
-                googlePhotoId,
-                imageUrl: googleUrl || fileUrl,
-                thumbnailUrl: null,
-                uploadedBy: user.id,
-                source: "google",
-                status: "active",
-              },
-            });
           } catch (e: any) {
             googleError = e.message || "Unknown Google upload error";
             await logAudit({
               userId: user.id, userName: user.name,
               action: "media.upload.google_failed",
               entity: "media", entityId: media.id,
-              newValue: { locationId, fileName, error: googleError },
+              newValue: { locationId, fileName, category: category ?? null, error: googleError },
               ip: req.headers.get("x-forwarded-for") ?? undefined,
               status: "failed",
             });
           }
         }
       }
+      }
     }
   }
+
+  // Mirror into BusinessPhoto so content dashboard + location photos stay in sync.
+  await createBusinessPhotoRecord({
+    locationId,
+    googlePhotoId,
+    imageUrl: googleUrl || fileUrl,
+    thumbnailUrl: null,
+    category: category ?? null,
+    uploadedBy: user.id,
+    source: googleSynced ? "google" : "manual",
+    status: "active",
+  });
 
   await logAudit({
     userId: user.id, userName: user.name,
@@ -241,7 +238,7 @@ export async function POST(req: NextRequest) {
     entity: "media", entityId: media.id,
     newValue: {
       locationId, fileName: media.fileName, fileUrl,
-      publishToGoogle, googlePhotoId, googleError,
+      publishToGoogle, googlePhotoId, googleError, category: category ?? null,
     },
     ip: req.headers.get("x-forwarded-for") ?? undefined,
   });

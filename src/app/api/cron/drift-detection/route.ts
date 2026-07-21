@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
+import { assertCronAuthorized } from "@/lib/cron-auth";
 import { detectLocationDrift } from "@/lib/google-service";
 import { ok } from "@/lib/api-response";
 
@@ -25,14 +26,8 @@ export const dynamic = "force-dynamic";
 // until the operator sets the secret).
 
 export async function GET(req: NextRequest) {
-  const cronSecret = req.headers.get("x-cron-secret");
-  const expected = process.env.CRON_SECRET;
-  if (!expected || cronSecret !== expected) {
-    return new Response(
-      JSON.stringify({ success: false, message: "Unauthorized" }),
-      { status: 401, headers: { "Content-Type": "application/json" } },
-    );
-  }
+  const denied = assertCronAuthorized(req);
+  if (denied) return denied;
 
   const locations = await db.location.findMany({
     where: { status: "active" },

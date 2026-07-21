@@ -44,48 +44,52 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   MyFNG Local AI Manager — Ceres Reference Match
-   Solid blue top bar, blue hero section, light gray bg, white cards, 12px radius.
+   MyFNG Local AI Manager — Brand Blue Theme
+   Royal blue (#0047AB) + cyan accent (#0096FF) from MyFNG logo.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --radius: 0.75rem;                             /* 12px — matches reference */
-  --background: oklch(0.97 0.003 240);           /* #F8FAFC light gray */
-  --foreground: oklch(0.27 0.03 255);            /* #1E293B dark slate */
-  --card: oklch(1 0 0);                          /* #FFFFFF white */
-  --card-foreground: oklch(0.27 0.03 255);
+  --radius: 0.75rem;
+  --background: oklch(0.97 0.012 250);           /* soft blue-gray */
+  --foreground: oklch(0.25 0.06 260);            /* dark navy text */
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.25 0.06 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.27 0.03 255);
-  --primary: oklch(0.55 0.2 265);                /* #2563EB blue */
+  --popover-foreground: oklch(0.25 0.06 260);
+  --primary: oklch(0.42 0.18 260);               /* #0047AB royal blue */
   --primary-foreground: oklch(0.99 0.01 260);
-  --secondary: oklch(0.95 0.005 240);            /* #E2E8F0 */
-  --secondary-foreground: oklch(0.4 0.03 255);   /* #475569 */
-  --muted: oklch(0.95 0.005 240);
-  --muted-foreground: oklch(0.55 0.02 255);      /* #64748B */
-  --accent: oklch(0.93 0.008 265);
-  --accent-foreground: oklch(0.4 0.06 265);
-  --destructive: oklch(0.6 0.22 25);             /* #EF4444 */
-  --border: oklch(0.91 0.005 240);               /* #E2E8F0 */
-  --input: oklch(0.93 0.005 240);
-  --ring: oklch(0.55 0.2 265);
-  --chart-1: oklch(0.58 0.2 265);                /* #3B82F6 blue */
-  --chart-2: oklch(0.65 0.16 150);               /* #10B981 green */
-  --chart-3: oklch(0.7 0.18 55);                 /* #F59E0B amber */
-  --chart-4: oklch(0.58 0.22 340);               /* #EF4444 rose */
-  --chart-5: oklch(0.55 0.2 290);                /* #8B5CF6 purple */
+  --secondary: oklch(0.94 0.02 250);
+  --secondary-foreground: oklch(0.38 0.06 260);
+  --muted: oklch(0.94 0.015 250);
+  --muted-foreground: oklch(0.52 0.04 260);
+  --accent: oklch(0.92 0.04 240);                /* light cyan tint */
+  --accent-foreground: oklch(0.38 0.12 250);
+  --destructive: oklch(0.6 0.22 25);
+  --border: oklch(0.9 0.02 250);
+  --input: oklch(0.92 0.02 250);
+  --ring: oklch(0.62 0.16 240);                  /* #0096FF cyan ring */
+  --chart-1: oklch(0.42 0.18 260);               /* royal blue */
+  --chart-2: oklch(0.62 0.16 240);               /* cyan blue */
+  --chart-3: oklch(0.55 0.14 280);               /* indigo */
+  --chart-4: oklch(0.7 0.18 55);                 /* amber */
+  --chart-5: oklch(0.58 0.22 340);               /* rose */
   --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.27 0.03 255);
-  --sidebar-primary: oklch(0.55 0.2 265);
+  --sidebar-foreground: oklch(0.25 0.06 260);
+  --sidebar-primary: oklch(0.42 0.18 260);
   --sidebar-primary-foreground: oklch(0.99 0.01 260);
-  --sidebar-accent: oklch(0.95 0.005 240);
-  --sidebar-accent-foreground: oklch(0.4 0.03 255);
-  --sidebar-border: oklch(0.91 0.005 240);
-  --sidebar-ring: oklch(0.55 0.2 265);
-  --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
-  --card-shadow-hover: 0 4px 12px 0 rgb(0 0 0 / 0.1);
-  --card-shadow-lg: 0 10px 30px 0 rgb(0 0 0 / 0.1);
-  /* Solid blue top bar + blue hero gradient */
-  --topbar-bg: #2563EB;
-  --hero-gradient: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  --sidebar-accent: oklch(0.94 0.02 250);
+  --sidebar-accent-foreground: oklch(0.38 0.06 260);
+  --sidebar-border: oklch(0.9 0.02 250);
+  --sidebar-ring: oklch(0.62 0.16 240);
+  --card-shadow: 0 1px 3px 0 rgb(0 71 171 / 0.08);
+  --card-shadow-hover: 0 4px 12px 0 rgb(0 71 171 / 0.12);
+  --card-shadow-lg: 0 10px 30px 0 rgb(0 71 171 / 0.14);
+  --brand-royal: #0047AB;
+  --brand-cyan: #0096FF;
+  --topbar-bg: #ffffff;
+  --topbar-border: oklch(0.9 0.02 250);
+  --topbar-nav: #0047AB;
+  --topbar-nav-muted: color-mix(in srgb, #0047AB 55%, #64748b);
+  --hero-gradient: linear-gradient(135deg, #0047AB 0%, #0096FF 100%);
 }
 
 .dark {
@@ -95,36 +99,41 @@
   --card-foreground: oklch(0.96 0.005 260);
   --popover: oklch(0.19 0.012 260);
   --popover-foreground: oklch(0.96 0.005 260);
-  --primary: oklch(0.65 0.18 265);
-  --primary-foreground: oklch(0.15 0.01 260);
-  --secondary: oklch(0.25 0.01 260);
+  --primary: oklch(0.62 0.16 240);
+  --primary-foreground: oklch(0.12 0.04 260);
+  --secondary: oklch(0.22 0.04 260);
   --secondary-foreground: oklch(0.96 0.005 260);
-  --muted: oklch(0.25 0.01 260);
-  --muted-foreground: oklch(0.68 0.01 260);
-  --accent: oklch(0.3 0.04 265);
+  --muted: oklch(0.22 0.04 260);
+  --muted-foreground: oklch(0.68 0.02 250);
+  --accent: oklch(0.28 0.06 260);
   --accent-foreground: oklch(0.95 0.01 260);
   --destructive: oklch(0.7 0.19 22);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.65 0.18 265);
-  --chart-1: oklch(0.65 0.18 265);
-  --chart-2: oklch(0.65 0.16 150);
+  --ring: oklch(0.62 0.16 240);
+  --chart-1: oklch(0.62 0.16 240);
+  --chart-2: oklch(0.52 0.14 260);
   --chart-3: oklch(0.7 0.18 55);
   --chart-4: oklch(0.7 0.2 340);
   --chart-5: oklch(0.6 0.2 290);
-  --sidebar: oklch(0.19 0.012 260);
+  --sidebar: oklch(0.17 0.04 260);
   --sidebar-foreground: oklch(0.92 0.005 260);
-  --sidebar-primary: oklch(0.65 0.18 265);
-  --sidebar-primary-foreground: oklch(0.99 0.01 260);
-  --sidebar-accent: oklch(0.25 0.01 260);
+  --sidebar-primary: oklch(0.62 0.16 240);
+  --sidebar-primary-foreground: oklch(0.12 0.04 260);
+  --sidebar-accent: oklch(0.22 0.04 260);
   --sidebar-accent-foreground: oklch(0.96 0.005 260);
   --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.65 0.18 265);
+  --sidebar-ring: oklch(0.62 0.16 240);
   --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3);
   --card-shadow-hover: 0 4px 12px 0 rgb(0 0 0 / 0.35);
   --card-shadow-lg: 0 10px 30px 0 rgb(0 0 0 / 0.35);
-  --topbar-bg: #1E40AF;
-  --hero-gradient: linear-gradient(135deg, #1E40AF 0%, #1E3A8A 100%);
+  --brand-royal: #0096FF;
+  --brand-cyan: #0096FF;
+  --topbar-bg: oklch(0.17 0.04 260);
+  --topbar-border: oklch(1 0 0 / 8%);
+  --topbar-nav: #0096FF;
+  --topbar-nav-muted: oklch(0.72 0.04 250);
+  --hero-gradient: linear-gradient(135deg, #003380 0%, #0047AB 50%, #0096FF 100%);
 }
 
 @layer base {
@@ -148,6 +157,11 @@
   box-shadow: var(--card-shadow);
   border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
   transition: box-shadow 0.2s ease, transform 0.2s ease;
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--primary) 3%, transparent),
+    transparent 55%
+  );
 }
 .kt-card:hover {
   box-shadow: var(--card-shadow-hover);
@@ -240,7 +254,44 @@
   background-color: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
 }
 
-/* Top nav — solid blue bar, text-only items, white active with underline */
+/* Top nav — white bar, blue menu items */
+.kt-topbar {
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--topbar-border);
+  color: var(--foreground);
+}
+
+.kt-topbar .kt-nav-item {
+  color: var(--topbar-nav-muted);
+  border-radius: 0.375rem;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.kt-topbar .kt-nav-item:hover {
+  color: var(--topbar-nav);
+  background: color-mix(in srgb, var(--topbar-nav) 8%, transparent);
+}
+
+.kt-topbar .kt-nav-active {
+  color: var(--topbar-nav);
+  font-weight: 600;
+  position: relative;
+  background: color-mix(in srgb, var(--topbar-nav) 10%, transparent);
+}
+
+.kt-topbar .kt-nav-active::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: var(--topbar-nav);
+  border-radius: 2px;
+}
+
+/* Legacy nav styles (hero / other contexts) */
 .kt-nav-active {
   color: #fff;
   font-weight: 600;
@@ -271,4 +322,139 @@
 }
 .kt-fade-in {
   animation: kt-fade-in 0.2s ease-out;
+}
+
+/* ─── MiSA AI page atmosphere ─── */
+@keyframes misa-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes misa-pulse-ring {
+  0% { transform: scale(0.85); opacity: 0.55; }
+  70% { transform: scale(1.25); opacity: 0; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+@keyframes misa-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+@keyframes misa-msg-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes misa-chip-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.misa-page {
+  position: relative;
+}
+.misa-page::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 70% 50% at 12% 8%, rgb(0 150 255 / 0.14), transparent 55%),
+    radial-gradient(ellipse 55% 45% at 88% 18%, rgb(0 71 171 / 0.1), transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 100%, rgb(0 150 255 / 0.08), transparent 55%);
+}
+.misa-page > * {
+  position: relative;
+  z-index: 1;
+}
+
+.misa-shell {
+  border: 1px solid color-mix(in srgb, #0096FF 22%, var(--border));
+  box-shadow:
+    0 0 0 1px rgb(0 71 171 / 0.04),
+    0 12px 40px -16px rgb(0 71 171 / 0.28),
+    0 4px 16px -8px rgb(0 150 255 / 0.18);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.92), var(--card) 40%),
+    var(--card);
+  backdrop-filter: blur(10px);
+}
+.dark .misa-shell {
+  background:
+    linear-gradient(180deg, rgb(0 71 171 / 0.12), var(--card) 45%),
+    var(--card);
+}
+
+.misa-chat-canvas {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgb(0 150 255 / 0.07), transparent 55%),
+    linear-gradient(180deg, color-mix(in oklch, var(--muted) 55%, transparent), transparent 120px),
+    color-mix(in oklch, var(--muted) 35%, transparent);
+}
+
+.misa-orb {
+  animation: misa-float 4.5s ease-in-out infinite;
+}
+.misa-orb-ring {
+  position: absolute;
+  inset: -10px;
+  border-radius: 1.25rem;
+  border: 1.5px solid rgb(0 150 255 / 0.35);
+  animation: misa-pulse-ring 2.4s ease-out infinite;
+}
+.misa-orb-ring-delay {
+  animation-delay: 1.2s;
+}
+
+.misa-msg-in {
+  animation: misa-msg-in 0.35s ease-out both;
+}
+.misa-chip-in {
+  animation: misa-chip-in 0.4s ease-out both;
+}
+
+.misa-composer:focus-within {
+  border-color: color-mix(in srgb, #0096FF 55%, var(--border));
+  box-shadow:
+    0 0 0 3px rgb(0 150 255 / 0.14),
+    0 8px 24px -12px rgb(0 71 171 / 0.35);
+}
+
+.misa-shimmer-text {
+  background: linear-gradient(90deg, #0047AB 0%, #0096FF 40%, #0047AB 80%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: misa-shimmer 3.5s linear infinite;
+}
+
+/* MiSA overview strip — visible blue band on every tab */
+@keyframes misa-overview-sweep {
+  0% { transform: translateX(-120%) skewX(-12deg); opacity: 0; }
+  35% { opacity: 0.55; }
+  100% { transform: translateX(220%) skewX(-12deg); opacity: 0; }
+}
+@keyframes misa-bot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.35), 0 0 18px rgba(0, 200, 255, 0.45); }
+  50% { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0), 0 0 28px rgba(0, 200, 255, 0.75); }
+}
+.misa-overview-shine {
+  overflow: hidden;
+}
+.misa-overview-shine::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.22) 45%,
+    transparent 100%
+  );
+  animation: misa-overview-sweep 4.5s ease-in-out infinite;
+}
+.misa-bot-glow {
+  animation: misa-bot-pulse 2.4s ease-in-out infinite;
 }

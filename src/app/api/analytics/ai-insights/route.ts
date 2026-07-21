@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
-  if (!can(user.role, "analytics.view")) return forbidden();
+  if (!can(user.role, "analytics.view") && !can(user.role, "ai.use")) return forbidden();
 
   const scoped = scopeLocationIds(user);
   const where: any = {};

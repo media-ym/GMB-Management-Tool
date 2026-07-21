@@ -1,6 +1,6 @@
 "use client";
 
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider } from "@/components/theme-provider";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SessionProvider } from "next-auth/react";
 import { useState } from "react";

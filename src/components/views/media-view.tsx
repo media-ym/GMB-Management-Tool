@@ -10,6 +10,9 @@ import { can } from "@/lib/permissions";
 import { useLocations } from "@/hooks/use-locations";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
+import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { LayoutToggle, type LayoutMode } from "@/components/shared/layout-toggle";
+import { appendLocationIdsToParams } from "@/lib/location-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,10 +30,15 @@ import {
 } from "@/components/ui/dialog";
 import {
   ImageIcon, Upload, Search, Eye, Copy, Trash2, Sparkles, FileText,
-  Files, HardDrive, Bot, Loader2, ImageOff, X, MapPin,
+  Files, HardDrive, Bot, Loader2, ImageOff, X, MapPin, RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow, format } from "date-fns";
+import { normalizeMediaFileUrl } from "@/lib/media-url";
+
+const MEDIA_GRID_CLASS = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3";
+/** GMB post / update photo ratio (2120×1192) */
+const GMB_MEDIA_ASPECT = "aspect-[2120/1192]";
 
 /* ---------- Types ---------- */
 
@@ -148,6 +156,39 @@ function isImageMime(mime: string): boolean {
   return mime.startsWith("image/");
 }
 
+function MediaThumbnail({
+  fileUrl,
+  alt,
+  className,
+}: {
+  fileUrl: string;
+  alt: string;
+  className?: string;
+}) {
+  const [failed, setFailed] = React.useState(false);
+  const src = normalizeMediaFileUrl(fileUrl);
+
+  if (failed) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-muted text-muted-foreground">
+        <ImageOff className="size-8" />
+        <span className="text-[10px]">Preview unavailable</span>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      className={className}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 /* ---------- Sub-components ---------- */
 
 function MediaCard({
@@ -162,14 +203,12 @@ function MediaCard({
   const image = isImageMime(item.mimeType);
   return (
     <Card className="group p-3 gap-0 overflow-hidden hover:shadow-md transition-shadow rounded-lg">
-      <div className="relative aspect-square w-full overflow-hidden rounded-md bg-muted">
+      <div className={cn("relative w-full overflow-hidden rounded-md bg-muted", GMB_MEDIA_ASPECT)}>
         {image ? (
-           
-          <img
-            src={item.fileUrl}
+          <MediaThumbnail
+            fileUrl={item.fileUrl}
             alt={item.fileName}
-            loading="lazy"
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            className="h-full w-full object-contain bg-muted transition-transform duration-300 group-hover:scale-[1.02]"
           />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center text-muted-foreground">
@@ -188,37 +227,45 @@ function MediaCard({
           </div>
         )}
 
-        {/* Hover overlay actions */}
-        <div className="absolute inset-0 flex items-end justify-center gap-2 bg-gradient-to-t from-black/70 via-black/20 to-transparent p-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-8 gap-1.5"
-            onClick={onView}
-          >
-            <Eye className="size-3.5" />
-            View
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-8 gap-1.5"
-            onClick={onCopy}
-          >
-            <Copy className="size-3.5" />
-            Copy URL
-          </Button>
-          {canManage && (
+        {/* Hover overlay actions — icon-only so 6-col cards don't overlap */}
+        <div className="absolute inset-0 flex items-end justify-center bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <div className="flex items-center justify-center gap-1.5 flex-wrap">
             <Button
-              size="sm"
-              variant="destructive"
-              className="h-8 gap-1.5"
-              onClick={onDelete}
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="size-8 shrink-0 bg-background/95 shadow-sm"
+              onClick={(e) => { e.stopPropagation(); onView(); }}
+              aria-label="View"
+              title="View"
             >
-              <Trash2 className="size-3.5" />
-              Delete
+              <Eye className="size-3.5" />
             </Button>
-          )}
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="size-8 shrink-0 bg-background/95 shadow-sm"
+              onClick={(e) => { e.stopPropagation(); onCopy(); }}
+              aria-label="Copy URL"
+              title="Copy URL"
+            >
+              <Copy className="size-3.5" />
+            </Button>
+            {canManage && (
+              <Button
+                type="button"
+                size="icon"
+                variant="destructive"
+                className="size-8 shrink-0 shadow-sm"
+                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                aria-label="Delete"
+                title="Delete"
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -253,14 +300,89 @@ function MediaCard({
 function MediaCardSkeleton() {
   return (
     <Card className="p-3 gap-0 overflow-hidden">
-      <Skeleton className="aspect-square w-full rounded-md" />
+      <Skeleton className={cn("w-full rounded-md", GMB_MEDIA_ASPECT)} />
       <div className="mt-3 space-y-2">
         <Skeleton className="h-4 w-3/4" />
         <Skeleton className="h-3 w-1/2" />
-        <Skeleton className="h-5 w-2/3" />
-        <Skeleton className="h-3 w-1/3" />
       </div>
     </Card>
+  );
+}
+
+function MediaListRow({
+  item, canManage, onView, onCopy, onDelete,
+}: {
+  item: MediaItem;
+  canManage: boolean;
+  onView: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
+}) {
+  const image = isImageMime(item.mimeType);
+  return (
+    <Card className="p-3 hover:shadow-md transition-shadow">
+      <div className="flex items-center gap-3">
+        <div className={cn("shrink-0 overflow-hidden rounded-md bg-muted w-28", GMB_MEDIA_ASPECT)}>
+          {image ? (
+            <MediaThumbnail
+              fileUrl={item.fileUrl}
+              alt={item.fileName}
+              className="size-full object-contain bg-muted"
+            />
+          ) : (
+            <div className="flex size-full items-center justify-center text-muted-foreground">
+              <FileText className="size-5" />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium text-sm">{item.fileName}</p>
+          <p className="text-xs text-muted-foreground truncate">
+            {item.locationName}{item.locationCity ? `, ${item.locationCity}` : ""}
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className={cn("gap-1 text-[10px]", bucketBadgeClass(item.bucket))}>
+              {bucketLabel(item.bucket)}
+            </Badge>
+            <span className="text-[11px] text-muted-foreground tabular-nums">{formatBytes(item.fileSize)}</span>
+            <span className="text-[11px] text-muted-foreground">
+              {formatDistanceToNow(new Date(item.createdAt), { addSuffix: true })}
+            </span>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button size="sm" variant="ghost" className="h-8" onClick={onView}>
+            <Eye className="size-3.5" />
+          </Button>
+          <Button size="sm" variant="ghost" className="h-8" onClick={onCopy}>
+            <Copy className="size-3.5" />
+          </Button>
+          {canManage && (
+            <Button size="sm" variant="ghost" className="h-8 text-rose-600" onClick={onDelete}>
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function MediaListSkeleton() {
+  return (
+    <div className="space-y-2">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <Card key={i} className="p-3">
+          <div className="flex items-center gap-3">
+            <Skeleton className="size-14 rounded-md shrink-0" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-3 w-1/3" />
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
   );
 }
 
@@ -449,10 +571,13 @@ function DetailDialog({
         </DialogHeader>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <div className="relative aspect-square w-full overflow-hidden rounded-lg border bg-muted">
+          <div className={cn("relative w-full overflow-hidden rounded-lg border bg-muted", GMB_MEDIA_ASPECT)}>
             {image ? (
-               
-              <img src={item.fileUrl} alt={item.fileName} className="h-full w-full object-cover" />
+              <MediaThumbnail
+                fileUrl={item.fileUrl}
+                alt={item.fileName}
+                className="h-full w-full object-contain bg-muted"
+              />
             ) : (
               <div className="flex h-full w-full flex-col items-center justify-center text-muted-foreground">
                 <FileText className="size-12" />
@@ -568,7 +693,8 @@ function DetailDialog({
 export function MediaView() {
   const user = useUser();
   const queryClient = useQueryClient();
-  const { activeLocationId, setActiveLocationId } = useAppStore();
+  const selectedLocationIds = useAppStore((s) => s.selectedLocationIds);
+  const setSelectedLocationIds = useAppStore((s) => s.setSelectedLocationIds);
   const { data: locationOptions } = useLocations();
   const canManage = can(user.role, "media.manage");
 
@@ -576,18 +702,17 @@ export function MediaView() {
   const [search, setSearch] = React.useState("");
   const [sort, setSort] = React.useState<SortKey>("newest");
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
   const [detailItem, setDetailItem] = React.useState<MediaItem | null>(null);
   const [detailOpen, setDetailOpen] = React.useState(false);
+  const [displayLayout, setDisplayLayout] = React.useState<LayoutMode>("grid");
 
-  // activeLocationId can be "all" or a specific id. Build the API URL.
   const mediaUrl = React.useMemo(() => {
     const params = new URLSearchParams();
-    if (activeLocationId && activeLocationId !== "all") {
-      params.set("locationId", activeLocationId);
-    }
+    appendLocationIdsToParams(params, selectedLocationIds);
     const qs = params.toString();
     return qs ? `/api/media?${qs}` : "/api/media";
-  }, [activeLocationId]);
+  }, [selectedLocationIds]);
 
   const { data, isLoading, isError, refetch } = useQuery<MediaItem[]>({
     queryKey: ["media", mediaUrl],
@@ -649,12 +774,19 @@ export function MediaView() {
     toast.success("URL copied to clipboard", { description: item.fileName });
   }, []);
 
-  const handleDelete = React.useCallback((item: MediaItem) => {
-    // Delete queued.
-    toast.success("Queued for deletion", {
-      description: `${item.fileName} will be removed by the background worker.`,
-    });
-  }, []);
+  const handleDelete = React.useCallback(async (item: MediaItem) => {
+    try {
+      await api(`/api/media/${item.id}`, { method: "DELETE" });
+      void queryClient.invalidateQueries({ queryKey: ["media"] });
+      toast.success("Media deleted", { description: item.fileName });
+      if (detailItem?.id === item.id) {
+        setDetailOpen(false);
+        setDetailItem(null);
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to delete media");
+    }
+  }, [queryClient, detailItem?.id]);
 
   const openDetail = React.useCallback((item: MediaItem) => {
     setDetailItem(item);
@@ -665,30 +797,58 @@ export function MediaView() {
     void queryClient.invalidateQueries({ queryKey: ["media"] });
   }, [queryClient]);
 
+  const handleImportFromGoogle = React.useCallback(async () => {
+    setImporting(true);
+    try {
+      const body =
+        selectedLocationIds.length > 0
+          ? { locationIds: selectedLocationIds }
+          : {};
+      const res = await api<{ created: number; skipped: number }>(
+        "/api/media/sync-from-google",
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      void queryClient.invalidateQueries({ queryKey: ["media"] });
+      toast.success(
+        res.created > 0
+          ? `Imported ${res.created} image(s) from Google`
+          : "Media library already has all Google images",
+      );
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Import from Google failed");
+    } finally {
+      setImporting(false);
+    }
+  }, [queryClient, selectedLocationIds]);
+
   const locationActions = (
-    <div className="flex items-center gap-2">
-      <Select
-        value={activeLocationId ?? "all"}
-        onValueChange={(v) => setActiveLocationId(v as string | "all")}
-      >
-        <SelectTrigger className="h-9 w-[180px] sm:w-[220px]" size="sm">
-          <MapPin className="size-3.5 text-muted-foreground" />
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All locations</SelectItem>
-          {(locationOptions ?? []).map((l) => (
-            <SelectItem key={l.id} value={l.id}>
-              {l.name}{l.city ? `, ${l.city}` : ""}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+    <div className="flex items-center gap-2 flex-wrap">
+      <LocationMultiSelect
+        locations={locationOptions}
+        selectedIds={selectedLocationIds}
+        onChange={setSelectedLocationIds}
+        className="w-[180px] sm:w-[220px]"
+      />
       {canManage && (
-        <Button className="h-9 gap-1.5" onClick={() => setUploadOpen(true)}>
-          <Upload className="size-4" />
-          <span className="hidden sm:inline">Upload</span>
-        </Button>
+        <>
+          <Button
+            variant="outline"
+            className="h-9 gap-1.5"
+            onClick={handleImportFromGoogle}
+            disabled={importing}
+          >
+            {importing ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4" />
+            )}
+            <span className="hidden sm:inline">Import from Google</span>
+          </Button>
+          <Button className="h-9 gap-1.5" onClick={() => setUploadOpen(true)}>
+            <Upload className="size-4" />
+            <span className="hidden sm:inline">Upload</span>
+          </Button>
+        </>
       )}
     </div>
   );
@@ -792,6 +952,7 @@ export function MediaView() {
                 <SelectItem value="location">By location</SelectItem>
               </SelectContent>
             </Select>
+            <LayoutToggle value={displayLayout} onChange={setDisplayLayout} />
           </div>
         </CardContent>
       </Card>
@@ -840,11 +1001,15 @@ export function MediaView() {
         </Card>
       ) : isLoading ? (
         <div className="max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area">
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <MediaCardSkeleton key={i} />
-            ))}
-          </div>
+          {displayLayout === "list" ? (
+            <MediaListSkeleton />
+          ) : (
+            <div className={MEDIA_GRID_CLASS}>
+              {Array.from({ length: 12 }).map((_, i) => (
+                <MediaCardSkeleton key={i} />
+              ))}
+            </div>
+          )}
         </div>
       ) : filtered.length === 0 ? (
         <Card>
@@ -882,18 +1047,33 @@ export function MediaView() {
         </Card>
       ) : (
         <div className="max-h-[calc(100vh-18rem)] overflow-y-auto scroll-area pr-1 -mr-1">
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-            {filtered.map((item) => (
-              <MediaCard
-                key={item.id}
-                item={item}
-                canManage={canManage}
-                onView={() => openDetail(item)}
-                onCopy={() => handleCopy(item)}
-                onDelete={() => handleDelete(item)}
-              />
-            ))}
-          </div>
+          {displayLayout === "list" ? (
+            <div className="space-y-2">
+              {filtered.map((item) => (
+                <MediaListRow
+                  key={item.id}
+                  item={item}
+                  canManage={canManage}
+                  onView={() => openDetail(item)}
+                  onCopy={() => handleCopy(item)}
+                  onDelete={() => handleDelete(item)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className={MEDIA_GRID_CLASS}>
+              {filtered.map((item) => (
+                <MediaCard
+                  key={item.id}
+                  item={item}
+                  canManage={canManage}
+                  onView={() => openDetail(item)}
+                  onCopy={() => handleCopy(item)}
+                  onDelete={() => handleDelete(item)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 

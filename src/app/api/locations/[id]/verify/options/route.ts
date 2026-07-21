@@ -49,19 +49,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     );
   }
 
-  // Optional dispatchMethod hint — Google uses it to return channel-specific
-  // metadata (e.g. the masked phone number for SMS / phone call).
   const url = new URL(req.url);
-  const dispatchMethod = url.searchParams.get("dispatchMethod") || undefined;
-  if (
-    dispatchMethod &&
-    !["ADDRESS", "EMAIL", "PHONE_CALL", "SMS"].includes(dispatchMethod)
-  ) {
-    return fail("dispatchMethod must be one of: ADDRESS, EMAIL, PHONE_CALL, SMS.", 400);
-  }
+  const languageCode = url.searchParams.get("languageCode") || "en";
 
   try {
-    const data = await fetchVerificationOptions(accessToken, gbp.googleLocationId, dispatchMethod);
+    const data = await fetchVerificationOptions(accessToken, gbp.googleLocationId, languageCode);
     const options = Array.isArray(data.options) ? data.options : [];
     return ok(
       { options, linked: true, configured: true, connected: true },

@@ -4,6 +4,7 @@ import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import { syncLocationFull, syncGoogleReviews, syncLocationAnalytics, googleServiceStatus } from "@/lib/google-service";
+import { refreshLocationScores } from "@/lib/location-scores";
 
 export const dynamic = "force-dynamic";
 
@@ -34,21 +35,35 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return fail("No Google Business Profile linked to this location. Import this location from Google first.", 400);
   }
 
-  // ─── Full sync: fetch ALL real data from Google ────────────────────────
+  // ─── Full sync: fetch ALL real data from Google (profile + reviews + media + analytics + posts) ──
   if (syncModule === "full" || syncModule === "profile") {
     const result = await syncLocationFull(id);
-    const totalSynced = result.synced.reviews + result.synced.photos + result.synced.hours + result.synced.services + result.synced.categories;
+    // If analytics still empty after full sync, retry analytics alone once
+    if ((result.synced.analytics ?? 0) === 0) {
+      const retry = await syncLocationAnalytics(id, 180);
+      result.synced.analytics = retry.synced;
+      if (retry.errors.length) result.errors.push(...retry.errors.map((e) => `Analytics retry: ${e}`));
+    }
+    await refreshLocationScores(id, { writeAudit: true }).catch(() => null);
 
-    // Create sync log with REAL counts
+    const totalSynced =
+      result.synced.reviews +
+      result.synced.photos +
+      result.synced.hours +
+      result.synced.services +
+      result.synced.categories +
+      result.synced.posts +
+      (result.synced.analytics ?? 0);
+
     await db.syncLog.create({
       data: {
         module: syncModule,
         locationId: id,
         startedAt: now,
         completedAt: new Date(),
-        status: result.success ? "success" : "partial",
+        status: result.success && result.errors.length === 0 ? "success" : "partial",
         recordsProcessed: totalSynced,
-        recordsInserted: result.synced.reviews + result.synced.photos,
+        recordsInserted: result.synced.reviews + result.synced.photos + (result.synced.analytics ?? 0),
         recordsUpdated: result.synced.hours + result.synced.services + result.synced.categories,
         recordsFailed: result.errors.length,
         errorMessage: result.errors.length > 0 ? result.errors.join("; ") : null,
@@ -61,22 +76,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ip: req.headers.get("x-forwarded-for") ?? undefined,
     });
 
-    if (result.success) {
-      return ok({
-        id,
-        module: syncModule,
-        synced: result.synced,
-        totalRecords: totalSynced,
-      }, `Synced "${location.name}" from Google: ${result.synced.reviews} reviews, ${result.synced.photos} photos, ${result.synced.hours} hours, ${result.synced.services} services, ${result.synced.categories} categories`);
-    } else {
-      return ok({
+    const msg =
+      `Synced "${location.name}": ${result.synced.reviews} reviews, ${result.synced.photos} photos, ` +
+      `${result.synced.analytics ?? 0} analytics days, ${result.synced.posts} posts` +
+      (result.errors.length ? ` · ${result.errors.length} warning(s)` : "");
+
+    return ok(
+      {
         id,
         module: syncModule,
         synced: result.synced,
         totalRecords: totalSynced,
         errors: result.errors,
-      }, `Partial sync completed for "${location.name}" with ${result.errors.length} error(s)`);
-    }
+      },
+      msg,
+    );
   }
 
   // ─── Reviews-only sync ─────────────────────────────────────────────────
@@ -104,12 +118,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ip: req.headers.get("x-forwarded-for") ?? undefined,
     });
 
-    return ok({ id, module: "reviews", synced: result.synced }, `Synced ${result.synced} review(s) from Google for "${location.name}"`);
+    await refreshLocationScores(id, { writeAudit: true });
+
+    return ok({ id, module: "reviews", synced: result.synced, autoReplied: result.autoReplied }, `Synced ${result.synced} review(s) from Google for "${location.name}"${result.autoReplied ? ` · auto-replied ${result.autoReplied}` : ""}`);
   }
 
   // ─── Analytics-only sync — fetch real Google Business Performance API ───
   if (syncModule === "analytics") {
-    const result = await syncLocationAnalytics(id, 30);
+    const daysBack = Math.min(Math.max(parseInt(String(body.days ?? "180"), 10) || 180, 30), 540);
+    const result = await syncLocationAnalytics(id, daysBack);
 
     await db.syncLog.create({
       data: {
@@ -131,6 +148,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       newValue: { module: "analytics", days: 30, synced: result.synced },
       ip: req.headers.get("x-forwarded-for") ?? undefined,
     });
+
+    await refreshLocationScores(id, { writeAudit: true });
 
     return ok({ id, module: "analytics", synced: result.synced }, `Synced ${result.synced} days of real analytics from Google for "${location.name}"`);
   }

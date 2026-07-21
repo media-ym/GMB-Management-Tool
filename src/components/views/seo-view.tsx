@@ -23,6 +23,8 @@ import { can } from "@/lib/permissions";
 import { useLocations } from "@/hooks/use-locations";
 import { cn } from "@/lib/utils";
 import { PageHeader, CardSection } from "@/components/shared/page-header";
+import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { appendLocationIdsToParams } from "@/lib/location-filter";
 import { StatCard } from "@/components/shared/stat-card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -193,12 +195,20 @@ function rankBandClass(rank: number): string {
   return "bg-rose-500/15 text-rose-700 dark:text-rose-400";
 }
 
+function filteredSeoUrl(path: string, selectedLocationIds: string[]) {
+  const params = new URLSearchParams();
+  appendLocationIdsToParams(params, selectedLocationIds);
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 // ── Main view ────────────────────────────────────────────────────────
 export function SeoView() {
   const user = useUser();
   const queryClient = useQueryClient();
-  const activeLocationId = useAppStore((s) => s.activeLocationId);
-  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+  const selectedLocationIds = useAppStore((s) => s.selectedLocationIds);
+  const setSelectedLocationIds = useAppStore((s) => s.setSelectedLocationIds);
+  const activeLocationId = selectedLocationIds.length === 1 ? selectedLocationIds[0] : "all";
   const canManage = can(user.role, "seo.manage");
   const canAI = can(user.role, "ai.use") && can(user.role, "seo.manage");
 
@@ -231,23 +241,13 @@ export function SeoView() {
 
   // ── Queries ───────────────────────────────────────────────────────
   const seoQuery = useQuery<SeoResponse>({
-    queryKey: ["seo", activeLocationId],
-    queryFn: () => {
-      const url = activeLocationId && activeLocationId !== "all"
-        ? `/api/seo?locationId=${encodeURIComponent(activeLocationId)}`
-        : "/api/seo";
-      return api<SeoResponse>(url);
-    },
+    queryKey: ["seo", selectedLocationIds],
+    queryFn: () => api<SeoResponse>(filteredSeoUrl("/api/seo", selectedLocationIds)),
   });
 
   const keywordsQuery = useQuery<KeywordRow[]>({
-    queryKey: ["seo", "keywords", activeLocationId],
-    queryFn: () => {
-      const url = activeLocationId && activeLocationId !== "all"
-        ? `/api/seo/keywords?locationId=${encodeURIComponent(activeLocationId)}`
-        : "/api/seo/keywords";
-      return api<KeywordRow[]>(url);
-    },
+    queryKey: ["seo", "keywords", selectedLocationIds],
+    queryFn: () => api<KeywordRow[]>(filteredSeoUrl("/api/seo/keywords", selectedLocationIds)),
   });
 
   const locQuery = useQuery<LocationWithStats[]>({
@@ -261,23 +261,13 @@ export function SeoView() {
   });
 
   const auditsQuery = useQuery<SeoAuditRow[]>({
-    queryKey: ["seo-audits", activeLocationId],
-    queryFn: () => {
-      const url = activeLocationId && activeLocationId !== "all"
-        ? `/api/seo-audits?locationId=${encodeURIComponent(activeLocationId)}`
-        : "/api/seo-audits";
-      return api<SeoAuditRow[]>(url);
-    },
+    queryKey: ["seo-audits", selectedLocationIds],
+    queryFn: () => api<SeoAuditRow[]>(filteredSeoUrl("/api/seo-audits", selectedLocationIds)),
   });
 
   const competitorsQuery = useQuery<CompetitorRow[]>({
-    queryKey: ["competitors", activeLocationId],
-    queryFn: () => {
-      const url = activeLocationId && activeLocationId !== "all"
-        ? `/api/competitors?locationId=${encodeURIComponent(activeLocationId)}`
-        : "/api/competitors";
-      return api<CompetitorRow[]>(url);
-    },
+    queryKey: ["competitors", selectedLocationIds],
+    queryFn: () => api<CompetitorRow[]>(filteredSeoUrl("/api/competitors", selectedLocationIds)),
   });
 
   const keywords = keywordsQuery.data ?? [];
@@ -302,7 +292,7 @@ export function SeoView() {
   // Reset selectedKeywordId when location changes
   useEffect(() => {
     setSelectedKeywordId(null);
-  }, [activeLocationId]);
+  }, [selectedLocationIds]);
 
   // Health & visibility for the selected location (or avg of all)
   const healthScore = useMemo(() => {
@@ -409,23 +399,12 @@ export function SeoView() {
         icon={Search}
         actions={
           <>
-            <Select
-              value={activeLocationId}
-              onValueChange={(v) => setActiveLocationId(v as string)}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-[180px]">
-                <MapPin className="size-3.5 mr-1 text-muted-foreground" />
-                <SelectValue placeholder="All locations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All locations</SelectItem>
-                {locations?.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>
-                    {l.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LocationMultiSelect
+              locations={locations}
+              selectedIds={selectedLocationIds}
+              onChange={setSelectedLocationIds}
+              className="w-full sm:w-[180px]"
+            />
             {canManage && (
               <Button
                 size="sm"
@@ -598,6 +577,8 @@ export function SeoView() {
             myAvgRank={overview?.avgRank ?? null}
             canManage={canManage}
             activeLocationId={activeLocationId}
+            locationIds={selectedLocationIds}
+            onDiscovered={() => queryClient.invalidateQueries({ queryKey: ["competitors"] })}
           />
         </TabsContent>
 
@@ -1502,15 +1483,18 @@ function GeoGridHeatmap({
 
 // ── Competitors Tab (real API data + comparison chart) ───────────────
 function CompetitorsTab({
-  competitors, isLoading, myAvgRank, canManage, activeLocationId,
+  competitors, isLoading, myAvgRank, canManage, activeLocationId, locationIds, onDiscovered,
 }: {
   competitors: CompetitorRow[];
   isLoading: boolean;
   myAvgRank: number | null;
   canManage: boolean;
   activeLocationId: string | "all";
+  locationIds: string[];
+  onDiscovered: () => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState(false);
   const isAllLocations = !activeLocationId || activeLocationId === "all";
 
   const chartData = useMemo(() => {
@@ -1526,6 +1510,28 @@ function CompetitorsTab({
     return arr.sort((a, b) => a.avgRank - b.avgRank);
   }, [competitors, myAvgRank]);
 
+  async function handleDiscover() {
+    const targetId = activeLocationId !== "all" ? activeLocationId : locationIds[0];
+    if (!targetId) {
+      toast.error("Select a location first");
+      return;
+    }
+    setDiscovering(true);
+    try {
+      const result = await api<{ total: number; warning?: string }>("/api/competitors/discover", {
+        method: "POST",
+        body: JSON.stringify({ locationId: targetId }),
+      });
+      onDiscovered();
+      if (result.warning) toast.message(result.warning);
+      toast.success(`${result.total} competitors ready`);
+    } catch (e: any) {
+      toast.error(e.message || "Discover failed");
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <CardSection
@@ -1536,9 +1542,11 @@ function CompetitorsTab({
             <Button
               size="sm"
               variant="outline"
-              onClick={() => toast.success("Competitor tracking setup queued")}
+              disabled={discovering}
+              onClick={handleDiscover}
             >
-              <Plus className="size-3.5 mr-1.5" /> Add Competitor
+              {discovering ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <Plus className="size-3.5 mr-1.5" />}
+              Discover nearby
             </Button>
           )
         }
@@ -1549,7 +1557,7 @@ function CompetitorsTab({
           <div className="py-12 text-center text-sm text-muted-foreground">
             <Building2 className="size-8 mx-auto mb-2 text-muted-foreground/40" />
             No competitors tracked {isAllLocations ? "yet" : "for this location"}.
-            {canManage && <span> Click \"Add Competitor\" to set up tracking.</span>}
+            {canManage && <span> Click Discover nearby to load competitors.</span>}
           </div>
         ) : (
           <div className="max-h-[calc(100vh-24rem)] overflow-y-auto scroll-area -mx-1">

@@ -7,7 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { format, isToday, isTomorrow } from "date-fns";
 import {
   Clock, AlertCircle, RotateCcw, X, CheckCircle2, CalendarClock,
-  Pencil, Loader2, Newspaper, Tag, CalendarDays, Info, MapPin, Zap,
+  Pencil, Loader2, Newspaper, Tag, CalendarDays, Info, MapPin, Zap, Repeat,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import type { PostWithLocation, PostType } from "@/lib/types";
+import { formatWeeklyRecurrence } from "@/lib/post-recurrence";
 
 /* ---------- Metadata (mirrors posts-view.tsx) ---------- */
 
@@ -196,6 +197,10 @@ function QueueCard({
   const countdown = useCountdown(post.scheduledAt);
   const isPending = post.status === "scheduled";
   const isFailed = post.status === "failed";
+  const isWeeklyRecurring =
+    post.recurrenceType === "weekly"
+    && post.recurrenceDayOfWeek != null
+    && post.recurrenceTime;
 
   return (
     <Card
@@ -207,6 +212,20 @@ function QueueCard({
       onClick={() => onClick(post)}
     >
       <CardContent className="p-3 space-y-2">
+        {post.imageUrl && (
+          <div className="aspect-[16/9] w-full overflow-hidden rounded-md bg-muted">
+            <img
+              src={post.imageUrl}
+              alt=""
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                e.currentTarget.parentElement?.classList.add("hidden");
+              }}
+            />
+          </div>
+        )}
         {/* Header row */}
         <div className="flex items-start gap-2">
           <span className={cn("size-7 rounded-md flex items-center justify-center shrink-0", meta.tint)}>
@@ -239,6 +258,12 @@ function QueueCard({
         </p>
 
         {/* Status-specific info */}
+        {isPending && isWeeklyRecurring && (
+          <Badge variant="outline" className="text-[9px] py-0 px-1.5 gap-0.5 bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/20 w-fit">
+            <Repeat className="size-2.5" />
+            {formatWeeklyRecurrence(post.recurrenceDayOfWeek!, post.recurrenceTime!)}
+          </Badge>
+        )}
         {isPending && post.scheduledAt && (
           <div className="flex items-center gap-1.5 text-[10px]">
             <Clock className="size-3 text-amber-500 shrink-0" />

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds } from "@/lib/session";
 import { ok, unauthorized, forbidden } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { buildLocationIdFilter, parseLocationIdsParam } from "@/lib/location-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -14,10 +15,10 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const locationId = url.searchParams.get("locationId") || undefined;
-  const scoped = scopeLocationIds(user, locationId);
-  const where: any = {};
-  if (scoped) where.locationId = { in: scoped };
-  if (locationId && (!scoped || scoped.includes(locationId))) where.locationId = locationId;
+  const locationIds = parseLocationIdsParam(url.searchParams.get("locationIds"));
+  const where: Record<string, unknown> = {
+    ...buildLocationIdFilter(user, { locationId, locationIds }),
+  };
 
   const keywords = await db.keyword.findMany({
     where,

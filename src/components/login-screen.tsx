@@ -1,21 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Building2, Mail, Lock, Eye, EyeOff, Loader2, Star, PenTool, Target, Sparkles, User, Phone, MapPin, Shield, CheckCircle2, ArrowRight } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, Star, PenTool, Target, Sparkles, User, Phone, MapPin, Shield, CheckCircle2, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
-const GREENS = {
-  primary: "#72D44C",
-  primaryDark: "#4FAE25",
-  light: "#F5FFF1",
-  text: "#202124",
-  gray: "#6B7280",
-  border: "#E7E7E7",
-  buttonGrad: "linear-gradient(135deg, #8BE04E 0%, #5DBE2E 100%)",
-  bgGrad: "linear-gradient(135deg, #f8fff2 0%, #e8ffd4 30%, #d8ffb5 60%, #bdfc89 100%)",
+const BRAND = {
+  primary: "#0047AB",
+  primaryDark: "#003380",
+  accent: "#0096FF",
+  light: "#EFF6FF",
+  text: "#0F172A",
+  gray: "#64748B",
+  border: "#CBD5E1",
+  buttonGrad: "linear-gradient(135deg, #0096FF 0%, #0047AB 100%)",
+  bgGrad: "linear-gradient(135deg, #f0f7ff 0%, #dbeafe 30%, #bfdbfe 60%, #93c5fd 100%)",
 };
 
 const FEATURES = [
@@ -25,19 +27,13 @@ const FEATURES = [
   { icon: Sparkles, label: "MiSA AI Assistant" },
 ];
 
-const DEMO_ACCOUNTS = [
-  { role: "Super Admin", email: "admin@myfng.in", color: "#72D44C" },
-  { role: "Marketing Manager", email: "marketing@myfng.in", color: "#5DBE2E" },
-  { role: "Branch Manager", email: "thane@myfng.in", color: "#4FAE25" },
-  { role: "Customer Support", email: "support@myfng.in", color: "#8BE04E" },
-  { role: "Viewer", email: "viewer@myfng.in", color: "#A0A0A0" },
-];
+const ADMIN_DEMO = { role: "Super Admin", email: "admin@myfng.in", password: "MyFNG@2025", color: "#0047AB" };
 
 export function LoginScreen() {
   const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState("admin@myfng.in");
-  const [password, setPassword] = useState("MyFNG@2025");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [remember, setRemember] = useState(true);
@@ -55,14 +51,14 @@ export function LoginScreen() {
     router.refresh();
   }
 
-  async function quickLogin(acc: string) {
-    setEmail(acc);
-    setPassword("MyFNG@2025");
+  async function quickAdminLogin() {
+    setEmail(ADMIN_DEMO.email);
+    setPassword(ADMIN_DEMO.password);
     setLoading(true);
-    const res = await signIn("credentials", { email: acc, password: "MyFNG@2025", redirect: false });
+    const res = await signIn("credentials", { email: ADMIN_DEMO.email, password: ADMIN_DEMO.password, redirect: false });
     setLoading(false);
     if (res?.error) { toast.error("Login failed"); return; }
-    toast.success("Signed in");
+    toast.success("Signed in as Super Admin");
     router.refresh();
   }
 
@@ -75,15 +71,24 @@ export function LoginScreen() {
   }
 
   return (
-    <div className="min-h-screen flex" style={{ background: GREENS.bgGrad }}>
+    <div className="min-h-screen flex" style={{ background: BRAND.bgGrad }}>
       {/* ═══ LEFT SECTION — 40% Illustration ═════════════════════════════ */}
       <div className="hidden lg:flex lg:w-2/5 flex-col justify-between p-12 relative overflow-hidden">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
           className="flex-1 flex flex-col justify-start pt-0"
         >
+          <Image
+            src="/myfng-logo-transparent.png"
+            alt="MyFNG"
+            width={220}
+            height={64}
+            className="h-14 w-auto object-contain mb-8"
+            priority
+            unoptimized
+          />
           {/* 3D Illustration — Mechanic repairing a car */}
           <motion.div
             animate={{ y: [0, -8, 0] }}
@@ -103,8 +108,8 @@ export function LoginScreen() {
               {/* Plant right */}
               <div className="absolute bottom-2 right-0 w-16 h-24">
                 <div className="absolute bottom-0 left-3 w-10 h-12 rounded-t-lg bg-white shadow-sm" />
-                <motion.div animate={{ rotate: [0, 4, 0] }} transition={{ duration: 3, repeat: Infinity }} className="absolute bottom-10 left-1 w-6 h-16 rounded-full" style={{ background: "#4FAE25", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
-                <motion.div animate={{ rotate: [0, -4, 0] }} transition={{ duration: 3.5, repeat: Infinity }} className="absolute bottom-12 left-5 w-5 h-12 rounded-full" style={{ background: "#72D44C", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
+                <motion.div animate={{ rotate: [0, 4, 0] }} transition={{ duration: 3, repeat: Infinity }} className="absolute bottom-10 left-1 w-6 h-16 rounded-full" style={{ background: "#003380", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
+                <motion.div animate={{ rotate: [0, -4, 0] }} transition={{ duration: 3.5, repeat: Infinity }} className="absolute bottom-12 left-5 w-5 h-12 rounded-full" style={{ background: "#0096FF", borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%" }} />
               </div>
 
               {/* ═══ CAR ═══════════════════════════════════════════════════ */}
@@ -196,9 +201,9 @@ export function LoginScreen() {
                   {/* Hair */}
                   <div className="absolute -top-0.5 left-0 w-full h-4 rounded-t-full" style={{ background: "#3E2723" }} />
                   {/* Cap beak */}
-                  <div className="absolute top-2 -right-3 w-5 h-2.5 rounded-r-full" style={{ background: "#4FAE25" }} />
+                  <div className="absolute top-2 -right-3 w-5 h-2.5 rounded-r-full" style={{ background: "#003380" }} />
                   {/* Cap body */}
-                  <div className="absolute -top-1 left-1 w-8 h-3 rounded-t-full" style={{ background: "#4FAE25" }} />
+                  <div className="absolute -top-1 left-1 w-8 h-3 rounded-t-full" style={{ background: "#003380" }} />
                   {/* Eyes */}
                   <div className="absolute bottom-3 left-2 size-1.5 rounded-full bg-gray-800" />
                   <div className="absolute bottom-3 right-2 size-1.5 rounded-full bg-gray-800" />
@@ -209,27 +214,27 @@ export function LoginScreen() {
                 {/* Neck */}
                 <div className="absolute top-9 left-1/2 -translate-x-1/2 w-3 h-2" style={{ background: "#E8C39E" }} />
 
-                {/* Body — green overalls/work shirt */}
-                <div className="absolute top-10 left-1/2 -translate-x-1/2 w-14 h-14 rounded-t-xl" style={{ background: GREENS.primary }}>
+                {/* Body — blue overalls/work shirt */}
+                <div className="absolute top-10 left-1/2 -translate-x-1/2 w-14 h-14 rounded-t-xl" style={{ background: BRAND.primary }}>
                   {/* Overall straps */}
-                  <div className="absolute top-0 left-2 w-2 h-5 rounded-full" style={{ background: "#4FAE25" }} />
-                  <div className="absolute top-0 right-2 w-2 h-5 rounded-full" style={{ background: "#4FAE25" }} />
+                  <div className="absolute top-0 left-2 w-2 h-5 rounded-full" style={{ background: "#003380" }} />
+                  <div className="absolute top-0 right-2 w-2 h-5 rounded-full" style={{ background: "#003380" }} />
                   {/* Name badge */}
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 w-6 h-2 rounded bg-white/60" />
                   {/* Center seam */}
-                  <div className="absolute top-5 left-1/2 -translate-x-1/2 w-0.5 h-9" style={{ background: "#4FAE25" }} />
+                  <div className="absolute top-5 left-1/2 -translate-x-1/2 w-0.5 h-9" style={{ background: "#003380" }} />
                 </div>
 
                 {/* Left arm reaching toward engine */}
                 <div className="absolute top-11 left-0 w-4 h-10 origin-top transform rotate-[30deg]">
-                  <div className="w-full h-full rounded-full" style={{ background: GREENS.primary }} />
+                  <div className="w-full h-full rounded-full" style={{ background: BRAND.primary }} />
                   {/* Hand */}
                   <div className="absolute bottom-0 left-0 size-3.5 rounded-full" style={{ background: "#E8C39E" }} />
                 </div>
 
                 {/* Right arm holding wrench */}
                 <div className="absolute top-12 right-0 w-3.5 h-9 origin-top transform rotate-[-15deg]">
-                  <div className="w-full h-full rounded-full" style={{ background: GREENS.primary }} />
+                  <div className="w-full h-full rounded-full" style={{ background: BRAND.primary }} />
                   {/* Hand holding wrench */}
                   <div className="absolute bottom-0 left-0 size-3 rounded-full" style={{ background: "#E8C39E" }} />
                   {/* Wrench */}
@@ -289,10 +294,10 @@ export function LoginScreen() {
 
           {/* Content */}
           <div className="max-w-md">
-            <h1 className="text-3xl font-bold leading-tight mb-3" style={{ color: GREENS.text }}>
+            <h1 className="text-3xl font-bold leading-tight mb-3" style={{ color: BRAND.text }}>
               One Dashboard for Every<br />MyFNG Google Business Profile.
             </h1>
-            <p className="text-base mb-8 leading-relaxed" style={{ color: GREENS.gray }}>
+            <p className="text-base mb-8 leading-relaxed" style={{ color: BRAND.gray }}>
               Centralize reviews, posts, local SEO, and<br />analytics across all MyFNG locations.
             </p>
 
@@ -301,16 +306,16 @@ export function LoginScreen() {
               {FEATURES.map((f, i) => (
                 <motion.div
                   key={f.label}
-                  initial={{ opacity: 0, x: -10 }}
+                  initial={false}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.2 + i * 0.1 }}
                   whileHover={{ y: -4, boxShadow: "0 8px 20px rgba(0,0,0,0.06)" }}
                   className="flex items-center gap-2.5 bg-white/60 backdrop-blur rounded-xl px-3 py-2.5 cursor-default"
                 >
-                  <div className="size-7 rounded-full flex items-center justify-center shrink-0" style={{ background: `${GREENS.primary}20` }}>
-                    <f.icon className="size-3.5" style={{ color: GREENS.primaryDark }} />
+                  <div className="size-7 rounded-full flex items-center justify-center shrink-0" style={{ background: `${BRAND.primary}20` }}>
+                    <f.icon className="size-3.5" style={{ color: BRAND.primaryDark }} />
                   </div>
-                  <span className="text-xs font-medium" style={{ color: GREENS.text }}>{f.label}</span>
+                  <span className="text-xs font-medium" style={{ color: BRAND.text }}>{f.label}</span>
                 </motion.div>
               ))}
             </div>
@@ -318,7 +323,7 @@ export function LoginScreen() {
         </motion.div>
 
         {/* Footer */}
-        <div className="text-xs" style={{ color: GREENS.gray, opacity: 0.6 }}>
+        <div className="text-xs" style={{ color: BRAND.gray, opacity: 0.6 }}>
           Internal Enterprise Platform · Authorized MyFNG personnel only · v1.0
         </div>
       </div>
@@ -326,39 +331,44 @@ export function LoginScreen() {
       {/* ═══ RIGHT SECTION — 60% Auth Card ═══════════════════════════════ */}
       <div className="w-full lg:w-3/5 flex items-center justify-center p-6 sm:p-12">
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
+          initial={false}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
           className="w-full max-w-[520px] bg-white p-8 sm:p-12"
           style={{ borderRadius: "32px", boxShadow: "0 25px 60px rgba(0,0,0,0.08)" }}
         >
           {/* Logo */}
-          <div className="flex items-center justify-center gap-2.5 mb-7">
-            <div className="size-11 rounded-xl flex items-center justify-center" style={{ background: GREENS.buttonGrad }}>
-              <Building2 className="size-6 text-white" />
-            </div>
-            <span className="font-bold text-xl" style={{ color: GREENS.text }}>MyFNG</span>
+          <div className="flex items-center justify-center mb-7">
+            <Image
+              src="/myfng-logo-transparent.png"
+              alt="MyFNG — Your Friendly Neighbourhood Garage"
+              width={280}
+              height={80}
+              className="h-16 sm:h-20 w-auto object-contain"
+              priority
+              unoptimized
+            />
           </div>
 
           <AnimatePresence mode="wait">
             {mode === "login" ? (
               <motion.div
                 key="login"
-                initial={{ opacity: 0, x: 20 }}
+                initial={false}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
                 {/* Heading */}
                 <div className="text-center mb-10">
-                  <h2 className="text-4xl font-bold mb-2" style={{ color: GREENS.text }}>Welcome Back</h2>
-                  <p className="text-base" style={{ color: GREENS.gray }}>Sign in to continue managing all MyFNG branches.</p>
+                  <h2 className="text-4xl font-bold mb-2" style={{ color: BRAND.text }}>Welcome Back</h2>
+                  <p className="text-base" style={{ color: BRAND.gray }}>Sign in to continue managing all MyFNG branches.</p>
                 </div>
 
                 {/* Form */}
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="relative">
-                    <Mail className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: GREENS.gray }} />
+                    <Mail className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: BRAND.gray }} />
                     <input
                       type="email"
                       value={email}
@@ -366,14 +376,14 @@ export function LoginScreen() {
                       placeholder="Email address"
                       required
                       className="w-full h-[58px] rounded-[18px] border pl-14 pr-5 text-base outline-none transition-all"
-                      style={{ borderColor: GREENS.border, color: GREENS.text }}
-                      onFocus={(e) => { e.target.style.borderColor = GREENS.primary; e.target.style.boxShadow = `0 0 0 3px ${GREENS.primary}25`; }}
-                      onBlur={(e) => { e.target.style.borderColor = GREENS.border; e.target.style.boxShadow = "none"; }}
+                      style={{ borderColor: BRAND.border, color: BRAND.text }}
+                      onFocus={(e) => { e.target.style.borderColor = BRAND.primary; e.target.style.boxShadow = `0 0 0 3px ${BRAND.primary}25`; }}
+                      onBlur={(e) => { e.target.style.borderColor = BRAND.border; e.target.style.boxShadow = "none"; }}
                     />
                   </div>
 
                   <div className="relative">
-                    <Lock className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: GREENS.gray }} />
+                    <Lock className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: BRAND.gray }} />
                     <input
                       type={showPassword ? "text" : "password"}
                       value={password}
@@ -381,78 +391,66 @@ export function LoginScreen() {
                       placeholder="Password"
                       required
                       className="w-full h-[58px] rounded-[18px] border pl-14 pr-14 text-base outline-none transition-all"
-                      style={{ borderColor: GREENS.border, color: GREENS.text }}
-                      onFocus={(e) => { e.target.style.borderColor = GREENS.primary; e.target.style.boxShadow = `0 0 0 3px ${GREENS.primary}25`; }}
-                      onBlur={(e) => { e.target.style.borderColor = GREENS.border; e.target.style.boxShadow = "none"; }}
+                      style={{ borderColor: BRAND.border, color: BRAND.text }}
+                      onFocus={(e) => { e.target.style.borderColor = BRAND.primary; e.target.style.boxShadow = `0 0 0 3px ${BRAND.primary}25`; }}
+                      onBlur={(e) => { e.target.style.borderColor = BRAND.border; e.target.style.boxShadow = "none"; }}
                     />
-                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-5 top-1/2 -translate-y-1/2" style={{ color: GREENS.gray }}>
+                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-5 top-1/2 -translate-y-1/2" style={{ color: BRAND.gray }}>
                       {showPassword ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
                     </button>
                   </div>
 
                   {/* Remember + Forgot */}
                   <div className="flex items-center justify-between text-sm">
-                    <label className="flex items-center gap-2 cursor-pointer" style={{ color: GREENS.gray }}>
-                      <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="size-4 rounded accent-[#72D44C]" />
+                    <label className="flex items-center gap-2 cursor-pointer" style={{ color: BRAND.gray }}>
+                      <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="size-4 rounded accent-[#0047AB]" />
                       Remember me
                     </label>
-                    <a href="#" className="font-medium hover:underline" style={{ color: GREENS.primaryDark }}>Forgot password?</a>
+                    <a href="#" className="font-medium hover:underline" style={{ color: BRAND.primaryDark }}>Forgot password?</a>
                   </div>
 
                   {/* Login button */}
                   <motion.button
                     type="submit"
                     disabled={loading}
-                    whileHover={{ scale: 1.02, boxShadow: `0 10px 30px ${GREENS.primary}40` }}
+                    whileHover={{ scale: 1.02, boxShadow: `0 10px 30px ${BRAND.primary}40` }}
                     whileTap={{ scale: 0.98 }}
                     transition={{ duration: 0.3 }}
                     className="w-full h-[58px] rounded-[18px] text-white font-bold text-base flex items-center justify-center gap-2 cursor-pointer border-0"
-                    style={{ background: GREENS.buttonGrad }}
+                    style={{ background: BRAND.buttonGrad }}
                   >
                     {loading ? <Loader2 className="size-5 animate-spin" /> : <>Sign In <ArrowRight className="size-5" /></>}
                   </motion.button>
                 </form>
 
-                {/* Divider */}
+                {/* Admin demo login */}
                 <div className="flex items-center gap-4 my-7">
-                  <div className="flex-1 h-px" style={{ background: GREENS.border }} />
-                  <span className="text-xs" style={{ color: GREENS.gray }}>OR</span>
-                  <div className="flex-1 h-px" style={{ background: GREENS.border }} />
+                  <div className="flex-1 h-px" style={{ background: BRAND.border }} />
+                  <span className="text-xs" style={{ color: BRAND.gray }}>OR</span>
+                  <div className="flex-1 h-px" style={{ background: BRAND.border }} />
                 </div>
-
-                {/* Quick Demo Login */}
-                <div className="mb-5">
-                  <p className="text-xs text-center mb-3" style={{ color: GREENS.gray }}>Quick Demo Login</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {DEMO_ACCOUNTS.map((acc) => (
-                      <motion.button
-                        key={acc.email}
-                        onClick={() => quickLogin(acc.email)}
-                        disabled={loading}
-                        whileHover={{ y: -3, borderColor: GREENS.primary }}
-                        whileTap={{ scale: 0.97 }}
-                        className="rounded-xl border bg-white px-3 py-2.5 text-left transition-all disabled:opacity-50"
-                        style={{ borderColor: GREENS.border }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="size-2 rounded-full shrink-0" style={{ background: acc.color }} />
-                          <div className="min-w-0">
-                            <div className="text-xs font-medium truncate" style={{ color: GREENS.text }}>{acc.role}</div>
-                            <div className="text-[10px] truncate" style={{ color: GREENS.gray }}>{acc.email}</div>
-                          </div>
-                        </div>
-                      </motion.button>
-                    ))}
+                <motion.button
+                  type="button"
+                  onClick={quickAdminLogin}
+                  disabled={loading}
+                  whileHover={{ y: -2, borderColor: BRAND.primary }}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full rounded-xl border bg-white px-4 py-3 text-left transition-all disabled:opacity-50 mb-5"
+                  style={{ borderColor: BRAND.border }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="size-2.5 rounded-full shrink-0" style={{ background: ADMIN_DEMO.color }} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium" style={{ color: BRAND.text }}>Demo Login — {ADMIN_DEMO.role}</div>
+                      <div className="text-xs truncate" style={{ color: BRAND.gray }}>{ADMIN_DEMO.email}</div>
+                    </div>
                   </div>
-                  <p className="text-center text-[11px] mt-3" style={{ color: GREENS.gray }}>
-                    All demo accounts use password <code className="font-mono px-1.5 py-0.5 rounded" style={{ background: GREENS.light }}>MyFNG@2025</code>
-                  </p>
-                </div>
+                </motion.button>
 
                 {/* Register link */}
-                <div className="text-center text-sm" style={{ color: GREENS.gray }}>
+                <div className="text-center text-sm" style={{ color: BRAND.gray }}>
                   Don't have an account?{" "}
-                  <button onClick={() => setMode("register")} className="font-semibold hover:underline" style={{ color: GREENS.primaryDark }}>
+                  <button onClick={() => setMode("register")} className="font-semibold hover:underline" style={{ color: BRAND.primaryDark }}>
                     Create Account
                   </button>
                 </div>
@@ -460,15 +458,15 @@ export function LoginScreen() {
             ) : (
               <motion.div
                 key="register"
-                initial={{ opacity: 0, x: 20 }}
+                initial={false}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
                 {/* Heading */}
                 <div className="text-center mb-8">
-                  <h2 className="text-4xl font-bold mb-2" style={{ color: GREENS.text }}>Create Account</h2>
-                  <p className="text-base" style={{ color: GREENS.gray }}>Create your enterprise access.</p>
+                  <h2 className="text-4xl font-bold mb-2" style={{ color: BRAND.text }}>Create Account</h2>
+                  <p className="text-base" style={{ color: BRAND.gray }}>Create your enterprise access.</p>
                 </div>
 
                 {/* Register Form */}
@@ -480,12 +478,12 @@ export function LoginScreen() {
 
                   {/* Role select */}
                   <div className="relative">
-                    <Shield className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: GREENS.gray }} />
+                    <Shield className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: BRAND.gray }} />
                     <select
                       value={regForm.role}
                       onChange={(e) => setRegForm({ ...regForm, role: e.target.value })}
                       className="w-full h-[58px] rounded-[18px] border pl-14 pr-5 text-base outline-none appearance-none cursor-pointer"
-                      style={{ borderColor: GREENS.border, color: GREENS.text, background: "white" }}
+                      style={{ borderColor: BRAND.border, color: BRAND.text, background: "white" }}
                     >
                       <option value="viewer">Viewer</option>
                       <option value="customer_support">Customer Support</option>
@@ -498,28 +496,28 @@ export function LoginScreen() {
                   <InputField icon={Lock} placeholder="Confirm Password" type="password" value={regForm.confirm} onChange={(v) => setRegForm({ ...regForm, confirm: v })} />
 
                   {/* Agree checkbox */}
-                  <label className="flex items-start gap-2.5 text-sm cursor-pointer" style={{ color: GREENS.gray }}>
-                    <input type="checkbox" checked={regForm.agree} onChange={(e) => setRegForm({ ...regForm, agree: e.target.checked })} className="size-4 mt-0.5 rounded accent-[#72D44C]" />
-                    <span>I agree to MyFNG's <a href="#" className="font-medium hover:underline" style={{ color: GREENS.primaryDark }}>Terms of Service</a> and <a href="#" className="font-medium hover:underline" style={{ color: GREENS.primaryDark }}>Privacy Policy</a></span>
+                  <label className="flex items-start gap-2.5 text-sm cursor-pointer" style={{ color: BRAND.gray }}>
+                    <input type="checkbox" checked={regForm.agree} onChange={(e) => setRegForm({ ...regForm, agree: e.target.checked })} className="size-4 mt-0.5 rounded accent-[#0047AB]" />
+                    <span>I agree to MyFNG's <a href="#" className="font-medium hover:underline" style={{ color: BRAND.primaryDark }}>Terms of Service</a> and <a href="#" className="font-medium hover:underline" style={{ color: BRAND.primaryDark }}>Privacy Policy</a></span>
                   </label>
 
                   {/* Create button */}
                   <motion.button
                     type="submit"
-                    whileHover={{ scale: 1.02, boxShadow: `0 10px 30px ${GREENS.primary}40` }}
+                    whileHover={{ scale: 1.02, boxShadow: `0 10px 30px ${BRAND.primary}40` }}
                     whileTap={{ scale: 0.98 }}
                     transition={{ duration: 0.3 }}
                     className="w-full h-[58px] rounded-[18px] text-white font-bold text-base flex items-center justify-center gap-2 cursor-pointer border-0"
-                    style={{ background: GREENS.buttonGrad }}
+                    style={{ background: BRAND.buttonGrad }}
                   >
                     Create Account <ArrowRight className="size-5" />
                   </motion.button>
                 </form>
 
                 {/* Login link */}
-                <div className="text-center text-sm mt-7" style={{ color: GREENS.gray }}>
+                <div className="text-center text-sm mt-7" style={{ color: BRAND.gray }}>
                   Already have an account?{" "}
-                  <button onClick={() => setMode("login")} className="font-semibold hover:underline" style={{ color: GREENS.primaryDark }}>
+                  <button onClick={() => setMode("login")} className="font-semibold hover:underline" style={{ color: BRAND.primaryDark }}>
                     Login
                   </button>
                 </div>
@@ -536,19 +534,19 @@ export function LoginScreen() {
 function InputField({ icon: Icon, placeholder, type = "text", value, onChange }: {
   icon: any; placeholder: string; type?: string; value: string; onChange: (v: string) => void;
 }) {
-  const GREENS = { gray: "#6B7280", border: "#E7E7E7", primary: "#72D44C", text: "#202124" };
+  const BRAND = { gray: "#64748B", border: "#CBD5E1", primary: "#0047AB", text: "#0F172A" };
   return (
     <div className="relative">
-      <Icon className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: GREENS.gray }} />
+      <Icon className="absolute left-5 top-1/2 -translate-y-1/2 size-5 z-10" style={{ color: BRAND.gray }} />
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className="w-full h-[58px] rounded-[18px] border pl-14 pr-5 text-base outline-none transition-all"
-        style={{ borderColor: GREENS.border, color: GREENS.text }}
-        onFocus={(e) => { e.target.style.borderColor = GREENS.primary; e.target.style.boxShadow = `0 0 0 3px ${GREENS.primary}25`; }}
-        onBlur={(e) => { e.target.style.borderColor = GREENS.border; e.target.style.boxShadow = "none"; }}
+        style={{ borderColor: BRAND.border, color: BRAND.text }}
+        onFocus={(e) => { e.target.style.borderColor = BRAND.primary; e.target.style.boxShadow = `0 0 0 3px ${BRAND.primary}25`; }}
+        onBlur={(e) => { e.target.style.borderColor = BRAND.border; e.target.style.boxShadow = "none"; }}
       />
     </div>
   );

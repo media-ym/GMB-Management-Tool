@@ -2,6 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Allow ngrok / tunnel URLs to load dev assets (/_next/*) in development
+  allowedDevOrigins: [
+    "*.ngrok-free.app",
+    "*.ngrok-free.dev",
+    "*.ngrok.io",
+    "*.ngrok.app",
+  ],
   // Next.js 16 no longer accepts the `eslint` key in next.config — `bun run lint`
   // is the canonical linter (see package.json). TypeScript build errors are
   // fixed at source rather than suppressed.

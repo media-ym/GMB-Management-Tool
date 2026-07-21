@@ -18,11 +18,17 @@ import { SystemView } from "@/components/views/system-view";
 import { ApiDocsView } from "@/components/views/api-docs-view";
 import { OpenApiSpecView } from "@/components/views/openapi-spec-view";
 import { GoogleApiMappingView } from "@/components/views/google-api-mapping-view";
+import { GoogleBillingView } from "@/components/views/google-billing-view";
 import { RoadmapView } from "@/components/views/roadmap-view";
 import { DesignSystemView } from "@/components/views/design-system-view";
 import { WireframesView } from "@/components/views/wireframes-view";
 import { SettingsView } from "@/components/views/settings-view";
 import { ClientsView } from "@/components/views/clients-view";
+import { ContentUpdatesView } from "@/components/views/content-updates-view";
+import { DirectoriesView } from "@/components/views/directories-view";
+import { KeywordsView } from "@/components/views/keywords-view";
+import { CompetitorsView } from "@/components/views/competitors-view";
+import { MarketResearchView } from "@/components/views/market-research-view";
 import { useAppStore as useStore } from "@/lib/store";
 import { ShieldAlert } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -64,11 +70,17 @@ export function ViewRouter() {
     case "api-docs": return <ApiDocsView />;
     case "openapi-spec": return <OpenApiSpecView />;
     case "google-api-mapping": return <GoogleApiMappingView />;
+    case "google-billing": return <GoogleBillingView />;
     case "roadmap": return <RoadmapView />;
     case "design-system": return <DesignSystemView />;
     case "wireframes": return <WireframesView />;
     case "settings": return <SettingsView />;
     case "clients": return <ClientsView />;
+    case "content-updates": return <ContentUpdatesView />;
+    case "directories": return <DirectoriesView />;
+    case "keywords": return <KeywordsView />;
+    case "competitors": return <CompetitorsView />;
+    case "market-research": return <MarketResearchView />;
     default: return <DashboardView />;
   }
 }

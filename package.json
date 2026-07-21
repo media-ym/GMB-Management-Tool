@@ -1,16 +1,26 @@
 {
-  "name": "nextjs_tailwind_shadcn_ts",
-  "version": "0.2.0",
+  "name": "myfng-local-ai-manager",
+  "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
-    "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
+    "dev": "next dev -p 3000 -H 0.0.0.0",
+    "build": "prisma generate && next build && mkdir -p .next/standalone/.next && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
+    "start": "NODE_ENV=production node .next/standalone/server.js",
+    "start:bun": "NODE_ENV=production bun .next/standalone/server.js",
     "lint": "eslint .",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "postinstall": "prisma generate",
+    "tunnel": "node scripts/tunnel.mjs",
+    "tunnel:start": "node scripts/tunnel-start.mjs",
+    "gmb:chrome-login": "node scripts/setup-gmb-chrome-login.mjs",
+    "cron:sync": "node scripts/run-sync-all.mjs",
+    "cron:sync:loop": "node scripts/cron-sync-loop.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -18,6 +28,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^5.1.1",
     "@mdxeditor/editor": "^3.39.1",
+    "@ngrok/ngrok": "^1.7.0",
     "@prisma/client": "^6.11.1",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.14",
@@ -63,6 +74,7 @@
     "next-intl": "^4.3.4",
     "next-themes": "^0.4.6",
     "prisma": "^6.11.1",
+    "puppeteer-core": "^24.2.0",
     "react": "^19.0.0",
     "react-day-picker": "^9.8.0",
     "react-dom": "^19.0.0",
@@ -71,6 +83,7 @@
     "react-resizable-panels": "^3.0.3",
     "react-syntax-highlighter": "^15.6.1",
     "recharts": "^2.15.4",
+    "remark-gfm": "^4.0.1",
     "sharp": "^0.34.3",
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",

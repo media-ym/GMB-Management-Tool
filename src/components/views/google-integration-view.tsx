@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
@@ -53,7 +53,7 @@ type OauthStatus = "connected" | "token_expired" | "disconnected" | "not_configu
 type VerificationState = "verified" | "unverified" | "pending";
 type ProfileStatus = "active" | "suspended" | "disabled";
 type SyncStatus = "synced" | "syncing" | "pending" | "error";
-type ApiHealth = "healthy" | "degraded";
+type ApiHealth = "healthy" | "degraded" | "disconnected";
 
 interface OauthState {
   status: OauthStatus;
@@ -75,6 +75,7 @@ interface ConnectedAccount {
 }
 interface GbpProfile {
   id: string;
+  locationId: string;
   googleLocationId: string;
   profileName: string;
   primaryCategory: string;
@@ -110,6 +111,8 @@ interface ApiErrorRow {
   createdAt: string;
 }
 interface GoogleIntegrationResponse {
+  googleConnected?: boolean;
+  cachedProfiles?: number;
   oauth: OauthState;
   accounts: ConnectedAccount[];
   profiles: GbpProfile[];
@@ -124,18 +127,20 @@ interface GoogleIntegrationResponse {
 
 const REQUESTED_SCOPES: { label: string; scope: string }[] = [
   { label: "Business Profile (manage)", scope: "https://www.googleapis.com/auth/business.manage" },
+  { label: "Google Ads (Keyword Planner)", scope: "https://www.googleapis.com/auth/adwords" },
   { label: "OpenID Connect", scope: "openid" },
   { label: "Email", scope: "https://www.googleapis.com/auth/userinfo.email" },
   { label: "Profile", scope: "https://www.googleapis.com/auth/userinfo.profile" },
 ];
 
 const SYNC_SCHEDULE: { module: string; schedule: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { module: "Reviews",       schedule: "Every 5 minutes",  icon: Star },
-  { module: "Business Info", schedule: "Every 30 minutes", icon: Building2 },
-  { module: "Analytics",     schedule: "Daily",            icon: Activity },
-  { module: "Photos",        schedule: "Daily",            icon: MapPin },
-  { module: "Categories",    schedule: "Daily",            icon: Server },
-  { module: "Services",      schedule: "Daily",            icon: Globe },
+  { module: "Full Google sync", schedule: "Every 6 hours (cron)", icon: RefreshCw },
+  { module: "Reviews",       schedule: "Included in 6h sync",  icon: Star },
+  { module: "Business Info", schedule: "Included in 6h sync", icon: Building2 },
+  { module: "Analytics",     schedule: "Included in 6h sync",            icon: Activity },
+  { module: "Photos",        schedule: "Included in 6h sync",            icon: MapPin },
+  { module: "Categories",    schedule: "Included in 6h sync",            icon: Server },
+  { module: "Services",      schedule: "Included in 6h sync",            icon: Globe },
 ];
 
 const REQUIRED_APIS: { name: string; description: string }[] = [
@@ -148,8 +153,7 @@ const REQUIRED_APIS: { name: string; description: string }[] = [
 
 const AUTHORIZED_ORIGINS: { origin: string; env: string }[] = [
   { origin: "http://localhost:3000", env: "Development" },
-  { origin: "https://staging.myfng.in", env: "Staging" },
-  { origin: "https://app.myfng.in", env: "Production" },
+  { origin: "https://gmb.myfng.in", env: "Production" },
 ];
 
 const REDIRECT_URI = "/auth/google/callback";
@@ -303,6 +307,7 @@ function OauthConnectionCard({
     const { pct, remainingMs } = tokenProgress(oauth.tokenExpiry);
     const remainingMin = Math.max(0, Math.round(remainingMs / 60000));
     return (
+      <>
       <Card className="border-emerald-500/30 bg-emerald-500/[0.04]">
         <CardContent className="p-5">
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
@@ -370,11 +375,24 @@ function OauthConnectionCard({
                     </div>
                   </div>
                 )}
+
+                {!oauth.scopes.some((s) => s.includes("adwords")) && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                    Keyword Planner needs the <strong>Google Ads</strong> scope. Click{" "}
+                    <strong>Reconnect for Ads</strong> and approve the extra permission.
+                  </div>
+                )}
               </div>
             </div>
 
             {canSync && (
               <div className="flex flex-col gap-2 shrink-0">
+                {!oauth.scopes.some((s) => s.includes("adwords")) && (
+                  <Button onClick={() => onConnect()} disabled={connecting}>
+                    {connecting ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                    Reconnect for Ads
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   className="border-rose-500/30 text-rose-600 hover:bg-rose-500/10 hover:text-rose-700 dark:hover:text-rose-300"
@@ -389,6 +407,37 @@ function OauthConnectionCard({
           </div>
         </CardContent>
       </Card>
+
+      <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Link2Off className="size-5 text-rose-500" />
+              Disconnect Google account?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This will revoke the OAuth token for <span className="font-medium text-foreground">{oauth.connectedEmail ?? "the connected account"}</span>.
+              All scheduled syncs will pause until you re-authorize. Existing reviews, posts & analytics data will be preserved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              className="bg-rose-600 hover:bg-rose-700 text-white"
+              onClick={async (e) => {
+                e.preventDefault();
+                await onDisconnect();
+                setDisconnectOpen(false);
+              }}
+            >
+              {disconnecting ? <Loader2 className="size-4 animate-spin mr-1" /> : null}
+              Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      </>
     );
   }
 
@@ -469,7 +518,6 @@ function OauthConnectionCard({
 
   // DISCONNECTED ───────────────────────────────────────────────────────────
   return (
-    <>
       <Card className="border-slate-500/30 bg-slate-500/[0.04]">
         <CardContent className="p-5">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -517,32 +565,6 @@ function OauthConnectionCard({
           </div>
         </CardContent>
       </Card>
-
-      <AlertDialog open={disconnectOpen} onOpenChange={setDisconnectOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <Link2Off className="size-5 text-rose-500" />
-              Disconnect Google account?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will revoke the OAuth token for <span className="font-medium text-foreground">{oauth.connectedEmail ?? "the connected account"}</span>.
-              All scheduled syncs will pause until you re-authorize. Existing reviews, posts & analytics data will be preserved.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-rose-600 hover:bg-rose-700 text-white"
-              onClick={() => onDisconnect()}
-            >
-              {disconnecting ? <Loader2 className="size-4 animate-spin mr-1" /> : null}
-              Disconnect
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
   );
 }
 
@@ -553,13 +575,14 @@ function OauthConnectionCard({
 export function GoogleIntegrationView() {
   const user = useUser();
   const qc = useQueryClient();
-  const canSync = can(user.role, "system.sync");
+  const canManageGoogle = can(user.role, "system.sync") || can(user.role, "locations.manage");
 
   const [activeTab, setActiveTab] = useState("profiles");
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [syncingLocationId, setSyncingLocationId] = useState<string | null>(null);
   const [syncingAll, setSyncingAll] = useState(false);
+  const oauthAutoStarted = useRef(false);
 
   const { data, isLoading, isError, refetch } = useQuery<GoogleIntegrationResponse>({
     queryKey: ["google-integration"],
@@ -573,7 +596,13 @@ export function GoogleIntegrationView() {
   }
 
   async function handleConnect() {
-    if (!canSync) return;
+    if (!canManageGoogle) return;
+    // OAuth must run on localhost — 0.0.0.0 breaks cookies vs Google redirect.
+    if (typeof window !== "undefined" && window.location.hostname === "0.0.0.0") {
+      const port = window.location.port || "3000";
+      window.location.href = `http://localhost:${port}/google?start_oauth=1`;
+      return;
+    }
     setConnecting(true);
     const tid = toast.loading("Redirecting to Google…");
     try {
@@ -597,8 +626,19 @@ export function GoogleIntegrationView() {
     }
   }
 
+  // After redirect from 0.0.0.0 → localhost, auto-start OAuth once.
+  useEffect(() => {
+    if (typeof window === "undefined" || oauthAutoStarted.current || !canManageGoogle) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("start_oauth") !== "1") return;
+    oauthAutoStarted.current = true;
+    window.history.replaceState({}, "", window.location.pathname);
+    void handleConnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount when flagged
+  }, [canManageGoogle]);
+
   async function handleDisconnect() {
-    if (!canSync) return;
+    if (!canManageGoogle) return;
     setDisconnecting(true);
     const tid = toast.loading("Disconnecting…");
     try {
@@ -608,6 +648,10 @@ export function GoogleIntegrationView() {
       });
       toast.success("Google account disconnected", { id: tid });
       qc.invalidateQueries({ queryKey: ["google-integration"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+      qc.invalidateQueries({ queryKey: ["reviews"] });
+      qc.invalidateQueries({ queryKey: ["locations"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to disconnect", { id: tid });
     } finally {
@@ -616,7 +660,7 @@ export function GoogleIntegrationView() {
   }
 
   async function handleSync(locationId?: string) {
-    if (!canSync) return;
+    if (!canManageGoogle) return;
     const tid = toast.loading(locationId ? "Syncing profile…" : "Syncing all profiles…");
     if (locationId) setSyncingLocationId(locationId);
     else setSyncingAll(true);
@@ -637,9 +681,10 @@ export function GoogleIntegrationView() {
 
   const oauth = data?.oauth;
   const summary = data?.summary;
-  const profiles = data?.profiles ?? [];
-  const syncErrors = data?.recentSyncErrors ?? [];
-  const apiErrors = data?.apiErrors ?? [];
+  const googleConnected = data?.googleConnected ?? oauth?.status === "connected";
+  const profiles = googleConnected ? (data?.profiles ?? []) : [];
+  const syncErrors = googleConnected ? (data?.recentSyncErrors ?? []) : [];
+  const apiErrors = googleConnected ? (data?.apiErrors ?? []) : [];
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-5">
@@ -680,7 +725,7 @@ export function GoogleIntegrationView() {
       ) : (
         <OauthConnectionCard
           oauth={oauth}
-          canSync={canSync}
+          canSync={canManageGoogle}
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
           connecting={connecting}
@@ -689,6 +734,7 @@ export function GoogleIntegrationView() {
       )}
 
       {/* Sync health stat row + API health badge */}
+      {googleConnected && (
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Sync Health</h2>
@@ -699,11 +745,13 @@ export function GoogleIntegrationView() {
                 "font-medium",
                 summary.apiHealth === "healthy"
                   ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                  : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                  : summary.apiHealth === "disconnected"
+                    ? "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20"
+                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
               )}
             >
-              <CircleCheck className={cn("size-3 mr-1", summary.apiHealth === "healthy" ? "text-emerald-500" : "text-amber-500")} />
-              API {summary.apiHealth === "healthy" ? "Healthy" : "Degraded"}
+              <CircleCheck className={cn("size-3 mr-1", summary.apiHealth === "healthy" ? "text-emerald-500" : summary.apiHealth === "disconnected" ? "text-slate-500" : "text-amber-500")} />
+              API {summary.apiHealth === "healthy" ? "Healthy" : summary.apiHealth === "disconnected" ? "Disconnected" : "Degraded"}
             </Badge>
           )}
         </div>
@@ -750,6 +798,16 @@ export function GoogleIntegrationView() {
           )}
         </div>
       </div>
+      )}
+
+      {!googleConnected && !isLoading && (
+        <Card className="border-slate-500/30 bg-slate-500/[0.04]">
+          <CardContent className="p-4 text-sm text-muted-foreground">
+            Google is disconnected. Profile and sync data are hidden until you reconnect your Google Business Profile account.
+            {(data?.cachedProfiles ?? 0) > 0 ? ` (${data?.cachedProfiles} cached profile(s) in database)` : ""}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -764,9 +822,9 @@ export function GoogleIntegrationView() {
         <TabsContent value="profiles">
           <CardSection
             title="Google Business Profiles"
-            description={`${profiles.length} profile${profiles.length === 1 ? "" : "s"} linked to this account`}
+            description={googleConnected ? `${profiles.length} profile${profiles.length === 1 ? "" : "s"} linked to this account` : "Connect Google to view linked profiles"}
             action={
-              canSync && profiles.length > 0 ? (
+              canManageGoogle && profiles.length > 0 && googleConnected ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -796,8 +854,10 @@ export function GoogleIntegrationView() {
             ) : profiles.length === 0 ? (
               <EmptyState
                 icon={Building2}
-                title="No Google Business Profiles linked"
-                description="Once you connect a Google account with Business Profile access, your locations will appear here."
+                title={googleConnected ? "No Google Business Profiles linked" : "Google disconnected"}
+                description={googleConnected
+                  ? "Once you connect a Google account with Business Profile access, your locations will appear here."
+                  : "Connect your Google Business Profile account above to view and sync locations."}
                 tone="slate"
               />
             ) : (
@@ -862,15 +922,15 @@ export function GoogleIntegrationView() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
-                            {canSync && (
+                            {canManageGoogle && (
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-8"
-                                disabled={syncingLocationId === p.id || syncingAll}
-                                onClick={() => handleSync(p.id)}
+                                disabled={syncingLocationId === p.locationId || syncingAll}
+                                onClick={() => handleSync(p.locationId)}
                               >
-                                {syncingLocationId === p.id ? (
+                                {syncingLocationId === p.locationId ? (
                                   <Loader2 className="size-3.5 animate-spin" />
                                 ) : (
                                   <RefreshCw className="size-3.5" />

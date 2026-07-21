@@ -23,9 +23,13 @@ import {
   eachDayOfInterval,
   addMonths,
   subMonths,
+  addWeeks,
+  subWeeks,
   isSameMonth,
   isSameDay,
+  isSameWeek,
   isToday,
+  isBefore,
   setHours,
   setMinutes,
   setSeconds,
@@ -204,12 +208,15 @@ function DayCell({
     onEmptyClick(date);
   }
 
+  const isPast = isBefore(date, new Date()) && !isToday(date);
+
   return (
     <div
       ref={setNodeRef}
       className={cn(
         "group/day relative min-h-[96px] sm:min-h-[120px] border-r border-b border-border/60 p-1 flex flex-col gap-0.5 transition-colors",
         !inMonth && "bg-muted/30",
+        isPast && "bg-[repeating-linear-gradient(135deg,transparent,transparent_4px,var(--border)_4px,var(--border)_5px)] opacity-75",
         isOver && "bg-primary/10 ring-2 ring-inset ring-primary",
         today && "ring-2 ring-inset ring-emerald-500",
       )}
@@ -277,6 +284,8 @@ function DayCell({
 
 /* ---------- Calendar Header ---------- */
 
+type CalendarViewMode = "month" | "week";
+
 interface CalendarHeaderProps {
   cursor: Date;
   onPrev: () => void;
@@ -286,27 +295,48 @@ interface CalendarHeaderProps {
   showPublished: boolean;
   onToggleScheduled: (v: boolean) => void;
   onTogglePublished: (v: boolean) => void;
+  calendarViewMode: CalendarViewMode;
+  onCalendarViewModeChange: (v: CalendarViewMode) => void;
 }
 
 function CalendarHeader({
   cursor, onPrev, onNext, onToday,
   showScheduled, showPublished, onToggleScheduled, onTogglePublished,
+  calendarViewMode, onCalendarViewModeChange,
 }: CalendarHeaderProps) {
+  const headerText = calendarViewMode === "week"
+    ? `${format(startOfWeek(cursor, { weekStartsOn: 0 }), "MMM d")} — ${format(endOfWeek(cursor, { weekStartsOn: 0 }), "MMM d, yyyy")}`
+    : format(cursor, "MMMM yyyy");
+
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="icon" onClick={onPrev} aria-label="Previous month">
+        <Button variant="outline" size="icon" onClick={onPrev} aria-label={calendarViewMode === "week" ? "Previous week" : "Previous month"}>
           <ChevronLeft className="size-4" />
         </Button>
         <div className="min-w-[180px] text-center">
-          <div className="text-lg font-semibold tracking-tight">{format(cursor, "MMMM yyyy")}</div>
+          <div className="text-lg font-semibold tracking-tight">{headerText}</div>
         </div>
-        <Button variant="outline" size="icon" onClick={onNext} aria-label="Next month">
+        <Button variant="outline" size="icon" onClick={onNext} aria-label={calendarViewMode === "week" ? "Next week" : "Next month"}>
           <ChevronRight className="size-4" />
         </Button>
         <Button variant="outline" size="sm" onClick={onToday} className="ml-1">
           Today
         </Button>
+        <div className="ml-2 flex rounded-lg border overflow-hidden">
+          <button
+            onClick={() => onCalendarViewModeChange("month")}
+            className={cn("px-3 py-1 text-xs font-medium transition",
+              calendarViewMode === "month" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+            )}
+          >Month</button>
+          <button
+            onClick={() => onCalendarViewModeChange("week")}
+            className={cn("px-3 py-1 text-xs font-medium transition border-l",
+              calendarViewMode === "week" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+            )}
+          >Week</button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -376,17 +406,22 @@ export function PostsCalendar({
   const [expandedDays, setExpandedDays] = React.useState<Set<string>>(new Set());
   const [activeDragPost, setActiveDragPost] = React.useState<PostWithLocation | null>(null);
   const [rescheduling, setRescheduling] = React.useState(false);
+  const [calendarViewMode, setCalendarViewMode] = React.useState<CalendarViewMode>("month");
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
-  // Compute the 6-week grid (42 days) covering the month
   const days = React.useMemo(() => {
+    if (calendarViewMode === "week") {
+      const start = startOfWeek(cursor, { weekStartsOn: 0 });
+      const end = endOfWeek(cursor, { weekStartsOn: 0 });
+      return eachDayOfInterval({ start, end });
+    }
     const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 0 });
     const end = endOfWeek(endOfMonth(cursor), { weekStartsOn: 0 });
     return eachDayOfInterval({ start, end });
-  }, [cursor]);
+  }, [cursor, calendarViewMode]);
 
   // Bucket posts by yyyy-MM-dd based on scheduledAt OR publishedAt
   const postsByDay = React.useMemo(() => {
@@ -518,13 +553,15 @@ export function PostsCalendar({
     <div className="space-y-3">
       <CalendarHeader
         cursor={cursor}
-        onPrev={() => setCursor((d) => subMonths(d, 1))}
-        onNext={() => setCursor((d) => addMonths(d, 1))}
-        onToday={() => setCursor(startOfMonth(new Date()))}
+        onPrev={() => setCursor((d) => calendarViewMode === "week" ? subWeeks(d, 1) : subMonths(d, 1))}
+        onNext={() => setCursor((d) => calendarViewMode === "week" ? addWeeks(d, 1) : addMonths(d, 1))}
+        onToday={() => setCursor(new Date())}
         showScheduled={showScheduled}
         showPublished={showPublished}
         onToggleScheduled={setShowScheduled}
         onTogglePublished={setShowPublished}
+        calendarViewMode={calendarViewMode}
+        onCalendarViewModeChange={setCalendarViewMode}
       />
 
       {/* Hint bar */}

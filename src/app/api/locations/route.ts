@@ -4,6 +4,10 @@ import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import type { LocationWithStats } from "@/lib/types";
+import { extractLocationFromName, inferCityFromAddress, parseGoogleAddress } from "@/lib/location-utils";
+import { refreshAllLocationScores } from "@/lib/location-scores";
+import { getValidAccessToken, googleServiceStatus, getVoiceOfMerchantState, getBusinessProfile } from "@/lib/google-service";
+import { resolveVerificationFromVoiceOfMerchant } from "@/lib/gbp-profile-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +18,83 @@ export async function GET(req: NextRequest) {
 
   const scoped = scopeLocationIds(user);
   const where = scoped ? { id: { in: scoped } } : {};
-  const locations = await db.location.findMany({ where, orderBy: { city: "asc" } });
+  const rows = await db.location.findMany({
+    where,
+    orderBy: { city: "asc" },
+    include: { googleProfiles: { take: 1 } },
+  });
 
-  const data: LocationWithStats[] = locations.map((l) => ({
+  // Backfill city/address from location name or address when import left them empty
+  for (const l of rows) {
+    const needsCity = !l.city || l.city === "Unknown";
+    const needsAddress = !l.address?.trim();
+    if (!needsCity && !needsAddress) continue;
+    const extracted = extractLocationFromName(l.name);
+    const updates: { city?: string; address?: string } = {};
+    if (needsCity) {
+      const fromAddress = inferCityFromAddress(l.address ?? "");
+      if (extracted.city) updates.city = extracted.city;
+      else if (fromAddress) updates.city = fromAddress;
+    }
+    if (Object.keys(updates).length > 0) {
+      await db.location.update({ where: { id: l.id }, data: updates });
+      if (updates.city) l.city = updates.city;
+    }
+  }
+
+  // Refresh verification + backfill address/city from Google for incomplete imports
+  const accessToken = googleServiceStatus.isConfigured ? await getValidAccessToken() : null;
+  if (accessToken) {
+    for (const l of rows) {
+      const gbp = l.googleProfiles[0];
+      if (!gbp) continue;
+
+      const needsGoogleAddress = (!l.address?.trim() || l.city === "Unknown");
+      if (needsGoogleAddress) {
+        try {
+          const profile = await getBusinessProfile(accessToken, gbp.googleLocationId);
+          const parsed = parseGoogleAddress(profile.storefrontAddress ?? profile.address);
+          const city = parsed.city
+            || extractLocationFromName(l.name).city
+            || inferCityFromAddress(parsed.address)
+            || undefined;
+          const updates: { city?: string; address?: string } = {};
+          if (city && l.city === "Unknown") updates.city = city;
+          if (parsed.address && !l.address?.trim()) updates.address = parsed.address;
+          if (Object.keys(updates).length > 0) {
+            await db.location.update({ where: { id: l.id }, data: updates });
+            if (updates.city) l.city = updates.city;
+            if (updates.address) l.address = updates.address;
+          }
+        } catch {
+          // Best-effort backfill
+        }
+      }
+
+      try {
+        const vom = await getVoiceOfMerchantState(accessToken, gbp.googleLocationId);
+        const verificationState = resolveVerificationFromVoiceOfMerchant(vom);
+        if (verificationState !== gbp.verificationState) {
+          await db.googleBusinessProfile.update({
+            where: { id: gbp.id },
+            data: { verificationState },
+          });
+          gbp.verificationState = verificationState;
+        }
+      } catch {
+        // Keep cached value if Google is unreachable
+      }
+    }
+  }
+
+  await refreshAllLocationScores(rows.map((l) => l.id), { writeAudit: false });
+  const refreshed = await db.location.findMany({
+    where,
+    orderBy: { city: "asc" },
+    include: { googleProfiles: { take: 1 } },
+  });
+
+  const data: LocationWithStats[] = refreshed.map((l) => ({
     id: l.id,
     name: l.name,
     city: l.city,
@@ -24,8 +102,8 @@ export async function GET(req: NextRequest) {
     address: l.address,
     phone: l.phone,
     website: l.website,
-    status: l.status as any,
-    syncStatus: l.syncStatus as any,
+    status: l.status as LocationWithStats["status"],
+    syncStatus: l.syncStatus as LocationWithStats["syncStatus"],
     lastSyncedAt: l.lastSyncedAt?.toISOString() ?? null,
     avgRating: l.avgRating,
     reviewCount: l.reviewCount,
@@ -33,6 +111,7 @@ export async function GET(req: NextRequest) {
     visibilityScore: l.visibilityScore,
     latitude: l.latitude,
     longitude: l.longitude,
+    verificationState: l.googleProfiles[0]?.verificationState ?? null,
   }));
 
   return ok(data);
@@ -136,7 +215,6 @@ export async function POST(req: NextRequest) {
     await db.businessAttribute.create({ data: { locationId: location.id, ...a } });
   }
 
-  // Log the action
   await logAudit({
     userId: user.id,
     userName: user.name,

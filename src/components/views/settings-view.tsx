@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import { useAppStore } from "@/lib/store";
+import { useAppNavigation } from "@/hooks/use-app-navigation";
 import { useUser } from "@/lib/user-context";
 import { can } from "@/lib/permissions";
 import { ROLES, type Role } from "@/lib/types";
@@ -3407,7 +3407,7 @@ function FeatureTile({ label, value, icon: Icon }: { label: string; value: strin
 // 16. API DOCUMENTATION
 // ===========================================================================
 function ApiDocsContent() {
-  const setView = useAppStore((s) => s.setView);
+  const { navigate } = useAppNavigation();
   return (
     <div className="space-y-4">
       <div>
@@ -3423,7 +3423,7 @@ function ApiDocsContent() {
           <p className="text-sm text-muted-foreground mt-1.5 max-w-md mx-auto">
             Browse the complete REST API reference — all endpoints grouped by category, with HTTP methods, status codes, rate limits & response envelope examples.
           </p>
-          <Button className="mt-5" onClick={() => setView("api-docs")}>
+          <Button className="mt-5" onClick={() => navigate("api-docs")}>
             <ExternalLink className="size-3.5 mr-1.5" /> Open API Docs
           </Button>
         </CardContent>

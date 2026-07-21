@@ -112,6 +112,7 @@ export async function GET() {
       // Admin
       { group: "Admin", method: "GET", path: "/api/admin/system-health", desc: "Detailed health checks (8 services)" },
       { group: "Admin", method: "GET", path: "/api/admin/api-usage", desc: "API usage stats (requests, AI, sync)" },
+      { group: "Admin", method: "GET", path: "/api/admin/google-billing", desc: "Google Cloud / API billing & usage dashboard data" },
       { group: "Admin", method: "GET", path: "/api/admin/jobs", desc: "Background jobs list + stats" },
       { group: "Admin", method: "POST", path: "/api/admin/jobs/{id}/retry", desc: "Retry failed job" },
       { group: "Admin", method: "POST", path: "/api/admin/test-email", desc: "Test SMTP email" },

@@ -4,11 +4,16 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { useAppStore } from "@/lib/store";
+import { useAppNavigation } from "@/hooks/use-app-navigation";
 import { useUser } from "@/lib/user-context";
 import { can } from "@/lib/permissions";
 import { useLocations } from "@/hooks/use-locations";
 import { PageHeader, CardSection } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
+import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { DateRangeFilter, getAnalyticsDateRangeLabel, type AnalyticsDateRangeKey } from "@/components/shared/date-range-filter";
+import { appendLocationIdsToParams } from "@/lib/location-filter";
+import { appendAnalyticsDateRangeToParams, analyticsDateRangeToDays } from "@/lib/analytics-date-range";
 import { RatingStars, ScoreBadge } from "@/components/shared/badges";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -175,7 +180,6 @@ interface SystemData {
   };
 }
 
-type DateRangeKey = "today" | "yesterday" | "7d" | "30d" | "90d" | "thisMonth" | "lastMonth";
 type DashboardTab = "executive" | "marketing" | "location" | "reviews" | "seo" | "posts" | "ai" | "operations";
 
 // ---- Helpers ------------------------------------------------------------
@@ -207,29 +211,6 @@ const RATING_COLORS: Record<number, string> = {
   2: "#fb923c", // orange-400
   1: "#f43f5e", // rose
 };
-
-const DATE_RANGE_OPTIONS: { value: DateRangeKey; label: string }[] = [
-  { value: "today", label: "Today" },
-  { value: "yesterday", label: "Yesterday" },
-  { value: "7d", label: "Last 7 Days" },
-  { value: "30d", label: "Last 30 Days" },
-  { value: "90d", label: "Last 90 Days" },
-  { value: "thisMonth", label: "This Month" },
-  { value: "lastMonth", label: "Last Month" },
-];
-
-function dateRangeToDays(key: DateRangeKey): number {
-  const now = new Date();
-  switch (key) {
-    case "today": return 1;
-    case "yesterday": return 2;
-    case "7d": return 7;
-    case "30d": return 30;
-    case "90d": return 90;
-    case "thisMonth": return Math.max(1, now.getDate());
-    case "lastMonth": return new Date(now.getFullYear(), now.getMonth(), 0).getDate();
-  }
-}
 
 /** Map an insight action string ("View SEO", "Create Post"…) to a ViewKey. */
 function actionToView(action?: string): ViewKey | null {
@@ -304,9 +285,9 @@ const tooltipLabelStyle = { color: "var(--foreground)" } as const;
 
 export function AnalyticsView() {
   const user = useUser();
-  const activeLocationId = useAppStore((s) => s.activeLocationId);
-  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
-  const setView = useAppStore((s) => s.setView);
+  const selectedLocationIds = useAppStore((s) => s.selectedLocationIds);
+  const setSelectedLocationIds = useAppStore((s) => s.setSelectedLocationIds);
+  const { navigate } = useAppNavigation();
   const qc = useQueryClient();
   const { data: locations } = useLocations();
 
@@ -315,7 +296,8 @@ export function AnalyticsView() {
   const canSystem = can(user.role, "settings.view") || can(user.role, "audit.view");
 
   const [activeTab, setActiveTab] = useState<DashboardTab>("executive");
-  const [dateRange, setDateRange] = useState<DateRangeKey>("30d");
+  const [dateRange, setDateRange] = useState<AnalyticsDateRangeKey>("6m");
+  const [customDateRange, setCustomDateRange] = useState<{ from?: string; to?: string } | null>(null);
   const [tableOpen, setTableOpen] = useState<boolean>(true);
   const [comparisonOpen, setComparisonOpen] = useState<boolean>(true);
   const [sortKey, setSortKey] = useState<SortKey>("searchViews");
@@ -323,27 +305,33 @@ export function AnalyticsView() {
   const [cmpSortKey, setCmpSortKey] = useState<ComparisonSortKey>("searchViews");
   const [cmpSortDir, setCmpSortDir] = useState<"asc" | "desc">("desc");
 
-  const days = dateRangeToDays(dateRange);
+  const days = analyticsDateRangeToDays(dateRange, customDateRange);
+  const dateRangeLabel = getAnalyticsDateRangeLabel(dateRange, customDateRange);
 
-  // Build analytics query URL — relative only.
   const queryUrl = useMemo(() => {
-    const params = new URLSearchParams({ days: String(days) });
-    if (activeLocationId && activeLocationId !== "all") {
-      params.set("locationId", activeLocationId);
-    }
+    const params = new URLSearchParams();
+    appendAnalyticsDateRangeToParams(params, dateRange, customDateRange);
+    appendLocationIdsToParams(params, selectedLocationIds);
     return `/api/analytics?${params.toString()}`;
-  }, [activeLocationId, days]);
+  }, [selectedLocationIds, dateRange, customDateRange]);
 
   const { data: analyticsData, isLoading: analyticsLoading, isError: analyticsError } = useQuery<AnalyticsResponse>({
-    queryKey: ["analytics", activeLocationId, days],
+    queryKey: ["analytics", selectedLocationIds, dateRange, customDateRange],
     queryFn: () => api<AnalyticsResponse>(queryUrl),
     staleTime: 30_000,
     enabled: canViewAnalytics,
   });
 
+  const execUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    appendAnalyticsDateRangeToParams(params, dateRange, customDateRange);
+    appendLocationIdsToParams(params, selectedLocationIds);
+    return `/api/dashboard/executive?${params.toString()}`;
+  }, [selectedLocationIds, dateRange, customDateRange]);
+
   const { data: execData, isLoading: execLoading } = useQuery<ExecutiveDashboard>({
-    queryKey: ["dashboard-executive"],
-    queryFn: () => api<ExecutiveDashboard>("/api/dashboard/executive"),
+    queryKey: ["dashboard-executive", selectedLocationIds, dateRange, customDateRange],
+    queryFn: () => api<ExecutiveDashboard>(execUrl),
     staleTime: 30_000,
     enabled: canViewAnalytics,
   });
@@ -355,9 +343,15 @@ export function AnalyticsView() {
     enabled: canViewAnalytics,
   });
 
-  const comparisonUrl = useMemo(() => `/api/analytics/location-comparison?days=${days}`, [days]);
+  const comparisonUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    appendAnalyticsDateRangeToParams(params, dateRange, customDateRange);
+    appendLocationIdsToParams(params, selectedLocationIds);
+    return `/api/analytics/location-comparison?${params.toString()}`;
+  }, [selectedLocationIds, dateRange, customDateRange]);
+
   const { data: comparisonData, isLoading: comparisonLoading } = useQuery<LocationComparisonRow[]>({
-    queryKey: ["location-comparison", days],
+    queryKey: ["location-comparison", selectedLocationIds, dateRange, customDateRange],
     queryFn: () => api<LocationComparisonRow[]>(comparisonUrl),
     staleTime: 30_000,
     enabled: canViewAnalytics,
@@ -484,10 +478,9 @@ export function AnalyticsView() {
   }
 
   function handleExport() {
-    const params = new URLSearchParams({ days: String(days) });
-    if (activeLocationId && activeLocationId !== "all") {
-      params.set("locationId", activeLocationId);
-    }
+    const params = new URLSearchParams();
+    appendAnalyticsDateRangeToParams(params, dateRange, customDateRange);
+    appendLocationIdsToParams(params, selectedLocationIds);
     window.open(`/api/analytics/export?${params.toString()}`, "_blank");
     toast.success("CSV export started", { description: "Your download will begin shortly." });
   }
@@ -495,7 +488,7 @@ export function AnalyticsView() {
   function handleInsightAction(action?: string) {
     const v = actionToView(action);
     if (v) {
-      setView(v);
+      navigate(v);
       toast.success(`Opening ${v}…`);
     }
   }
@@ -518,34 +511,23 @@ export function AnalyticsView() {
         title="Analytics"
         description="Business intelligence & performance dashboards"
         icon={BarChart3}
+        accent="blue"
         actions={
           <>
-            <Select value={activeLocationId} onValueChange={(v) => setActiveLocationId(v as string | "all")}>
-              <SelectTrigger size="sm" className="w-[180px] sm:w-[220px]">
-                <Filter className="size-3.5 mr-1.5 text-muted-foreground" />
-                <SelectValue placeholder="All locations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All locations</SelectItem>
-                {(locations ?? []).map((l) => (
-                  <SelectItem key={l.id} value={l.id}>
-                    {l.name} · {l.city}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LocationMultiSelect
+              locations={locations}
+              selectedIds={selectedLocationIds}
+              onChange={setSelectedLocationIds}
+              className="w-[180px] sm:w-[220px]"
+            />
 
-            <Select value={dateRange} onValueChange={(v) => setDateRange(v as DateRangeKey)}>
-              <SelectTrigger size="sm" className="w-[140px]">
-                <Calendar className="size-3.5 mr-1.5 text-muted-foreground" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DATE_RANGE_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <DateRangeFilter
+              value={dateRange}
+              onChange={setDateRange}
+              customRange={customDateRange}
+              onCustomRangeChange={setCustomDateRange}
+              className="w-[140px] sm:w-[180px]"
+            />
 
             {canExport && (
               <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
@@ -587,7 +569,7 @@ export function AnalyticsView() {
             analyticsError={analyticsError}
             hasData={hasData}
             days={days}
-            dateRangeLabel={DATE_RANGE_OPTIONS.find((o) => o.value === dateRange)?.label ?? ""}
+            dateRangeLabel={dateRangeLabel}
             topPerforming={execData?.topPerforming ?? []}
             needsAttention={execData?.needsAttention ?? []}
             ratingDistribution={execData?.ratingDistribution ?? []}
@@ -634,8 +616,8 @@ export function AnalyticsView() {
         <TabsContent value="location" className="space-y-4">
           <LocationTab
             locations={locations ?? []}
-            activeLocationId={activeLocationId}
-            setActiveLocationId={setActiveLocationId}
+            selectedLocationIds={selectedLocationIds}
+            setSelectedLocationIds={setSelectedLocationIds}
             analyticsData={analyticsData}
             isLoading={analyticsLoading}
             trendData={trendData}
@@ -1356,8 +1338,8 @@ function MarketingTab(props: MarketingTabProps) {
 
 interface LocationTabProps {
   locations: { id: string; name: string; city: string }[];
-  activeLocationId: string | "all";
-  setActiveLocationId: (id: string | "all") => void;
+  selectedLocationIds: string[];
+  setSelectedLocationIds: (ids: string[]) => void;
   analyticsData?: AnalyticsResponse;
   isLoading: boolean;
   trendData: { date: string; search: number; maps: number }[];
@@ -1365,10 +1347,12 @@ interface LocationTabProps {
 }
 
 function LocationTab(props: LocationTabProps) {
-  const { locations, activeLocationId, setActiveLocationId, analyticsData, isLoading, trendData, days } = props;
+  const { locations, selectedLocationIds, setSelectedLocationIds, analyticsData, isLoading, trendData, days } = props;
 
-  // If no location is selected, prompt the user to pick one.
-  const selectedId = activeLocationId !== "all" ? activeLocationId : (locations[0]?.id ?? "");
+  const selectedId =
+    selectedLocationIds.length === 1
+      ? selectedLocationIds[0]
+      : (selectedLocationIds[0] ?? locations[0]?.id ?? "");
   const totals = analyticsData?.totals;
   const series = analyticsData?.series ?? [];
 
@@ -1389,7 +1373,7 @@ function LocationTab(props: LocationTabProps) {
             </div>
           </div>
           <div className="sm:ml-auto">
-            <Select value={selectedId} onValueChange={(v) => setActiveLocationId(v as string)}>
+            <Select value={selectedId} onValueChange={(v) => setSelectedLocationIds([v])}>
               <SelectTrigger size="sm" className="w-[220px] sm:w-[260px]">
                 <Filter className="size-3.5 mr-1.5 text-muted-foreground" />
                 <SelectValue placeholder="Select location" />

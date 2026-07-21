@@ -3,12 +3,90 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { createGooglePost, getValidAccessToken } from "@/lib/google-service";
+import { createGooglePost, getValidAccessToken, resolveV4LocationName } from "@/lib/google-service";
 import { aiGeneratePost } from "@/lib/ai";
 import { requireClientAuth } from "@/lib/client-auth";
 import type { PostWithLocation } from "@/lib/types";
+import { buildLocationIdFilter, parseLocationIdsParam } from "@/lib/location-filter";
+import { computeNextWeeklyOccurrence } from "@/lib/post-recurrence";
 
 export const dynamic = "force-dynamic";
+
+function mapPostRow(p: {
+  id: string;
+  locationId: string;
+  location: { name: string; city: string };
+  type: string;
+  title: string;
+  content: string;
+  ctaType: string | null;
+  ctaUrl: string | null;
+  imageUrl: string | null;
+  status: string;
+  source: string;
+  scheduledAt: Date | null;
+  recurrenceType: string | null;
+  recurrenceDayOfWeek: number | null;
+  recurrenceTime: string | null;
+  publishedAt: Date | null;
+  createdAt: Date;
+}): PostWithLocation {
+  return {
+    id: p.id,
+    locationId: p.locationId,
+    locationName: p.location.name,
+    type: p.type as PostWithLocation["type"],
+    title: p.title,
+    content: p.content,
+    ctaType: p.ctaType,
+    ctaUrl: p.ctaUrl,
+    imageUrl: p.imageUrl ?? null,
+    status: p.status as PostWithLocation["status"],
+    source: p.source as PostWithLocation["source"],
+    scheduledAt: p.scheduledAt?.toISOString() ?? null,
+    recurrenceType: p.recurrenceType === "weekly" ? "weekly" : null,
+    recurrenceDayOfWeek: p.recurrenceDayOfWeek ?? null,
+    recurrenceTime: p.recurrenceTime ?? null,
+    publishedAt: p.publishedAt?.toISOString() ?? null,
+    createdAt: p.createdAt.toISOString(),
+  };
+}
+
+function resolveScheduleFields(body: {
+  status?: string;
+  scheduledAt?: string;
+  recurrenceType?: string | null;
+  recurrenceDayOfWeek?: number | null;
+  recurrenceTime?: string | null;
+}) {
+  if (body.status !== "scheduled") {
+    return {
+      scheduledAt: null as Date | null,
+      recurrenceType: null as string | null,
+      recurrenceDayOfWeek: null as number | null,
+      recurrenceTime: null as string | null,
+    };
+  }
+
+  if (body.recurrenceType === "weekly") {
+    if (body.recurrenceDayOfWeek == null || !body.recurrenceTime) {
+      throw new Error("Weekly schedule requires a day and time");
+    }
+    return {
+      scheduledAt: computeNextWeeklyOccurrence(body.recurrenceDayOfWeek, body.recurrenceTime),
+      recurrenceType: "weekly",
+      recurrenceDayOfWeek: body.recurrenceDayOfWeek,
+      recurrenceTime: body.recurrenceTime,
+    };
+  }
+
+  return {
+    scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : new Date(Date.now() + 86400000),
+    recurrenceType: null,
+    recurrenceDayOfWeek: null,
+    recurrenceTime: null,
+  };
+}
 
 // GET /api/posts — list
 export async function GET(req: NextRequest) {
@@ -18,13 +96,13 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const locationId = url.searchParams.get("locationId") || undefined;
+  const locationIds = parseLocationIdsParam(url.searchParams.get("locationIds"));
   const status = url.searchParams.get("status") || undefined;
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 500);
 
-  const scoped = scopeLocationIds(user, locationId);
-  const where: any = {};
-  if (scoped) where.locationId = { in: scoped };
-  if (locationId && (!scoped || scoped.includes(locationId))) where.locationId = locationId;
+  const where: Record<string, unknown> = {
+    ...buildLocationIdFilter(user, { locationId, locationIds }),
+  };
   if (status) where.status = status;
 
   const posts = await db.post.findMany({
@@ -34,13 +112,7 @@ export async function GET(req: NextRequest) {
     include: { location: { select: { name: true, city: true } } },
   });
 
-  const data: PostWithLocation[] = posts.map((p) => ({
-    id: p.id, locationId: p.locationId, locationName: p.location.name, type: p.type as any,
-    title: p.title, content: p.content, ctaType: p.ctaType, ctaUrl: p.ctaUrl,
-    status: p.status as any, source: p.source as any,
-    scheduledAt: p.scheduledAt?.toISOString() ?? null, publishedAt: p.publishedAt?.toISOString() ?? null,
-    createdAt: p.createdAt.toISOString(),
-  }));
+  const data: PostWithLocation[] = posts.map((p) => mapPostRow(p));
 
   return ok(data);
 }
@@ -69,11 +141,25 @@ export async function POST(req: NextRequest) {
   }
 
   // Create post
-  const { locationId, type, title, content, ctaType, ctaUrl, status = "draft", scheduledAt } = body;
-  if (!locationId || !type || !title || !content) return fail("locationId, type, title, content required");
+  const { locationId, type, title, content, ctaType, ctaUrl, imageUrl, status = "draft", scheduledAt } = body;
+  if (!locationId || !type || !content) return fail("locationId, type, content required");
+  if ((type === "offer" || type === "event") && !title) return fail("Title is required for Offer/Event posts");
   if (!can(user.role, "posts.view")) return forbidden();
   const scoped = scopeLocationIds(user, locationId);
   if (scoped && !scoped.includes(locationId)) return forbidden("Location out of scope");
+
+  let scheduleFields;
+  try {
+    scheduleFields = resolveScheduleFields({
+      status,
+      scheduledAt,
+      recurrenceType: body.recurrenceType,
+      recurrenceDayOfWeek: body.recurrenceDayOfWeek,
+      recurrenceTime: body.recurrenceTime,
+    });
+  } catch (e: unknown) {
+    return fail(e instanceof Error ? e.message : "Invalid schedule", 400);
+  }
 
   // ─── If publishing: push to REAL Google Business Profile ───────────────
   let googlePostId: string | null = null;
@@ -85,9 +171,11 @@ export async function POST(req: NextRequest) {
     if (!authCheck.ok) return authCheck.response;
 
     const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
-    if (gbp) {
-      const accessToken = await getValidAccessToken();
-      if (accessToken) {
+    if (!gbp) return fail("No Google Business Profile linked to this location. Connect Google first.", 400);
+    const accessToken = await getValidAccessToken();
+    if (!accessToken) return fail("No valid Google access token. Please reconnect your Google account.", 401);
+    {
+      {
         try {
           // Map our post types to Google's LocalPost topicType
           // whats_new → STANDARD, offer → OFFER, event → EVENT, update → STANDARD
@@ -97,19 +185,37 @@ export async function POST(req: NextRequest) {
             languageCode: "en",
             summary: content,
             topicType: googleTopicType,
-            callToAction: ctaType ? { actionType: ctaType.toUpperCase(), url: ctaUrl || undefined } : undefined,
           };
 
-          // Add title for all types
-          if (title) googlePostData.title = title;
+          // CTA is only supported for STANDARD and EVENT, NOT for OFFER
+          if (googleTopicType !== "OFFER") {
+            const actionType = ctaType?.toUpperCase();
+            const ctaPayload = (actionType && actionType !== "NONE")
+              ? actionType === "CALL"
+                ? { actionType: "CALL" }
+                : ctaUrl ? { actionType, url: ctaUrl } : undefined
+              : undefined;
+            if (ctaPayload) googlePostData.callToAction = ctaPayload;
+          }
+
+          // Build date/time helpers
+          function buildDateObj(dateStr?: string) {
+            if (!dateStr) return undefined;
+            const d = new Date(dateStr);
+            return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+          }
+          function buildTimeObj(timeStr?: string) {
+            if (!timeStr) return undefined;
+            const [h, m] = timeStr.split(":").map(Number);
+            return { hours: h, minutes: m, seconds: 0, nanos: 0 };
+          }
 
           // Offer-specific fields
           if (type === "offer") {
-            googlePostData.offer = {
-              couponCode: body.couponCode || undefined,
-              redeemUrl: ctaUrl || undefined,
-              termsAndConditions: body.offerTerms || undefined,
-            };
+            googlePostData.offer = {};
+            if (body.couponCode) googlePostData.offer.couponCode = body.couponCode;
+            if (body.redeemUrl) googlePostData.offer.redeemOnlineUrl = body.redeemUrl;
+            if (body.offerTerms) googlePostData.offer.termsConditions = body.offerTerms;
           }
 
           // Event-specific fields
@@ -117,13 +223,34 @@ export async function POST(req: NextRequest) {
             googlePostData.event = {
               title: title,
               schedule: {
-                startDate: body.startDate ? { year: new Date(body.startDate).getFullYear(), month: new Date(body.startDate).getMonth() + 1, day: new Date(body.startDate).getDate() } : undefined,
-                endDate: body.endDate ? { year: new Date(body.endDate).getFullYear(), month: new Date(body.endDate).getMonth() + 1, day: new Date(body.endDate).getDate() } : undefined,
+                startDate: buildDateObj(body.startDate),
+                startTime: buildTimeObj(body.startTime),
+                endDate: buildDateObj(body.endDate),
+                endTime: buildTimeObj(body.endTime),
               },
             };
           }
 
-          const gPost = await createGooglePost(accessToken, gbp.googleLocationId, googlePostData);
+          // Offer also uses event.schedule for start/end dates
+          if (type === "offer" && body.startDate) {
+            googlePostData.event = {
+              title: title,
+              schedule: {
+                startDate: buildDateObj(body.startDate),
+                startTime: buildTimeObj(body.startTime),
+                endDate: buildDateObj(body.endDate),
+                endTime: buildTimeObj(body.endTime),
+              },
+            };
+          }
+
+          // Only include media if URL is publicly accessible (not localhost)
+          if (imageUrl && !imageUrl.includes("localhost")) {
+            googlePostData.media = [{ mediaFormat: "PHOTO", sourceUrl: imageUrl }];
+          }
+
+          const v4Name = await resolveV4LocationName(accessToken, gbp.googleLocationId);
+          const gPost = await createGooglePost(accessToken, v4Name, googlePostData);
           googlePostId = gPost.name || null;
         } catch (e: any) {
           await logAudit({ userId: user.id, userName: user.name, action: "post.google_failed", entity: "post", newValue: { locationId, error: e.message }, ip: req.headers.get("x-forwarded-for") ?? undefined });
@@ -135,13 +262,20 @@ export async function POST(req: NextRequest) {
 
   const post = await db.post.create({
     data: {
-      locationId, type, title, content, ctaType, ctaUrl,
+      locationId, type, title: title || "", content, ctaType, ctaUrl, imageUrl,
       status,
       source: body.source === "ai" ? "ai" : "manual",
       authorId: user.id,
       googlePostId,
-      scheduledAt: scheduledAt ? new Date(scheduledAt) : (status === "scheduled" ? new Date(Date.now() + 86400000) : null),
+      ...scheduleFields,
       publishedAt: status === "published" ? new Date() : null,
+      startDate: body.startDate ? new Date(body.startDate) : null,
+      startTime: body.startTime || null,
+      endDate: body.endDate ? new Date(body.endDate) : null,
+      endTime: body.endTime || null,
+      couponCode: body.couponCode || null,
+      redeemUrl: body.redeemUrl || null,
+      offerTerms: body.offerTerms || null,
     },
   });
 

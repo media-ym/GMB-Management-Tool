@@ -3,8 +3,10 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { updateGoogleBusinessProfile, getValidAccessToken, googleServiceStatus } from "@/lib/google-service";
+import { updateGoogleBusinessProfile, getValidAccessToken, googleServiceStatus, reconcileGoogleProfileFields, getBusinessProfile } from "@/lib/google-service";
 import { requireClientAuth } from "@/lib/client-auth";
+import { refreshLocationScores, buildCompletenessScore } from "@/lib/location-scores";
+import { fetchLocationStats } from "@/lib/location-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +37,55 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
   if (!location) return notFound("Location not found");
 
+  let gbp = location.googleProfiles[0];
+  let verificationPending = false;
+
+  // Always re-check verification from Google — cached "verified" can be wrong.
+  if (gbp && googleServiceStatus.isConfigured) {
+    const accessToken = await getValidAccessToken();
+    if (accessToken) {
+      try {
+        const profile = await getBusinessProfile(accessToken, gbp.googleLocationId);
+        const fields = await reconcileGoogleProfileFields(accessToken, gbp.googleLocationId, profile, {
+          existingMapUrl: gbp.mapUrl,
+          name: location.name,
+          latitude: location.latitude,
+          longitude: location.longitude,
+        });
+        verificationPending = fields.verificationPending;
+        if (
+          fields.verificationState !== gbp.verificationState
+          || fields.profileStatus !== gbp.profileStatus
+          || fields.mapUrl !== gbp.mapUrl
+        ) {
+          const updated = await db.googleBusinessProfile.update({
+            where: { id: gbp.id },
+            data: {
+              verificationState: fields.verificationState,
+              profileStatus: fields.profileStatus,
+              mapUrl: fields.mapUrl,
+              placeId: fields.placeId || undefined,
+              reviewUrl: fields.reviewUrl || undefined,
+            },
+          });
+          gbp = { ...gbp, ...updated };
+        } else {
+          gbp = {
+            ...gbp,
+            verificationState: fields.verificationState,
+            profileStatus: fields.profileStatus,
+            mapUrl: fields.mapUrl,
+            placeId: fields.placeId,
+            reviewUrl: fields.reviewUrl,
+          };
+        }
+      } catch {
+        // Fall back to cached DB values if Google is unreachable.
+      }
+    }
+  }
+
   // Profile completeness checklist (doc 07 §14)
-  const gbp = location.googleProfiles[0];
   const completeness = {
     businessName: !!location.name,
     phone: !!location.phone,
@@ -49,23 +98,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     attributes: location.attributes.length > 0,
     verified: gbp?.verificationState === "verified",
   };
-  const completenessScore = Math.round((Object.values(completeness).filter(Boolean).length / Object.keys(completeness).length) * 100);
+  const completenessScore = buildCompletenessScore(completeness);
 
-  // Health score breakdown (doc 07 §13)
-  const reviewResponseRate = location.reviewCount > 0
-    ? Math.round((await db.review.count({ where: { locationId: id, replyStatus: "replied" } })) / location.reviewCount * 100)
-    : 0;
-  const recentPosts = await db.post.count({ where: { locationId: id, status: "published", publishedAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } } });
-  const healthBreakdown = {
-    googleRating: Math.min(100, Math.round((location.avgRating / 5) * 100)),
-    reviewResponseRate,
-    profileCompleteness: completenessScore,
-    photos: Math.min(100, location.photos.length * 10),
-    businessHoursAccuracy: location.hours.length === 7 ? 100 : Math.round((location.hours.length / 7) * 100),
-    servicesAdded: Math.min(100, location.services.length * 15),
-    recentPosts: Math.min(100, recentPosts * 20),
-    seoScore: location.visibilityScore,
-  };
+  const scoreResult = await refreshLocationScores(id, { writeAudit: false });
+  const healthBreakdown = scoreResult.healthBreakdown;
+
+  const stats = await fetchLocationStats(id, {
+    photoCount: location.photos.length,
+    serviceCount: location.services.length,
+    categoryCount: location.categories.length,
+    productCount: location.products.length,
+    attributeCount: location.attributes.length,
+  });
 
   // Timeline (recent activity for this location) — from audit logs + sync logs
   const [recentReviews, recentPostsData, recentSyncLogs] = await Promise.all([
@@ -81,10 +125,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 15);
 
   // Analytics summary (last 30 days)
+  const analyticsSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const analyticsAgg = await db.analyticDaily.aggregate({
-    where: { locationId: id, date: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
-    _sum: { searchViews: true, mapsViews: true, websiteClicks: true, phoneCalls: true, directionRequests: true },
+    where: { locationId: id, date: { gte: analyticsSince } },
+    _sum: {
+      searchViews: true,
+      mapsViews: true,
+      websiteClicks: true,
+      phoneCalls: true,
+      directionRequests: true,
+      conversations: true,
+      bookings: true,
+    },
   });
+  const a = analyticsAgg._sum;
+  const searchViews = a.searchViews ?? 0;
+  const mapsViews = a.mapsViews ?? 0;
+  const websiteClicks = a.websiteClicks ?? 0;
+  const phoneCalls = a.phoneCalls ?? 0;
+  const directionRequests = a.directionRequests ?? 0;
+  const conversations = a.conversations ?? 0;
+  const bookings = a.bookings ?? 0;
 
   return ok({
     location: {
@@ -107,8 +168,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       lastSyncedAt: location.lastSyncedAt?.toISOString() ?? null,
       avgRating: location.avgRating,
       reviewCount: location.reviewCount,
-      healthScore: location.healthScore,
-      visibilityScore: location.visibilityScore,
+      healthScore: scoreResult.healthScore,
+      visibilityScore: scoreResult.visibilityScore,
       createdAt: location.createdAt.toISOString(),
       updatedAt: location.updatedAt.toISOString(),
     },
@@ -121,6 +182,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       averageRating: gbp.averageRating,
       totalReviews: gbp.totalReviews,
       verificationState: gbp.verificationState,
+      verificationPending,
       profileStatus: gbp.profileStatus,
       mapUrl: gbp.mapUrl,
       businessInfo: gbp.businessInfo ? {
@@ -131,23 +193,38 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     } : null,
     categories: location.categories.map(c => ({ id: c.id, name: c.categoryName, isPrimary: c.isPrimary })),
     services: location.services.map(s => ({ id: s.id, name: s.serviceName, description: s.description, category: s.category, status: s.status })),
-    products: location.products.map(p => ({ id: p.id, name: p.productName, description: p.description, category: p.category, price: p.price, currency: p.currency, imageUrl: p.imageUrl, status: p.status })),
+    products: location.products.map(p => ({ id: p.id, name: p.name, description: p.description, category: p.category, price: p.price, currency: p.currency, imageUrl: p.imageUrl, status: p.isActive ? "active" : "inactive" })),
     attributes: location.attributes.map(a => ({ id: a.id, name: a.attributeName, value: a.attributeValue })),
     hours: location.hours.map(h => ({ id: h.id, dayOfWeek: h.dayOfWeek, openTime: h.openTime, closeTime: h.closeTime, isClosed: h.isClosed })),
     specialHours: location.specialHours.map(s => ({ id: s.id, date: s.date.toISOString(), openTime: s.openTime, closeTime: s.closeTime, isClosed: s.isClosed })),
     photos: location.photos.map(p => ({ id: p.id, imageUrl: p.imageUrl, thumbnailUrl: p.thumbnailUrl, source: p.source, createdAt: p.createdAt.toISOString() })),
     completeness: { score: completenessScore, checklist: completeness },
     healthBreakdown,
+    stats,
     timeline,
-    analytics30d: analyticsAgg._sum,
-    seoAudit: location.seoAudits[0] ? {
-      auditScore: location.seoAudits[0].auditScore,
-      profileStrength: location.seoAudits[0].profileStrength,
-      missingPhotos: location.seoAudits[0].missingPhotos,
-      missingServices: location.seoAudits[0].missingServices,
-      recommendations: location.seoAudits[0].recommendationsJson ? JSON.parse(location.seoAudits[0].recommendationsJson) : [],
-      auditedAt: location.seoAudits[0].auditedAt.toISOString(),
-    } : null,
+    analytics30d: {
+      searchViews,
+      mapsViews,
+      websiteClicks,
+      phoneCalls,
+      directionRequests,
+      conversations,
+      bookings,
+      impressions: searchViews + mapsViews,
+      interactions: websiteClicks + phoneCalls + directionRequests + conversations + bookings,
+      synced: stats.analyticsSynced || stats.analyticsDaysInRange > 0,
+      daysInRange: stats.analyticsDaysInRange,
+    },
+    seoAudit: {
+      auditScore: scoreResult.healthScore,
+      profileStrength: scoreResult.visibilityScore,
+      missingPhotos: Math.max(0, 10 - location.photos.length),
+      missingServices: Math.max(0, 5 - location.services.length),
+      recommendations: location.seoAudits[0]?.recommendationsJson
+        ? JSON.parse(location.seoAudits[0].recommendationsJson)
+        : [],
+      auditedAt: new Date().toISOString(),
+    },
   });
 }
 

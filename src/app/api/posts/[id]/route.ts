@@ -3,8 +3,9 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { createGooglePost, deleteGooglePost, patchGooglePost, getValidAccessToken } from "@/lib/google-service";
+import { createGooglePost, deleteGooglePost, patchGooglePost, getValidAccessToken, resolveV4LocationName } from "@/lib/google-service";
 import { requireClientAuth } from "@/lib/client-auth";
+import { computeNextWeeklyOccurrence } from "@/lib/post-recurrence";
 
 export const dynamic = "force-dynamic";
 
@@ -29,9 +30,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!authCheck.ok) return authCheck.response;
 
     const gbp = post.location?.googleProfiles?.[0];
-    if (gbp) {
-      const accessToken = await getValidAccessToken();
-      if (accessToken) {
+    if (!gbp) return fail("No Google Business Profile linked to this location. Connect Google first.", 400);
+    const accessToken = await getValidAccessToken();
+    if (!accessToken) return fail("No valid Google access token. Please reconnect your Google account.", 401);
+    {
+      {
         try {
           const googleTopicType = post.type === "offer" ? "OFFER" : post.type === "event" ? "EVENT" : "STANDARD";
 
@@ -39,26 +42,53 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             languageCode: "en",
             summary: post.content,
             topicType: googleTopicType,
-            callToAction: post.ctaType ? { actionType: post.ctaType.toUpperCase(), url: post.ctaUrl || undefined } : undefined,
           };
 
-          if (post.title) googlePostData.title = post.title;
-
-          if (post.type === "offer") {
-            googlePostData.offer = { redeemUrl: post.ctaUrl || undefined };
+          // CTA is only supported for STANDARD and EVENT, NOT for OFFER
+          if (googleTopicType !== "OFFER") {
+            const actionType = post.ctaType?.toUpperCase();
+            const ctaPayload = (actionType && actionType !== "NONE")
+              ? actionType === "CALL"
+                ? { actionType: "CALL" }
+                : post.ctaUrl ? { actionType, url: post.ctaUrl } : undefined
+              : undefined;
+            if (ctaPayload) googlePostData.callToAction = ctaPayload;
           }
 
-          if (post.type === "event") {
+          function buildDateObj(d: Date | null | undefined) {
+            if (!d) return undefined;
+            return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+          }
+          function buildTimeObj(timeStr: string | null | undefined) {
+            if (!timeStr) return undefined;
+            const [h, m] = timeStr.split(":").map(Number);
+            return { hours: h, minutes: m, seconds: 0, nanos: 0 };
+          }
+
+          if (post.type === "offer") {
+            googlePostData.offer = {};
+            if (post.couponCode) googlePostData.offer.couponCode = post.couponCode;
+            if (post.redeemUrl) googlePostData.offer.redeemOnlineUrl = post.redeemUrl;
+            if (post.offerTerms) googlePostData.offer.termsConditions = post.offerTerms;
+          }
+
+          if (post.type === "event" || (post.type === "offer" && post.startDate)) {
             googlePostData.event = {
               title: post.title,
-              schedule: post.startDate ? {
-                startDate: { year: new Date(post.startDate).getFullYear(), month: new Date(post.startDate).getMonth() + 1, day: new Date(post.startDate).getDate() },
-                endDate: post.endDate ? { year: new Date(post.endDate).getFullYear(), month: new Date(post.endDate).getMonth() + 1, day: new Date(post.endDate).getDate() } : undefined,
-              } : undefined,
+              schedule: {
+                startDate: buildDateObj(post.startDate),
+                startTime: buildTimeObj(post.startTime),
+                endDate: buildDateObj(post.endDate),
+                endTime: buildTimeObj(post.endTime),
+              },
             };
           }
 
-          const gPost = await createGooglePost(accessToken, gbp.googleLocationId, googlePostData);
+          const v4Name = await resolveV4LocationName(accessToken, gbp.googleLocationId);
+          if (post.imageUrl && !post.imageUrl.includes("localhost")) {
+            googlePostData.media = [{ mediaFormat: "PHOTO", sourceUrl: post.imageUrl }];
+          }
+          const gPost = await createGooglePost(accessToken, v4Name, googlePostData);
           data.googlePostId = gPost.name || null;
         } catch (e: any) {
           return fail(`Failed to publish to Google: ${e.message}`, 500);
@@ -69,11 +99,52 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   if (body.status) data.status = body.status;
-  if (body.status === "scheduled" && body.scheduledAt) data.scheduledAt = new Date(body.scheduledAt);
-  if (body.title) data.title = body.title;
+  if (body.status === "scheduled") {
+    if (body.recurrenceType === "weekly") {
+      if (body.recurrenceDayOfWeek == null || !body.recurrenceTime) {
+        return fail("Weekly schedule requires a day and time", 400);
+      }
+      data.recurrenceType = "weekly";
+      data.recurrenceDayOfWeek = body.recurrenceDayOfWeek;
+      data.recurrenceTime = body.recurrenceTime;
+      data.scheduledAt = computeNextWeeklyOccurrence(body.recurrenceDayOfWeek, body.recurrenceTime);
+    } else {
+      data.recurrenceType = null;
+      data.recurrenceDayOfWeek = null;
+      data.recurrenceTime = null;
+      if (body.scheduledAt) data.scheduledAt = new Date(body.scheduledAt);
+    }
+  } else if (body.status === "draft") {
+    data.scheduledAt = null;
+    data.recurrenceType = null;
+    data.recurrenceDayOfWeek = null;
+    data.recurrenceTime = null;
+  } else if (body.recurrenceType === "weekly" && post.status === "scheduled") {
+    if (body.recurrenceDayOfWeek == null || !body.recurrenceTime) {
+      return fail("Weekly schedule requires a day and time", 400);
+    }
+    data.recurrenceType = "weekly";
+    data.recurrenceDayOfWeek = body.recurrenceDayOfWeek;
+    data.recurrenceTime = body.recurrenceTime;
+    data.scheduledAt = computeNextWeeklyOccurrence(body.recurrenceDayOfWeek, body.recurrenceTime);
+  } else if (body.scheduledAt && post.status === "scheduled") {
+    data.scheduledAt = new Date(body.scheduledAt);
+    data.recurrenceType = null;
+    data.recurrenceDayOfWeek = null;
+    data.recurrenceTime = null;
+  }
+  if (body.title !== undefined) data.title = body.title;
   if (body.content) data.content = body.content;
   if (body.ctaType) data.ctaType = body.ctaType;
   if (body.ctaUrl !== undefined) data.ctaUrl = body.ctaUrl;
+  if (body.imageUrl !== undefined) data.imageUrl = body.imageUrl;
+  if (body.startDate !== undefined) data.startDate = body.startDate ? new Date(body.startDate) : null;
+  if (body.startTime !== undefined) data.startTime = body.startTime || null;
+  if (body.endDate !== undefined) data.endDate = body.endDate ? new Date(body.endDate) : null;
+  if (body.endTime !== undefined) data.endTime = body.endTime || null;
+  if (body.couponCode !== undefined) data.couponCode = body.couponCode || null;
+  if (body.redeemUrl !== undefined) data.redeemUrl = body.redeemUrl || null;
+  if (body.offerTerms !== undefined) data.offerTerms = body.offerTerms || null;
 
   // ─── Already-published post: push content edits to Google ──────────────
   // topicType is immutable on Google's side — only title/summary/callToAction are patchable.
@@ -95,13 +166,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const newSummary = body.content ?? post.content;
       const ctaType = body.ctaType ?? post.ctaType;
       const ctaUrl = body.ctaUrl !== undefined ? body.ctaUrl : post.ctaUrl;
+      const patchAction = ctaType?.toUpperCase();
+      const patchCta = (patchAction && patchAction !== "NONE")
+        ? patchAction === "CALL"
+          ? { actionType: "CALL" }
+          : ctaUrl ? { actionType: patchAction, url: ctaUrl } : undefined
+        : undefined;
       const patchPayload: any = {
-        title: newTitle,
         summary: newSummary,
-        callToAction: ctaType ? { actionType: ctaType.toUpperCase(), url: ctaUrl || undefined } : undefined,
       };
+      if (patchCta) patchPayload.callToAction = patchCta;
       try {
-        await patchGooglePost(accessToken, post.googlePostId!, patchPayload, "summary,title,callToAction");
+        await patchGooglePost(accessToken, post.googlePostId!, patchPayload);
       } catch (e: any) {
         googlePatchError = e.message;
         await logAudit({

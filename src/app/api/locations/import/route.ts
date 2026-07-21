@@ -3,6 +3,10 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { extractLocationFromName, resolveLocationAddress, parseGoogleAddress, inferCityFromAddress } from "@/lib/location-utils";
+import { resolveGbpMapUrl } from "@/lib/gbp-profile-utils";
+import { refreshLocationScores } from "@/lib/location-scores";
+import { syncGoogleProductsForLocation } from "@/lib/google-product-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +27,8 @@ interface GmbLocation {
   averageRating?: number;
   totalReviews?: number;
   verificationState?: string;
+  mapUrl?: string | null;
+  placeId?: string | null;
 }
 
 // POST /api/locations/import — import selected GMB locations with real data
@@ -55,16 +61,29 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      const extracted = extractLocationFromName(gmb.name);
+      const parsed = gmb.address
+        ? parseGoogleAddress({ addressLines: gmb.address.split(", ").length > 1 ? gmb.address.split(", ") : [gmb.address] })
+        : parseGoogleAddress(null);
+      const city = gmb.city
+        || parsed.city
+        || extracted.city
+        || inferCityFromAddress(gmb.address || "")
+        || "Unknown";
+      const address = gmb.address?.trim()
+        || resolveLocationAddress({ address: "", name: gmb.name });
+      const resolvedAddress = address === "Sync to load address" ? "" : address;
+
       // Create Location record
       const location = await db.location.create({
         data: {
           name: gmb.name,
           locationCode: gmb.storeCode || null,
-          city: gmb.city || "Unknown",
+          city,
           region: gmb.state || "Maharashtra",
           state: gmb.state || "Maharashtra",
           pincode: gmb.pincode || null,
-          address: gmb.address || "",
+          address: resolvedAddress,
           phone: gmb.phone || null,
           email: null,
           website: gmb.website || "https://myfng.in",
@@ -76,13 +95,21 @@ export async function POST(req: NextRequest) {
           lastSyncedAt: new Date(),
           avgRating: gmb.averageRating || 0,
           reviewCount: gmb.totalReviews || 0,
-          healthScore: 50, // initial score, will be computed on first audit
-          visibilityScore: 40, // initial score
+          healthScore: 0,
+          visibilityScore: 0,
           categoriesJson: JSON.stringify([gmb.primaryCategory, ...(gmb.additionalCategories || [])].filter(Boolean)),
           servicesJson: JSON.stringify([]),
           hoursJson: JSON.stringify([]),
           attributesJson: JSON.stringify({}),
         },
+      });
+
+      const mapUrl = gmb.mapUrl || resolveGbpMapUrl({
+        metadata: gmb.placeId ? { placeId: gmb.placeId } : null,
+        googleLocationId: gmb.googleLocationId,
+        name: gmb.name,
+        latitude: gmb.latitude,
+        longitude: gmb.longitude,
       });
 
       // Create GoogleBusinessProfile record (links Location to GMB)
@@ -96,9 +123,9 @@ export async function POST(req: NextRequest) {
           additionalCategoriesJson: JSON.stringify(gmb.additionalCategories || []),
           averageRating: gmb.averageRating || 0,
           totalReviews: gmb.totalReviews || 0,
-          verificationState: gmb.verificationState || "unverified",
+          verificationState: gmb.verificationState === "verified" ? "verified" : "unverified",
           profileStatus: "active",
-          mapUrl: `https://maps.google.com/?cid=${gmb.googleLocationId}`,
+          mapUrl,
         },
       });
 
@@ -138,7 +165,16 @@ export async function POST(req: NextRequest) {
         await db.businessAttribute.create({ data: { locationId: location.id, ...a } });
       }
 
-      imported.push({ id: location.id, name: gmb.name, city: gmb.city });
+      await refreshLocationScores(location.id, { writeAudit: true });
+
+      // RightChoice-style: pull existing GMB product catalog into MyFNG DB
+      try {
+        await syncGoogleProductsForLocation(location.id);
+      } catch {
+        // Product import is best-effort — location import should still succeed
+      }
+
+      imported.push({ id: location.id, name: gmb.name, city });
     } catch (e: any) {
       errors.push({ name: gmb.name, error: e.message });
     }

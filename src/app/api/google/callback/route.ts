@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getGoogleAuthUrl, exchangeCodeForTokens, googleServiceStatus } from "@/lib/google-service";
+import { getGoogleAuthUrl, exchangeCodeForTokens, googleServiceStatus, resolveGoogleRedirectUri, rememberOAuthState, consumeOAuthState, scopesIncludeBusinessManage } from "@/lib/google-service";
 import { encryptToken } from "@/lib/token-crypto";
 import { getSessionUser, logAudit } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
+
+function clearOAuthFlowCookies(res: NextResponse): void {
+  res.cookies.set("gmb_oauth_state", "", { httpOnly: true, sameSite: "lax", maxAge: 0, path: "/" });
+  res.cookies.set("gmb_oauth_redirect", "", { httpOnly: true, sameSite: "lax", maxAge: 0, path: "/" });
+}
 
 // GET /api/google/callback — Google OAuth callback (real token exchange)
 export async function GET(req: NextRequest) {
@@ -15,26 +20,28 @@ export async function GET(req: NextRequest) {
 
   // Handle OAuth error from Google
   if (error) {
-    return NextResponse.redirect(new URL(`/?google_error=${encodeURIComponent(error)}`, url.origin));
+    return NextResponse.redirect(new URL(`/google?google_error=${encodeURIComponent(error)}`, url.origin));
   }
 
-  // ─── CSRF: validate OAuth state against cookie ─────────────────────────
-  // The `state` param must match the `gmb_oauth_state` cookie we set when
-  // initiating the OAuth flow. Reject on mismatch or missing cookie.
+  // ─── CSRF: validate OAuth state (cookie first, server memory fallback) ─
+  // Cookie can be missing when the user starts on 0.0.0.0 and Google returns
+  // to localhost — hosts differ so the cookie is not sent.
   const cookieState = req.cookies.get("gmb_oauth_state")?.value;
-  // Always clear the cookie after the flow regardless of outcome
-  const clearStateCookie = "gmb_oauth_state=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly";
+  const cookieRedirect = req.cookies.get("gmb_oauth_redirect")?.value;
+  const memorized = state ? consumeOAuthState(state) : null;
+  const stateOk = Boolean(state && ((cookieState && state === cookieState) || memorized));
+  const resolvedRedirect = cookieRedirect || memorized?.redirectUri || undefined;
 
-  if (!state || !cookieState || state !== cookieState) {
-    const redirect = NextResponse.redirect(new URL("/?google_error=state_mismatch", url.origin));
-    redirect.headers.set("Set-Cookie", clearStateCookie);
+  if (!state || !stateOk) {
+    const redirect = NextResponse.redirect(new URL("/google?google_error=state_mismatch", url.origin));
+    clearOAuthFlowCookies(redirect);
     return redirect;
   }
 
   // ─── No code = OAuth flow did not complete ─────────────────────────────
   if (!code) {
-    const redirect = NextResponse.redirect(new URL("/?google_error=no_code", url.origin));
-    redirect.headers.set("Set-Cookie", clearStateCookie);
+    const redirect = NextResponse.redirect(new URL("/google?google_error=no_code", url.origin));
+    clearOAuthFlowCookies(redirect);
     return redirect;
   }
 
@@ -42,7 +49,7 @@ export async function GET(req: NextRequest) {
 
   // Real OAuth — exchange code for tokens
   try {
-    const tokens = await exchangeCodeForTokens(code);
+    const tokens = await exchangeCodeForTokens(code, resolvedRedirect);
 
     // Get user info from Google
     let email = "gmb@myfng.in";
@@ -58,10 +65,17 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* ignore userinfo error */ }
 
-    // Persist the actual scopes Google granted
     const grantedScopes = tokens.scope
       ? tokens.scope.split(" ").filter(Boolean)
-      : ["https://www.googleapis.com/auth/business.manage"];
+      : [];
+
+    if (!scopesIncludeBusinessManage(grantedScopes)) {
+      const redirect = NextResponse.redirect(
+        new URL("/google?google_error=missing_business_scope", url.origin),
+      );
+      clearOAuthFlowCookies(redirect);
+      return redirect;
+    }
 
     // Upsert google account
     const existing = await db.googleAccount.findFirst();
@@ -99,13 +113,13 @@ export async function GET(req: NextRequest) {
       await logAudit({ userId: user.id, userName: user.name, action: "google.connect", entity: "google_account", newValue: { email, mode: "production" }, ip: req.headers.get("x-forwarded-for") ?? undefined });
     }
 
-    const redirect = NextResponse.redirect(new URL("/?google_connected=true", url.origin));
-    redirect.headers.set("Set-Cookie", clearStateCookie);
+    const redirect = NextResponse.redirect(new URL("/google?google_connected=true", url.origin));
+    clearOAuthFlowCookies(redirect);
     return redirect;
   } catch (e: any) {
     console.error("Google OAuth callback error:", e);
-    const redirect = NextResponse.redirect(new URL(`/?google_error=${encodeURIComponent(e.message)}`, url.origin));
-    redirect.headers.set("Set-Cookie", clearStateCookie);
+    const redirect = NextResponse.redirect(new URL(`/google?google_error=${encodeURIComponent(e.message)}`, url.origin));
+    clearOAuthFlowCookies(redirect);
     return redirect;
   }
 }
@@ -116,13 +130,26 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const { url: authUrl, state } = getGoogleAuthUrl(body.state);
-  const res = NextResponse.json({ success: true, authUrl, state, mode: googleServiceStatus.mode });
+  const redirectUri = resolveGoogleRedirectUri({
+    origin: req.headers.get("origin"),
+    referer: req.headers.get("referer"),
+    host: req.headers.get("host"),
+    forwardedProto: req.headers.get("x-forwarded-proto"),
+  });
+  const { url: authUrl, state } = getGoogleAuthUrl(body.state, redirectUri);
+  rememberOAuthState(state, redirectUri);
+  const res = NextResponse.json({ success: true, authUrl, state, redirectUri, mode: googleServiceStatus.mode });
   // Set CSRF state cookie — HttpOnly, SameSite=Lax, 1h expiry
   res.cookies.set("gmb_oauth_state", state, {
     httpOnly: true,
     sameSite: "lax",
     maxAge: 60 * 60, // 1 hour
+    path: "/",
+  });
+  res.cookies.set("gmb_oauth_redirect", redirectUri, {
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 60 * 60,
     path: "/",
   });
   return res;

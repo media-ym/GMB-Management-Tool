@@ -9,7 +9,7 @@ locations. Total time: ~80 minutes.
 ## Prerequisites
 
 - **Hostinger VPS** (recommended) or Business/Premium hosting with Node.js 20+ support.
-- A **domain name** (e.g. `myfng.in`) with DNS A/AAAA records pointing to your Hostinger server's IP.
+- A **domain / subdomain** (production: `gmb.myfng.in`) with DNS A/AAAA records pointing to your Hostinger server's IP.
 - A **Google Cloud Console** project with Business Profile APIs enabled.
 - SSH access to your Hostinger server.
 
@@ -27,12 +27,12 @@ locations. Total time: ~80 minutes.
    - User type: **External**
    - App name: `MyFNG Local AI Manager`
    - User support email + developer contact: your email
-   - Authorized domains: `myfng.in`
+   - Authorized domains: `myfng.in` (covers `gmb.myfng.in`)
    - Scopes: `business.manage`, `openid`, `email`, `profile`
 5. Create OAuth 2.0 credentials:
    - Application type: **Web application**
-   - Authorized JavaScript origins: `https://myfng.in`
-   - Authorized redirect URIs: `https://myfng.in/api/google/callback`
+   - Authorized JavaScript origins: `https://gmb.myfng.in`
+   - Authorized redirect URIs: `https://gmb.myfng.in/api/google/callback`
    - Copy the **Client ID** and **Client Secret** — you'll paste them into `.env` later.
 6. Submit for verification (required for public access; "Testing" mode works immediately for up to 100 test users).
 
@@ -85,7 +85,8 @@ locations. Total time: ~80 minutes.
 
 6. Copy and edit the environment file:
    ```bash
-   cp .env.example .env
+   cp .env.production.example .env
+   # (local template is `.env.example`)
    nano .env
    ```
    Fill in **all** values. Generate secrets with:
@@ -97,8 +98,8 @@ locations. Total time: ~80 minutes.
    Set:
    ```bash
    DATABASE_URL="postgresql://myfng_user:STRONG_DB_PASSWORD@localhost:5432/myfng_db"
-   NEXTAUTH_URL="https://myfng.in"
-   GOOGLE_REDIRECT_URI="https://myfng.in/api/google/callback"
+   NEXTAUTH_URL="https://gmb.myfng.in"
+   GOOGLE_REDIRECT_URI="https://gmb.myfng.in/api/google/callback"
    GOOGLE_CLIENT_ID="...from Google Cloud Console..."
    GOOGLE_CLIENT_SECRET="...from Google Cloud Console..."
    TOKEN_ENCRYPTION_KEY="<64-hex-chars>"
@@ -159,7 +160,7 @@ sudo apt install -y caddy
 
 Edit `/etc/caddy/Caddyfile`:
 ```caddy
-myfng.in {
+gmb.myfng.in {
     reverse_proxy localhost:3000
     encode gzip
     header {
@@ -184,8 +185,8 @@ If you prefer Nginx, see the [Certbot instructions](https://certbot.eff.org/) an
 
 ## Phase 5: Connect Google Business Profile (5 min)
 
-1. Visit `https://myfng.in`.
-2. Login with `admin@myfng.in` / `MyFNG@2025`.
+1. Visit `https://gmb.myfng.in`.
+2. Login with `admin@myfng.in` / `MyFNG@2025` (or your seeded admin).
 3. Go to **Google Integration → Connect Google**.
 4. Authorize with the Google account that owns the Business Profiles.
 5. Go to **Locations → Add Location → Import from Google**.
@@ -200,17 +201,30 @@ Open the server crontab (`crontab -e`) and add:
 
 ```bash
 # Daily drift detection at 2:00 AM server time
-0 2 * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://myfng.in/api/cron/drift-detection
+0 2 * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/drift-detection
 
-# Optional: hourly sync of reviews + analytics for all active locations
-0 * * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://myfng.in/api/cron/sync-all
+# Full Google sync for all linked locations — every 6 hours
+0 */6 * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/sync-all
+
+# Optional: publish scheduled posts every 15 minutes
+*/15 * * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/publish-scheduled
 ```
 
 Replace `YOUR_CRON_SECRET` with the value you set in `.env` (`CRON_SECRET`).
 
 The cron endpoints validate the `x-cron-secret` header against
 `process.env.CRON_SECRET` and return `401` if it doesn't match (or if the
-secret is unset). Currently implemented: `/api/cron/drift-detection`.
+secret is unset).
+
+Implemented:
+- `/api/cron/drift-detection` — daily profile drift check
+- `/api/cron/sync-all` — full Google sync every 6 hours (reviews, posts, photos, analytics, …)
+
+Local / without system crontab:
+```bash
+npm run cron:sync          # one-shot
+npm run cron:sync:loop     # keep running; syncs every 6 hours
+```
 
 ---
 

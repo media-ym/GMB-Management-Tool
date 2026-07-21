@@ -1,46 +1,61 @@
-import ZAI from "z-ai-web-dev-sdk";
 import { db } from "./db";
 import type { SessionUser } from "./types";
+import { openRouterChat } from "./openrouter";
+import { DEFAULT_OPENROUTER_MODEL } from "./openrouter-models";
+import { buildMisaDashboardContext, buildMisaSystemPrompt } from "./misa-context";
 
 // MiSA AI — backend service layer for intelligent automation.
-// Wraps z-ai-web-dev-sdk with versioned prompts, safety filtering, and full
-// audit logging (per architecture doc §54–§58).
-
-let _zai: Awaited<ReturnType<typeof ZAI.create>> | null = null;
-async function client() {
-  if (!_zai) _zai = await ZAI.create();
-  return _zai;
-}
+// Uses OpenRouter (free models + fallback) with versioned prompts, safety
+// filtering, and full audit logging (per architecture doc §54–§58).
 
 interface CompletionArgs {
   system: string;
   user: string;
+  model?: string;
   maxTokens?: number;
 }
 
-async function complete({ system, user }: CompletionArgs): Promise<{ content: string; tokens: number }> {
-  const zai = await client();
-  const start = Date.now();
-  const completion = await zai.chat.completions.create({
-    messages: [
-      { role: "assistant", content: system },
+async function complete({
+  system,
+  user,
+  model,
+}: CompletionArgs): Promise<{ content: string; tokens: number; model: string }> {
+  const result = await openRouterChat(
+    [
+      { role: "system", content: system },
       { role: "user", content: user },
     ],
-    thinking: { type: "disabled" },
-  });
-  const content = completion.choices[0]?.message?.content ?? "";
-  // rough token estimate (SDK doesn't always return usage)
-  const tokens = Math.ceil((system.length + user.length + content.length) / 4);
-  void start;
-  return { content, tokens };
+    model ?? DEFAULT_OPENROUTER_MODEL,
+  );
+  return { content: result.content, tokens: result.tokens, model: result.model };
 }
 
 function sanitize(text: string, maxLen = 2000): string {
-  // Strip script/style tags, collapse whitespace, cap length (per §57)
-  const stripped = text
+  // Strip script/style tags, junk unicode from free models, cap length (per §57)
+  let stripped = text
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/\r/g, "")
+    .replace(/[\u200B-\u200D\uFEFF\uFFFD]/g, "")
+    .replace(/[\u2014\u2013]/g, "-") // em/en dash → hyphen
+    // Free models sometimes glue random scripts onto brand words
+    .replace(/MyFNG[^\sA-Za-z0-9.,;:!?'"()%\-/]*/gi, "MyFNG")
+    .replace(/MiSA(?:\s*AI)?[^\sA-Za-z0-9.,;:!?'"()%\-/]*/gi, (m) =>
+      /AI/i.test(m) ? "MiSA AI" : "MiSA",
+    )
+    .trim();
+  // Drop isolated garbled tokens (non Latin/Devanagari clusters)
+  stripped = stripped
+    .split(/(\s+)/)
+    .map((tok) => {
+      if (/^\s+$/.test(tok)) return tok;
+      const weird = tok.replace(/[\x20-\x7E\u0900-\u097F.,;:!?'"()\-%+/₹…—–*#_[\]{}]/g, "");
+      if (weird.length >= 2 && weird.length >= tok.length * 0.4) return "";
+      return tok;
+    })
+    .join("")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
   return stripped.length > maxLen ? stripped.slice(0, maxLen) : stripped;
 }
@@ -53,13 +68,14 @@ async function logAI(opts: {
   tokens: number;
   durationMs: number;
   status: "success" | "failed";
+  model?: string;
 }) {
   try {
     await db.aIHistory.create({
       data: {
         userId: opts.user.id,
         promptType: opts.promptType,
-        model: "glm-4.6",
+        model: opts.model || "openrouter",
         input: JSON.stringify(opts.input).slice(0, 8000),
         output: JSON.stringify(opts.output).slice(0, 8000),
         tokens: opts.tokens,
@@ -82,6 +98,7 @@ export async function aiReviewReply(opts: {
   rating: number;
   reviewText: string;
   tone?: "professional" | "warm" | "apologetic";
+  model?: string;
 }): Promise<{ reply: string }> {
   const start = Date.now();
   const tone = opts.tone ?? (opts.rating <= 2 ? "apologetic" : "warm");
@@ -115,7 +132,7 @@ Review: "${opts.reviewText}"
 Write the Google review reply now. Output ONLY the reply text.`;
 
   try {
-    const { content, tokens } = await complete({ system, user: userMsg });
+    const { content, tokens, model } = await complete({ system, user: userMsg, model: opts.model });
     const reply = sanitize(content, 600);
     await logAI({
       user: opts.user,
@@ -125,6 +142,7 @@ Write the Google review reply now. Output ONLY the reply text.`;
       tokens,
       durationMs: Date.now() - start,
       status: "success",
+      model,
     });
     return { reply };
   } catch (e: any) {
@@ -136,6 +154,7 @@ Write the Google review reply now. Output ONLY the reply text.`;
       tokens: 0,
       durationMs: Date.now() - start,
       status: "failed",
+      model: opts.model,
     });
     throw e;
   }
@@ -149,6 +168,7 @@ export async function aiGeneratePost(opts: {
   locationName: string;
   type: "whats_new" | "offer" | "event" | "update";
   topic: string;
+  model?: string;
 }): Promise<{ title: string; content: string; ctaType: string }> {
   const start = Date.now();
   const typeLabel = {
@@ -176,7 +196,7 @@ Respond as STRICT JSON only:
 {"title": "...", "content": "...", "ctaType": "book|order|sign_up|call|learn_more"}`;
 
   try {
-    const { content, tokens } = await complete({ system, user: userMsg });
+    const { content, tokens, model } = await complete({ system, user: userMsg, model: opts.model });
     let parsed: { title?: string; content?: string; ctaType?: string } = {};
     try { parsed = JSON.parse(content.replace(/```json|```/g, "").trim()); } catch { parsed = { title: opts.topic.slice(0, 60), content: sanitize(content, 1200), ctaType: "learn_more" }; }
     const result = {
@@ -192,6 +212,7 @@ Respond as STRICT JSON only:
       tokens,
       durationMs: Date.now() - start,
       status: "success",
+      model,
     });
     return result;
   } catch (e: any) {
@@ -203,6 +224,7 @@ Respond as STRICT JSON only:
       tokens: 0,
       durationMs: Date.now() - start,
       status: "failed",
+      model: opts.model,
     });
     throw e;
   }
@@ -218,6 +240,7 @@ export async function aiSeoSuggestions(opts: {
   topKeywords: { keyword: string; rank: number }[];
   healthScore: number;
   visibilityScore: number;
+  model?: string;
 }): Promise<{ recommendations: string[] }> {
   const start = Date.now();
   const system = `You are MiSA AI — local SEO advisor for MyFNG Autocare (multi-brand car service brand in Mumbai, Navi Mumbai, Thane, Pune, India).
@@ -233,7 +256,7 @@ Top keywords: ${opts.topKeywords.map(k => `${k.keyword} (#${k.rank})`).join(", "
 Return as STRICT JSON: {"recommendations": ["...", "...", "...", "...", "..."]}`;
 
   try {
-    const { content, tokens } = await complete({ system, user: userMsg });
+    const { content, tokens, model } = await complete({ system, user: userMsg, model: opts.model });
     let parsed: { recommendations?: string[] } = {};
     try { parsed = JSON.parse(content.replace(/```json|```/g, "").trim()); } catch { parsed = { recommendations: content.split("\n").filter(Boolean).slice(0, 5) }; }
     const recs = (parsed.recommendations ?? []).map(r => sanitize(r, 200)).slice(0, 5);
@@ -245,6 +268,7 @@ Return as STRICT JSON: {"recommendations": ["...", "...", "...", "...", "..."]}`
       tokens,
       durationMs: Date.now() - start,
       status: "success",
+      model,
     });
     return { recommendations: recs };
   } catch (e: any) {
@@ -256,6 +280,7 @@ Return as STRICT JSON: {"recommendations": ["...", "...", "...", "...", "..."]}`
       tokens: 0,
       durationMs: Date.now() - start,
       status: "failed",
+      model: opts.model,
     });
     throw e;
   }
@@ -268,6 +293,7 @@ export async function aiMonthlySummary(opts: {
   user: SessionUser;
   locationName: string;
   metrics: { searchViews: number; mapsViews: number; websiteClicks: number; phoneCalls: number; directionRequests: number; newReviews: number; avgRating: number; prevAvgRating: number };
+  model?: string;
 }): Promise<{ summary: string }> {
   const start = Date.now();
   const system = `You are MiSA AI. Write a concise monthly performance summary for the MyFNG Autocare marketing team.
@@ -283,7 +309,7 @@ Avg rating: ${m.avgRating} (prev ${m.prevAvgRating}, delta ${ratingDeltaNum > 0 
 Write the summary as plain text.`;
 
   try {
-    const { content, tokens } = await complete({ system, user: userMsg });
+    const { content, tokens, model } = await complete({ system, user: userMsg, model: opts.model });
     const summary = sanitize(content, 1200);
     await logAI({
       user: opts.user,
@@ -293,6 +319,7 @@ Write the summary as plain text.`;
       tokens,
       durationMs: Date.now() - start,
       status: "success",
+      model,
     });
     return { summary };
   } catch (e: any) {
@@ -304,6 +331,7 @@ Write the summary as plain text.`;
       tokens: 0,
       durationMs: Date.now() - start,
       status: "failed",
+      model: opts.model,
     });
     throw e;
   }
@@ -315,48 +343,53 @@ Write the summary as plain text.`;
 export async function aiChat(opts: {
   user: SessionUser;
   messages: { role: "user" | "assistant"; content: string }[];
-}): Promise<{ reply: string }> {
+  model?: string;
+}): Promise<{ reply: string; model: string }> {
   const start = Date.now();
-  const system = `You are MiSA AI, the internal operations & marketing assistant for MyFNG Autocare — a multi-brand car service & repair brand across Mumbai, Navi Mumbai, Thane, and Pune, India.
-
-Your job: help the MyFNG marketing/operations team manage Google Business Profiles, draft review replies, plan Google Posts, interpret local SEO, summarise performance, and surface locations needing attention.
-
-Rules:
-- Be concise, operational, and specific. No generic marketing fluff.
-- When the user asks you to draft content (reply/post/description), produce ready-to-use text.
-- You can see aggregate context but not individual PII beyond what the user shares.
-- If asked something outside MyFNG ops, politely redirect to in-scope topics.`;
+  const lastUser = [...opts.messages].reverse().find((m) => m.role === "user")?.content ?? "";
 
   try {
-    const zai = await client();
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: "assistant", content: system },
-        ...opts.messages.map(m => ({ role: m.role, content: m.content })),
-      ] as any,
-      thinking: { type: "disabled" },
-    });
-    const reply = sanitize(completion.choices[0]?.message?.content ?? "", 4000);
-    const tokens = Math.ceil((system.length + opts.messages.map(m => m.content.length).reduce((a, b) => a + b, 0) + reply.length) / 4);
+    // Live A–Z dashboard snapshot — ground-truth numbers for MiSA
+    const { contextJson, meta } = await buildMisaDashboardContext(opts.user, lastUser);
+    const system = buildMisaSystemPrompt(contextJson);
+
+    // Keep conversation window manageable for free models
+    const history = opts.messages.slice(-16);
+
+    const result = await openRouterChat(
+      [
+        { role: "system", content: system },
+        ...history.map((m) => ({ role: m.role, content: m.content })),
+      ],
+      opts.model ?? DEFAULT_OPENROUTER_MODEL,
+    );
+    const reply = sanitize(result.content, 6000);
     await logAI({
       user: opts.user,
       promptType: "chat",
-      input: { messageCount: opts.messages.length, last: opts.messages[opts.messages.length - 1]?.content.slice(0, 500) },
+      input: {
+        messageCount: opts.messages.length,
+        last: lastUser.slice(0, 500),
+        contextLocations: meta.locationCount,
+        contextAt: meta.generatedAt,
+      },
       output: { reply: reply.slice(0, 500) },
-      tokens,
+      tokens: result.tokens,
       durationMs: Date.now() - start,
       status: "success",
+      model: result.model,
     });
-    return { reply };
+    return { reply, model: result.model };
   } catch (e: any) {
     await logAI({
       user: opts.user,
       promptType: "chat",
-      input: { last: opts.messages[opts.messages.length - 1]?.content.slice(0, 200) },
+      input: { last: lastUser.slice(0, 200) },
       output: { error: e.message },
       tokens: 0,
       durationMs: Date.now() - start,
       status: "failed",
+      model: opts.model,
     });
     throw e;
   }

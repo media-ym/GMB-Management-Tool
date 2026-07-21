@@ -309,7 +309,17 @@ async function main() {
 
     // Products
     for (const p of PRODUCTS_LIST) {
-      await db.product.create({ data: { locationId: loc.id, productName: p.name, category: p.category, price: p.price, currency: "INR", status: "active" } });
+      await db.product.create({
+        data: {
+          locationId: loc.id,
+          name: p.name,
+          category: p.category,
+          price: p.price,
+          currency: "INR",
+          isActive: true,
+          source: "manual",
+        },
+      });
     }
 
     // Attributes

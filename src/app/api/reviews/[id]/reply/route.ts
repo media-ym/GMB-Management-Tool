@@ -6,6 +6,10 @@ import { can } from "@/lib/permissions";
 import { replyToReview, deleteReviewReply, getValidAccessToken } from "@/lib/google-service";
 import { aiReviewReply } from "@/lib/ai";
 import { requireClientAuth } from "@/lib/client-auth";
+import {
+  substituteReviewReplyTemplate,
+  inferLocationCategory,
+} from "@/lib/auto-reply";
 
 export const dynamic = "force-dynamic";
 
@@ -18,10 +22,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   const replyText: string | undefined = body.replyText;
+  const replySource = body.replySource === "template" ? "template" : "manual";
   if (!replyText || replyText.trim().length < 3) return fail("replyText is required");
 
-  const review = await db.review.findUnique({ where: { id }, include: { location: { include: { googleProfiles: true } } } });
+  const review = await db.review.findUnique({
+    where: { id },
+    include: {
+      location: {
+        include: { googleProfiles: true },
+      },
+    },
+  });
   if (!review) return notFound("Review not found");
+
+  const finalReply = substituteReviewReplyTemplate(replyText.trim(), {
+    customerName: review.authorName,
+    businessName: review.location.name,
+    category: inferLocationCategory(review.location.categoriesJson),
+    address: review.location.address,
+    area: review.location.city,
+    city: review.location.city,
+    phone: review.location.phone ?? undefined,
+    managerName: user.name,
+    rating: review.rating,
+  });
+
+  if (finalReply.length < 3) return fail("Reply text is too short after template substitution");
 
   // ─── End-client authorization gate (Google Third-Party Policy) ──────────
   // The location's linked client must have an active authorization that
@@ -35,7 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const accessToken = await getValidAccessToken();
     if (accessToken) {
       try {
-        await replyToReview(accessToken, review.googleReviewId, replyText.trim());
+        await replyToReview(accessToken, review.googleReviewId, finalReply);
       } catch (e: any) {
         await logAudit({
           userId: user.id, userName: user.name, action: "review.reply_google_failed",
@@ -50,9 +76,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const updated = await db.review.update({
     where: { id },
     data: {
-      replyText: replyText.trim(),
+      replyText: finalReply,
       replyStatus: "replied",
-      replySource: "manual",
+      replySource,
       replyBy: user.id,
       repliedAt: new Date(),
     },
@@ -61,7 +87,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   await logAudit({
     userId: user.id, userName: user.name, action: "review.reply",
     entity: "review", entityId: id,
-    newValue: { replyText: replyText.trim(), source: "manual" },
+    newValue: { replyText: finalReply, source: replySource },
     ip: req.headers.get("x-forwarded-for") ?? undefined,
   });
 
@@ -84,7 +110,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return fail("Unknown action");
 }
 
-// GET /api/reviews/[id]/reply?ai=1 — generate AI suggestion
+// GET /api/reviews/[id]/reply?ai=1&model=... — generate AI suggestion via OpenRouter
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
@@ -94,6 +120,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const review = await db.review.findUnique({ where: { id }, include: { location: true } });
   if (!review) return notFound("Review not found");
 
+  const { isValidOpenRouterModel, DEFAULT_OPENROUTER_MODEL } = await import("@/lib/openrouter-models");
+  const requested = req.nextUrl.searchParams.get("model") || DEFAULT_OPENROUTER_MODEL;
+  const model = isValidOpenRouterModel(requested) ? requested : DEFAULT_OPENROUTER_MODEL;
+
   try {
     const { reply } = await aiReviewReply({
       user,
@@ -101,14 +131,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       authorName: review.authorName,
       rating: review.rating,
       reviewText: review.text,
+      model,
     });
     await logAudit({
       userId: user.id, userName: user.name, action: "ai.generate",
       entity: "review_reply", entityId: id,
-      newValue: { replyPreview: reply.slice(0, 120) },
+      newValue: { replyPreview: reply.slice(0, 120), model },
       ip: req.headers.get("x-forwarded-for") ?? undefined,
     });
-    return ok({ reply }, "MiSA AI draft generated");
+    return ok({ reply, model }, "MiSA AI draft generated");
   } catch (e: any) {
     return fail(e.message || "AI generation failed", 500);
   }

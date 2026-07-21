@@ -25,34 +25,15 @@ export async function GET(req: NextRequest) {
   const location = await db.location.findUnique({ where: { id: locationId }, select: { latitude: true, longitude: true, name: true, city: true } });
   if (!location) return ok({ grid: [], size, radius, avgRank: 0 });
 
-  // Get keyword's latest rankings for this location
-  let rankings = await db.keywordRanking.findMany({
+  const rankings = await db.keywordRanking.findMany({
     where: { locationId, keywordId: keywordId || undefined },
     orderBy: { checkedAt: "desc" },
     take: size * size,
   });
 
-  // If not enough rankings, generate a grid based on location coords
-  const halfSize = Math.floor(size / 2);
-  // Convert radius (km) to degrees (approximate: 1 deg ≈ 111 km)
-  const radiusDeg = radius / 111;
-  const step = radiusDeg / halfSize;
-
   let grid: { lat: number; lng: number; rank: number }[] = [];
   if (rankings.length >= size * size) {
-    // Use existing rankings
     grid = rankings.slice(0, size * size).map(r => ({ lat: r.lat, lng: r.lng, rank: r.rank }));
-  } else {
-    // Generate grid from center
-    for (let gx = -halfSize; gx <= halfSize; gx++) {
-      for (let gy = -halfSize; gy <= halfSize; gy++) {
-        const lat = (location.latitude ?? 19) + gy * step;
-        const lng = (location.longitude ?? 73) + gx * step;
-        const rankBucket = Math.abs(gx) + Math.abs(gy);
-        const rank = rankBucket === 0 ? 1 + Math.floor(Math.random() * 2) : rankBucket === 1 ? 1 + Math.floor(Math.random() * 5) : rankBucket === 2 ? 3 + Math.floor(Math.random() * 8) : rankBucket === 3 ? 8 + Math.floor(Math.random() * 12) : 15 + Math.floor(Math.random() * 20);
-        grid.push({ lat, lng, rank });
-      }
-    }
   }
 
   const ranks = grid.map(g => g.rank).filter(r => r > 0);

@@ -148,7 +148,27 @@ model Location {
   competitors      Competitor[]
   dashboardCache   DashboardCache[]
   syncLogs         SyncLog[]
+  directoryPresences DirectoryPresence[]
   client           Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+}
+
+/// Per-location presence on a third-party directory / maps platform.
+model DirectoryPresence {
+  id          String    @id @default(cuid())
+  locationId  String
+  platformId  String // google_maps | gbp | bing | apple_maps | …
+  status      String    @default("unlinked") // linked | processing | unlinked | error | unavailable
+  listingUrl  String?
+  notes       String?
+  lastCheckedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  location    Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, platformId])
+  @@index([platformId])
+  @@index([status])
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -232,6 +252,8 @@ model GoogleBusinessProfile {
   verificationState   String    @default("verified") // verified | unverified | pending
   profileStatus       String    @default("active") // active | suspended | disabled
   mapUrl              String?
+  placeId             String?   // Google Place ID (ChIJ…) for write-review deep links
+  reviewUrl           String?   // Official short link e.g. https://g.page/r/…/review
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
@@ -463,6 +485,9 @@ model Post {
   source       String    @default("manual") // manual | ai
   googlePostId String?
   scheduledAt  DateTime?
+  recurrenceType String?
+  recurrenceDayOfWeek Int?
+  recurrenceTime String?
   publishedAt  DateTime?
   authorId     String?
   createdAt    DateTime  @default(now())
@@ -505,11 +530,19 @@ model AnalyticDaily {
   id                String   @id @default(cuid())
   locationId        String
   date              DateTime
+  /** Search impressions (desktop + mobile) */
   searchViews       Int      @default(0)
+  /** Maps impressions (desktop + mobile) */
   mapsViews         Int      @default(0)
+  searchDesktop     Int      @default(0)
+  searchMobile      Int      @default(0)
+  mapsDesktop       Int      @default(0)
+  mapsMobile        Int      @default(0)
   websiteClicks     Int      @default(0)
   phoneCalls        Int      @default(0)
   directionRequests Int      @default(0)
+  /** BUSINESS_CONVERSATIONS (chat clicks) */
+  conversations     Int      @default(0)
   bookings          Int      @default(0)
 
   location          Location @relation(fields: [locationId], references: [id], onDelete: Cascade)

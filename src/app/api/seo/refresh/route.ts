@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
-import { ok, unauthorized, forbidden } from "@/lib/api-response";
+import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
@@ -15,34 +15,44 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const locationId = body.locationId;
   const scoped = scopeLocationIds(user, locationId);
-  const where: any = {};
+  const where: { locationId?: { in: string[] } | string } = {};
   if (scoped) where.locationId = { in: scoped };
   if (locationId && (!scoped || scoped.includes(locationId))) where.locationId = locationId;
 
-  // Get all keywords in scope
-  const keywords = await db.keyword.findMany({ where, select: { id: true, keyword: true, locationId: true, location: { select: { latitude: true, longitude: true } } } });
-  const now = new Date();
-  let refreshed = 0;
+  const keywords = await db.keyword.findMany({
+    where,
+    select: { id: true },
+  });
 
-  for (const k of keywords) {
-    // Generate fresh rankings from rank tracking service
-    const lat = k.location?.latitude ?? 19.0;
-    const lng = k.location?.longitude ?? 73.0;
-    // 5x5 grid refresh
-    for (let gx = -2; gx <= 2; gx++) {
-      for (let gy = -2; gy <= 2; gy++) {
-        const gridLat = lat + gy * 0.012;
-        const gridLng = lng + gx * 0.012;
-        const rankBucket = Math.abs(gx) + Math.abs(gy);
-        const rank = rankBucket === 0 ? 1 + Math.floor(Math.random() * 2) : rankBucket === 1 ? 1 + Math.floor(Math.random() * 5) : rankBucket === 2 ? 3 + Math.floor(Math.random() * 8) : rankBucket === 3 ? 8 + Math.floor(Math.random() * 12) : 15 + Math.floor(Math.random() * 20);
-        await db.keywordRanking.create({
-          data: { keywordId: k.id, locationId: k.locationId!, lat: gridLat, lng: gridLng, rank, searchDate: now, checkedAt: now },
-        });
-      }
-    }
-    refreshed++;
+  if (keywords.length === 0) {
+    return fail("No keywords found to refresh. Add keywords first.", 400);
   }
 
-  await logAudit({ userId: user.id, userName: user.name, action: "seo.refresh", entity: "keyword", newValue: { refreshed, locationId: locationId ?? "all" }, ip: req.headers.get("x-forwarded-for") ?? undefined });
-  return ok({ refreshed, timestamp: now.toISOString() }, `Refreshed rankings for ${refreshed} keywords`);
+  const latest = await db.keywordRanking.findFirst({
+    where: { keywordId: { in: keywords.map((k) => k.id) } },
+    orderBy: { checkedAt: "desc" },
+    select: { checkedAt: true },
+  });
+
+  if (!latest) {
+    return fail(
+      "No ranking data yet. Rank refresh requires a connected rank-tracking provider — sync keywords from Google or import rankings first.",
+      501,
+    );
+  }
+
+  const now = new Date();
+  await logAudit({
+    userId: user.id,
+    userName: user.name,
+    action: "seo.refresh",
+    entity: "keyword",
+    newValue: { keywords: keywords.length, locationId: locationId ?? "all", note: "no-op — awaiting rank provider" },
+    ip: req.headers.get("x-forwarded-for") ?? undefined,
+  });
+
+  return ok(
+    { refreshed: 0, keywords: keywords.length, lastCheckedAt: latest.checkedAt.toISOString(), timestamp: now.toISOString() },
+    "Rankings are up to date. Automated refresh will run when a rank-tracking provider is configured.",
+  );
 }

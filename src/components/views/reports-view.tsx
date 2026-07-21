@@ -11,6 +11,8 @@ import { useLocations } from "@/hooks/use-locations";
 import { cn } from "@/lib/utils";
 import { PageHeader, CardSection } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
+import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { appendLocationIdsToParams } from "@/lib/location-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -176,8 +178,8 @@ function suggestReportName(type: ReportType, locationLabel: string): string {
 
 export function ReportsView() {
   const user = useUser();
-  const activeLocationId = useAppStore((s) => s.activeLocationId);
-  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+  const selectedLocationIds = useAppStore((s) => s.selectedLocationIds);
+  const setSelectedLocationIds = useAppStore((s) => s.setSelectedLocationIds);
   const qc = useQueryClient();
   const { data: locations } = useLocations();
 
@@ -203,11 +205,10 @@ export function ReportsView() {
   /* --- Reports query --- */
   const reportsUrl = useMemo(() => {
     const params = new URLSearchParams();
-    if (activeLocationId && activeLocationId !== "all")
-      params.set("locationId", activeLocationId);
+    appendLocationIdsToParams(params, selectedLocationIds);
     if (typeFilter !== "all") params.set("type", typeFilter);
     return `/api/reports?${params.toString()}`;
-  }, [activeLocationId, typeFilter]);
+  }, [selectedLocationIds, typeFilter]);
 
   const { data: reports, isLoading } = useQuery<ReportItem[]>({
     queryKey: ["reports", reportsUrl],
@@ -345,23 +346,12 @@ export function ReportsView() {
         icon={FileBarChart}
         actions={
           <>
-            <Select
-              value={activeLocationId}
-              onValueChange={(v) => setActiveLocationId(v as string | "all")}
-            >
-              <SelectTrigger size="sm" className="min-w-[180px] sm:w-[220px]">
-                <Filter className="size-3.5 mr-1.5 text-muted-foreground" />
-                <SelectValue placeholder="All locations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All locations</SelectItem>
-                {(locations ?? []).map((l) => (
-                  <SelectItem key={l.id} value={l.id}>
-                    {l.name} · {l.city}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LocationMultiSelect
+              locations={locations}
+              selectedIds={selectedLocationIds}
+              onChange={setSelectedLocationIds}
+              className="min-w-[180px] sm:w-[220px]"
+            />
 
             {canGenerate && (
               <Button size="sm" onClick={openGenerateDialog}>

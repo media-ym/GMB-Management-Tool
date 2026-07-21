@@ -3,7 +3,9 @@ import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { getValidAccessToken, listGoogleAccounts, listGoogleLocations, googleServiceStatus } from "@/lib/google-service";
+import { getValidAccessToken, listGoogleAccounts, listGoogleLocations, googleServiceStatus, getVoiceOfMerchantState } from "@/lib/google-service";
+import { extractLocationFromName, parseGoogleAddress, inferCityFromAddress } from "@/lib/location-utils";
+import { resolveVerificationFromVoiceOfMerchant, resolveGbpMapUrl } from "@/lib/gbp-profile-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -65,17 +67,34 @@ export async function GET(req: NextRequest) {
     });
     const existingIds = new Set(existingProfiles.map((p) => p.googleLocationId));
 
-    // Filter out already-imported locations
-    const available = allGmbLocations
-      .filter((loc) => !existingIds.has(loc.name))
-      .map((loc) => ({
+    // Filter out already-imported locations; check real verification via VoiceOfMerchant API
+    const filtered = allGmbLocations.filter((loc) => !existingIds.has(loc.name));
+    const available: Array<Record<string, unknown>> = [];
+    for (const loc of filtered) {
+      let verificationState: "verified" | "unverified" = "unverified";
+      try {
+        const vom = await getVoiceOfMerchantState(accessToken, loc.name);
+        verificationState = resolveVerificationFromVoiceOfMerchant(vom);
+      } catch {
+        // Default unverified if check fails
+      }
+      available.push({
         googleLocationId: loc.name,
         name: loc.title || "Unknown",
         storeCode: loc.storeCode || null,
-        address: formatAddress(loc.address),
-        city: loc.address?.locality || loc.address?.administrativeArea || "",
-        state: loc.address?.administrativeArea || "Maharashtra",
-        pincode: loc.address?.postalCode || null,
+        ...(() => {
+          const parsed = parseGoogleAddress(loc.storefrontAddress);
+          const city = parsed.city
+            || extractLocationFromName(loc.title || "").city
+            || inferCityFromAddress(parsed.address)
+            || "";
+          return {
+            address: parsed.address || formatAddress(loc.storefrontAddress),
+            city,
+            state: parsed.state || "Maharashtra",
+            pincode: parsed.pincode,
+          };
+        })(),
         phone: loc.phoneNumbers?.primaryPhone || null,
         website: loc.websiteUri || null,
         latitude: loc.latlng?.latitude || null,
@@ -84,9 +103,18 @@ export async function GET(req: NextRequest) {
         additionalCategories: loc.categories?.additionalCategories?.map((c: any) => c.displayName) || [],
         averageRating: loc.metadata?.averageRating || 0,
         totalReviews: loc.metadata?.reviewCount || 0,
-        verificationState: loc.metadata?.isVerified ? "verified" : "unverified",
+        verificationState,
+        placeId: loc.metadata?.placeId || null,
+        mapUrl: resolveGbpMapUrl({
+          metadata: loc.metadata,
+          googleLocationId: loc.name,
+          name: loc.title,
+          latitude: loc.latlng?.latitude,
+          longitude: loc.latlng?.longitude,
+        }),
         openInfo: loc.openInfo?.status || "OPEN",
-      }));
+      });
+    }
 
     return ok({
       status: "connected",

@@ -9,9 +9,9 @@ import {
   AlertTriangle, Phone, Globe, Star, Clock, Navigation, ArrowRight,
   ArrowLeft, MessageSquare, Loader2, MapPinned, FileText, MoreVertical,
   ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon, CalendarClock,
-  ShieldCheck, Eye, MousePointerClick, PhoneCall, TrendingUp, Target,
+  ShieldCheck, ShieldAlert, Eye, MousePointerClick, PhoneCall, TrendingUp, Target,
   ListChecks, Tag, Camera, History, Search as SeoIcon, Sparkles,
-  Lock, ChevronDown, CircleCheck, CircleAlert, Inbox,
+  Lock, ChevronDown, CircleCheck, CircleAlert, Inbox, Map as MapIcon,
 } from "lucide-react";
 import {
   RadialBarChart, RadialBar, ResponsiveContainer, PolarAngleAxis,
@@ -19,13 +19,18 @@ import {
 
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api-client";
+import { resolveLocationCity, resolveLocationAddress, formatLocationAreaLine, formatLocationCardArea } from "@/lib/location-utils";
 import { useAppStore } from "@/lib/store";
+import { useAppNavigation } from "@/hooks/use-app-navigation";
 import { useUser } from "@/lib/user-context";
 import { can } from "@/lib/permissions";
 import type { DashboardSummary, LocationWithStats, SyncStatus, LocationStatus } from "@/lib/types";
 
 import { PageHeader } from "@/components/shared/page-header";
+import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { LayoutToggle, type LayoutMode } from "@/components/shared/layout-toggle";
 import { StatCard } from "@/components/shared/stat-card";
+import { ProfileStrengthDashboard } from "@/components/views/profile-strength-dashboard";
 import {
   RatingStars, StatusBadge, SyncStatusBadge, ScoreBadge,
 } from "@/components/shared/badges";
@@ -99,6 +104,7 @@ interface GoogleProfile {
   averageRating: number;
   totalReviews: number;
   verificationState: string;
+  verificationPending?: boolean;
   profileStatus: string;
   mapUrl: string | null;
   businessInfo: {
@@ -160,6 +166,26 @@ interface Analytics30d {
   websiteClicks: number | null;
   phoneCalls: number | null;
   directionRequests: number | null;
+  conversations?: number | null;
+  bookings?: number | null;
+  impressions?: number | null;
+  interactions?: number | null;
+  synced?: boolean;
+  daysInRange?: number;
+}
+
+interface LocationStats {
+  photoCount: number;
+  serviceCount: number;
+  categoryCount: number;
+  productCount: number;
+  attributeCount: number;
+  repliedReviewCount: number;
+  recentPostsCount: number;
+  totalPublishedPosts: number;
+  analyticsSynced: boolean;
+  analyticsDaysInRange: number;
+  lastAnalyticsDate: string | null;
 }
 
 interface SeoAudit {
@@ -183,6 +209,7 @@ interface LocationDetailResponse {
   photos: PhotoRow[];
   completeness: Completeness;
   healthBreakdown: HealthBreakdown;
+  stats: LocationStats;
   timeline: TimelineRow[];
   analytics30d: Analytics30d;
   seoAudit: SeoAudit | null;
@@ -281,9 +308,48 @@ function formatPrice(price: number | null, currency: string): string {
   }
 }
 
-function formatAnalytics(n: number | null | undefined): string {
+function formatVerificationLabel(state: string, pending = false): string {
+  if (state === "verified") return "Verified";
+  if (pending) return "Verification pending";
+  return "Verification required";
+}
+
+function formatProfileStatusLabel(status: string): string {
+  if (status === "active") return "Active";
+  if (status === "disabled") return "Disabled";
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function formatAnalytics(n: number | null | undefined, synced = true): string {
+  if (!synced) return "Not synced";
   if (n == null) return "0";
   return n.toLocaleString("en-IN");
+}
+
+function VerificationBadge({ state }: { state: string | null | undefined }) {
+  if (!state) return null;
+  if (state === "verified") {
+    return (
+      <Badge variant="outline" className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-300/60 dark:border-emerald-700/50 shrink-0">
+        <ShieldCheck className="size-3 mr-0.5" /> Verified
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-[10px] bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border-rose-300/60 dark:border-rose-700/50 shrink-0">
+      <ShieldAlert className="size-3 mr-0.5" /> Verification required
+    </Badge>
+  );
+}
+
+function verificationCardClass(state: string | null | undefined): string {
+  if (state === "verified") {
+    return "bg-emerald-50/90 border-emerald-200 dark:bg-emerald-950/25 dark:border-emerald-800/50";
+  }
+  if (state === "unverified") {
+    return "bg-rose-50/90 border-rose-200 dark:bg-rose-950/25 dark:border-rose-800/50";
+  }
+  return "";
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -292,14 +358,16 @@ function formatAnalytics(n: number | null | undefined): string {
 
 export function LocationsView() {
   const user = useUser();
-  const setView = useAppStore((s) => s.setView);
-  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+  const { navigate } = useAppNavigation();
+  const setSelectedLocationIds = useAppStore((s) => s.setSelectedLocationIds);
   const qc = useQueryClient();
 
   const canSync = can(user.role, "system.sync");
   const canManage = can(user.role, "locations.manage");
 
   const [search, setSearch] = useState("");
+  const [filterLocIds, setFilterLocIds] = useState<string[]>([]);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [statusFilter, setStatusFilter] = useState<"all" | LocationStatus>("all");
   const [sort, setSort] = useState<"city" | "rating" | "health" | "reviews">("city");
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -363,12 +431,15 @@ export function LocationsView() {
     if (!locations) return [];
     const q = search.trim().toLowerCase();
     let list = locations.filter((l) => {
+      if (filterLocIds.length > 0 && !filterLocIds.includes(l.id)) return false;
       if (statusFilter !== "all" && l.status !== statusFilter) return false;
       if (!q) return true;
+      const city = resolveLocationCity(l);
       return (
         l.name.toLowerCase().includes(q) ||
-        l.city.toLowerCase().includes(q) ||
-        l.region.toLowerCase().includes(q)
+        city.toLowerCase().includes(q) ||
+        l.region.toLowerCase().includes(q) ||
+        resolveLocationAddress(l).toLowerCase().includes(q)
       );
     });
     list = list.slice().sort((a, b) => {
@@ -377,11 +448,11 @@ export function LocationsView() {
         case "health": return b.healthScore - a.healthScore;
         case "reviews": return b.reviewCount - a.reviewCount;
         case "city":
-        default: return a.city.localeCompare(b.city) || a.name.localeCompare(b.name);
+        default: return resolveLocationCity(a).localeCompare(resolveLocationCity(b)) || a.name.localeCompare(b.name);
       }
     });
     return list;
-  }, [locations, search, statusFilter, sort]);
+  }, [locations, search, filterLocIds, statusFilter, sort]);
 
   const avgHealth = useMemo(() => {
     if (!locations || locations.length === 0) return 0;
@@ -398,32 +469,49 @@ export function LocationsView() {
     [locations],
   );
 
-  async function handleSyncAll() {
-    try {
-      toast.loading("Triggering Google sync for all locations…", { id: "sync-all" });
-      await api("/api/dashboard", { method: "POST", body: JSON.stringify({}) });
-      await qc.invalidateQueries({ queryKey: ["locations"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
-      toast.success("Sync complete — all locations updated.", { id: "sync-all" });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Sync failed";
-      toast.error(msg, { id: "sync-all" });
-    }
-  }
-
   async function handleSyncOne(loc: LocationWithStats, module: SyncModule = "full") {
     const toastId = `sync-${loc.id}-${module}`;
     try {
       setSyncingId(loc.id);
       toast.loading(`Syncing ${module === "full" ? "everything" : module} for ${loc.name}…`, { id: toastId });
-      await api(`/api/locations/${loc.id}/sync`, {
+      const result = await api<{
+        synced?: { analytics?: number; reviews?: number; photos?: number; posts?: number };
+        errors?: string[];
+      }>(`/api/locations/${loc.id}/sync`, {
         method: "POST",
         body: JSON.stringify({ module }),
       });
-      await qc.invalidateQueries({ queryKey: ["locations"] });
-      await qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
-      if (detailId === loc.id) await qc.invalidateQueries({ queryKey: ["location-detail", loc.id] });
-      toast.success(`${loc.name} ${module === "full" ? "synced" : `${module} synced`}.`, { id: toastId });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["locations"] }),
+        qc.invalidateQueries({ queryKey: ["dashboard-summary"] }),
+        qc.invalidateQueries({ queryKey: ["analytics"] }),
+        qc.invalidateQueries({ queryKey: ["dashboard-misa-insights"] }),
+        qc.invalidateQueries({ queryKey: ["location-detail", loc.id] }),
+      ]);
+      // Force refetch open detail so performance cards update immediately
+      if (detailId === loc.id) {
+        await qc.refetchQueries({ queryKey: ["location-detail", loc.id] });
+      }
+      const analyticsDays = result?.synced?.analytics ?? 0;
+      const analyticsBlocked = (result?.errors ?? []).some((e) =>
+        /Performance API|403|access denied/i.test(e),
+      );
+      const warn = result?.errors?.length ? ` · ${result.errors.length} warning(s)` : "";
+      if ((module === "full" || module === "analytics") && analyticsDays === 0) {
+        toast.warning(
+          analyticsBlocked
+            ? `${loc.name}: profile/reviews synced, but Google blocked Performance data (often unverified listings). Verify this GMB profile, then Sync → Analytics.`
+            : `${loc.name}: synced without analytics days${warn}`,
+          { id: toastId, duration: 8000 },
+        );
+      } else {
+        toast.success(
+          module === "full"
+            ? `${loc.name} synced · ${analyticsDays} analytics days${warn}`
+            : `${loc.name} ${module} synced.${warn}`,
+          { id: toastId },
+        );
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Sync failed";
       toast.error(msg, { id: toastId });
@@ -433,8 +521,8 @@ export function LocationsView() {
   }
 
   function openReviews(loc: LocationWithStats) {
-    setActiveLocationId(loc.id);
-    setView("reviews");
+    setSelectedLocationIds([loc.id]);
+    navigate("reviews");
   }
 
   function toggleSelected(id: string) {
@@ -507,6 +595,7 @@ export function LocationsView() {
         title="Locations"
         description="Manage all MyFNG Google Business Profiles across cities"
         icon={MapPin}
+        accent="emerald"
         actions={
           <>
             {canManage && (
@@ -528,11 +617,6 @@ export function LocationsView() {
                 )}
               </Button>
             )}
-            {canSync ? (
-              <Button size="sm" variant="outline" onClick={handleSyncAll} disabled={isLoading}>
-                <RefreshCw className="size-3.5 mr-1.5" /> Sync all
-              </Button>
-            ) : null}
           </>
         }
       />
@@ -630,15 +714,23 @@ export function LocationsView() {
       {/* Filter bar */}
       <Card>
         <CardContent className="p-4 flex flex-col lg:flex-row lg:items-center gap-3">
-          <div className="relative flex-1 min-w-0">
-            <Search className="size-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <Input
-              placeholder="Search by location name or city…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-              aria-label="Search locations"
+          <div className="flex flex-1 min-w-0 gap-2">
+            <LocationMultiSelect
+              locations={locations}
+              selectedIds={filterLocIds}
+              onChange={setFilterLocIds}
+              className="w-full sm:w-[200px] shrink-0"
             />
+            <div className="relative flex-1 min-w-0">
+              <Search className="size-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Input
+                placeholder="Search by location name or city…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+                aria-label="Search locations"
+              />
+            </div>
           </div>
 
           <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | LocationStatus)}>
@@ -663,6 +755,7 @@ export function LocationsView() {
                 <SelectItem value="reviews">Reviews</SelectItem>
               </SelectContent>
             </Select>
+            <LayoutToggle value={viewMode} onChange={setViewMode} />
           </div>
         </CardContent>
       </Card>
@@ -696,13 +789,21 @@ export function LocationsView() {
         )}
       </div>
 
-      {/* Grid */}
+      {/* Grid / List */}
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-64 rounded-xl" />
-          ))}
-        </div>
+        viewMode === "grid" ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-64 rounded-xl" />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-16 rounded-xl" />
+            ))}
+          </div>
+        )
       ) : filtered.length === 0 ? (
         <Card>
           <CardContent className="p-12 text-center">
@@ -715,13 +816,14 @@ export function LocationsView() {
                 ? "Try adjusting your search or filters to find what you're looking for."
                 : "No locations are assigned to your account. Contact your administrator if this seems wrong."}
             </p>
-            {(search || statusFilter !== "all") && (
+            {(search || filterLocIds.length > 0 || statusFilter !== "all") && (
               <Button
                 variant="outline"
                 size="sm"
                 className="mt-4"
                 onClick={() => {
                   setSearch("");
+                  setFilterLocIds([]);
                   setStatusFilter("all");
                   setSort("city");
                 }}
@@ -731,18 +833,45 @@ export function LocationsView() {
             )}
           </CardContent>
         </Card>
+      ) : viewMode === "list" ? (
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10" />
+                  <TableHead>Location</TableHead>
+                  <TableHead className="hidden md:table-cell">City</TableHead>
+                  <TableHead className="hidden lg:table-cell min-w-[140px]">Phone</TableHead>
+                  <TableHead className="hidden lg:table-cell">Rating</TableHead>
+                  <TableHead className="hidden sm:table-cell">Health</TableHead>
+                  <TableHead className="hidden sm:table-cell">Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((loc) => (
+                  <LocationListRow
+                    key={loc.id}
+                    loc={loc}
+                    selected={selectedIds.has(loc.id)}
+                    onSelect={() => toggleSelected(loc.id)}
+                    onViewDetails={() => setDetailId(loc.id)}
+                    onViewReviews={() => openReviews(loc)}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filtered.map((loc) => (
             <LocationCard
               key={loc.id}
               loc={loc}
-              canSync={canSync}
-              canManage={canManage}
               selected={selectedIds.has(loc.id)}
               onSelect={() => toggleSelected(loc.id)}
-              syncing={syncingId === loc.id}
-              onSync={() => handleSyncOne(loc, "full")}
               onViewDetails={() => setDetailId(loc.id)}
               onViewReviews={() => openReviews(loc)}
             />
@@ -768,22 +897,22 @@ export function LocationsView() {
 /* ----------------------------- Location Card ----------------------------- */
 
 function LocationCard({
-  loc, canSync, canManage, selected, onSelect, syncing, onSync, onViewDetails, onViewReviews,
+  loc, selected, onSelect, onViewDetails, onViewReviews,
 }: {
   loc: LocationWithStats;
-  canSync: boolean;
-  canManage: boolean;
   selected: boolean;
   onSelect: () => void;
-  syncing: boolean;
-  onSync: () => void;
   onViewDetails: () => void;
   onViewReviews: () => void;
 }) {
+  const areaLine = formatLocationCardArea(loc);
+  const address = resolveLocationAddress(loc);
+
   return (
     <Card
       className={cn(
         "flex flex-col hover:shadow-md transition-shadow relative",
+        verificationCardClass(loc.verificationState),
         selected && "border-primary ring-1 ring-primary/30",
       )}
     >
@@ -803,13 +932,14 @@ function LocationCard({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
               <MapPin className="size-3.5 shrink-0" />
-              <span className="truncate">{loc.city}, {loc.region}</span>
+              <span className="truncate">{areaLine}</span>
             </div>
             <h3 className="text-base font-semibold mt-0.5 truncate">{loc.name}</h3>
           </div>
           <div className="flex flex-col items-end gap-1 shrink-0">
             <StatusBadge status={loc.status} />
             <SyncStatusBadge status={loc.syncStatus} />
+            <VerificationBadge state={loc.verificationState} />
           </div>
         </div>
 
@@ -843,7 +973,7 @@ function LocationCard({
         <div className="space-y-1.5 text-xs text-muted-foreground">
           <div className="flex items-start gap-1.5">
             <Building2 className="size-3.5 shrink-0 mt-0.5" />
-            <span className="line-clamp-2">{loc.address}</span>
+            <span className="line-clamp-2">{address}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Phone className="size-3.5 shrink-0" />
@@ -869,34 +999,130 @@ function LocationCard({
           >
             View details <ArrowRight className="size-3.5 ml-1" />
           </Button>
-          {canSync && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={onSync}
-              disabled={syncing || loc.syncStatus === "syncing"}
-            >
-              {syncing || loc.syncStatus === "syncing" ? (
-                <Loader2 className="size-3.5 mr-1 animate-spin" />
-              ) : (
-                <RefreshCw className="size-3.5 mr-1" />
-              )}
-              Sync
-            </Button>
-          )}
         </div>
 
-        {/* Secondary action: jump to reviews (compact) */}
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-xs h-7 text-muted-foreground"
-          onClick={onViewReviews}
-        >
-          <MessageSquare className="size-3.5 mr-1" /> View reviews
-        </Button>
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-xs h-7 text-muted-foreground flex-1"
+            onClick={onViewReviews}
+          >
+            <MessageSquare className="size-3.5 mr-1" /> View reviews
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-xs h-7 text-[#2563EB] flex-1"
+            onClick={() => {
+              const branch = resolveLocationCity(loc) || loc.city || loc.name;
+              const q = new URLSearchParams({
+                business: "My FNG",
+                branch,
+                locationId: loc.id,
+              });
+              window.open(`/review?${q.toString()}`, "_blank");
+            }}
+          >
+            <Star className="size-3.5 mr-1" /> Review page
+          </Button>
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function LocationListRow({
+  loc, selected, onSelect, onViewDetails, onViewReviews,
+}: {
+  loc: LocationWithStats;
+  selected: boolean;
+  onSelect: () => void;
+  onViewDetails: () => void;
+  onViewReviews: () => void;
+}) {
+  const city = resolveLocationCity(loc);
+  const address = resolveLocationAddress(loc);
+
+  return (
+    <TableRow className={cn(selected && "bg-primary/[0.03]", verificationCardClass(loc.verificationState))}>
+      <TableCell>
+        <Checkbox
+          checked={selected}
+          onCheckedChange={onSelect}
+          aria-label={`Select ${loc.name}`}
+        />
+      </TableCell>
+      <TableCell>
+        <div className="min-w-0">
+          <div className="font-medium truncate max-w-[280px]">{loc.name}</div>
+          <div className="text-xs text-muted-foreground truncate max-w-[280px]">{address}</div>
+          <div className="lg:hidden mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+            <Phone className="size-3 shrink-0" />
+            <span className="tabular-nums">{loc.phone || "Not listed"}</span>
+          </div>
+        </div>
+      </TableCell>
+      <TableCell className="hidden md:table-cell text-sm">{city}</TableCell>
+      <TableCell className="hidden lg:table-cell">
+        {loc.phone ? (
+          <a
+            href={`tel:${loc.phone.replace(/\s+/g, "")}`}
+            className="inline-flex items-center gap-1.5 text-sm tabular-nums text-foreground hover:text-[#0047AB] transition-colors"
+            onClick={(e) => e.stopPropagation()}
+            title="GMB listed phone"
+          >
+            <Phone className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate max-w-[160px]">{loc.phone}</span>
+          </a>
+        ) : (
+          <span className="text-xs text-muted-foreground">Not listed</span>
+        )}
+      </TableCell>
+      <TableCell className="hidden lg:table-cell">
+        <div className="flex items-center gap-2">
+          <RatingStars rating={loc.avgRating} />
+          <span className="text-xs text-muted-foreground">({loc.reviewCount})</span>
+        </div>
+      </TableCell>
+      <TableCell className="hidden sm:table-cell">
+        <ScoreBadge score={loc.healthScore} />
+      </TableCell>
+      <TableCell className="hidden sm:table-cell">
+        <div className="flex flex-col gap-1 items-start">
+          <StatusBadge status={loc.status} />
+          <SyncStatusBadge status={loc.syncStatus} />
+          <VerificationBadge state={loc.verificationState} />
+        </div>
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex items-center justify-end gap-1">
+          <Button size="sm" variant="outline" onClick={onViewDetails}>
+            Details
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onViewReviews} title="View reviews">
+            <MessageSquare className="size-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-[#2563EB]"
+            title="Open review landing page"
+            onClick={() => {
+              const branch = city || loc.name;
+              const q = new URLSearchParams({
+                business: "My FNG",
+                branch,
+                locationId: loc.id,
+              });
+              window.open(`/review?${q.toString()}`, "_blank");
+            }}
+          >
+            <Star className="size-3.5" />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -971,8 +1197,36 @@ function LocationDetail({
             onEdit={() => setEditOpen(true)}
           />
 
-          {/* Mini stats row */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {detail.analytics30d.synced === false && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              <p className="font-medium flex items-center gap-2">
+                <AlertTriangle className="size-4 text-amber-600 shrink-0" />
+                Performance metrics not synced
+              </p>
+              <p className="mt-1 text-amber-900/80 text-[13px] leading-relaxed">
+                Reviews and profile can sync while Google’s Performance API still returns no data.
+                {detail.googleProfile?.verificationState &&
+                detail.googleProfile.verificationState !== "verified"
+                  ? " This listing is unverified — Google usually blocks impressions/clicks until you verify it in Google Business Profile."
+                  : " Reconnect Google under More → Google, confirm Business Profile Performance API access, then run Sync → Analytics."}
+              </p>
+              {canSync && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 border-amber-300 bg-white hover:bg-amber-100"
+                  disabled={syncing}
+                  onClick={() => onSync("analytics")}
+                >
+                  {syncing ? <Loader2 className="size-3.5 animate-spin mr-1.5" /> : <TrendingUp className="size-3.5 mr-1.5" />}
+                  Retry analytics sync
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* Mini stats + performance metrics */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-3">
             <MiniStat
               label="Reviews"
               value={detail.location.reviewCount.toLocaleString("en-IN")}
@@ -988,29 +1242,90 @@ function LocationDetail({
             />
             <MiniStat
               label="Response Rate"
-              value={`${detail.healthBreakdown.reviewResponseRate}%`}
+              value={detail.location.reviewCount > 0
+                ? `${detail.healthBreakdown.reviewResponseRate}%`
+                : "—"}
               icon={RefreshCw}
               accent="teal"
+              hint={detail.location.reviewCount > 0
+                ? <span className="text-[10px] text-muted-foreground">{detail.stats.repliedReviewCount}/{detail.location.reviewCount} replied</span>
+                : undefined}
+            />
+            <MiniStat
+              label="Impressions (30d)"
+              value={formatAnalytics(
+                detail.analytics30d.impressions ??
+                  ((detail.analytics30d.searchViews ?? 0) + (detail.analytics30d.mapsViews ?? 0)),
+                detail.analytics30d.synced !== false,
+              )}
+              icon={Eye}
+              accent="blue"
             />
             <MiniStat
               label="Search Views (30d)"
-              value={formatAnalytics(detail.analytics30d.searchViews)}
-              icon={Eye}
+              value={formatAnalytics(detail.analytics30d.searchViews, detail.analytics30d.synced !== false)}
+              icon={Search}
               accent="emerald"
             />
             <MiniStat
-              label="Website Clicks (30d)"
-              value={formatAnalytics(detail.analytics30d.websiteClicks)}
+              label="Maps Views (30d)"
+              value={formatAnalytics(detail.analytics30d.mapsViews, detail.analytics30d.synced !== false)}
+              icon={MapIcon}
+              accent="teal"
+            />
+            <MiniStat
+              label="Interactions (30d)"
+              value={formatAnalytics(
+                detail.analytics30d.interactions ??
+                  ((detail.analytics30d.websiteClicks ?? 0) +
+                    (detail.analytics30d.phoneCalls ?? 0) +
+                    (detail.analytics30d.directionRequests ?? 0) +
+                    (detail.analytics30d.conversations ?? 0) +
+                    (detail.analytics30d.bookings ?? 0)),
+                detail.analytics30d.synced !== false,
+              )}
               icon={MousePointerClick}
+              accent="violet"
+            />
+            <MiniStat
+              label="Website Clicks (30d)"
+              value={formatAnalytics(detail.analytics30d.websiteClicks, detail.analytics30d.synced !== false)}
+              icon={Globe}
               accent="amber"
             />
             <MiniStat
               label="Phone Calls (30d)"
-              value={formatAnalytics(detail.analytics30d.phoneCalls)}
+              value={formatAnalytics(detail.analytics30d.phoneCalls, detail.analytics30d.synced !== false)}
               icon={PhoneCall}
               accent="rose"
             />
+            <MiniStat
+              label="Directions (30d)"
+              value={formatAnalytics(detail.analytics30d.directionRequests, detail.analytics30d.synced !== false)}
+              icon={Navigation}
+              accent="orange"
+            />
+            <MiniStat
+              label="Chat Clicks (30d)"
+              value={
+                detail.analytics30d.synced === false
+                  ? "Not synced"
+                  : (detail.analytics30d.conversations ?? 0) > 0
+                    ? formatAnalytics(detail.analytics30d.conversations, true)
+                    : "—"
+              }
+              icon={MessageSquare}
+              accent="cyan"
+              hint={
+                detail.analytics30d.synced !== false && !(detail.analytics30d.conversations ?? 0) ? (
+                  <span className="text-[10px] text-muted-foreground">Not in Google API</span>
+                ) : undefined
+              }
+            />
           </div>
+
+          {/* Profile Strength — radar + breakdown */}
+          <ProfileStrengthDashboard detail={detail} />
 
           {/* Completeness + Health breakdown */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1029,7 +1344,7 @@ function LocationDetail({
               <TabsTrigger value="services"><ListChecks className="size-3.5 mr-1.5" />Services</TabsTrigger>
               <TabsTrigger value="photos"><Camera className="size-3.5 mr-1.5" />Photos</TabsTrigger>
               <TabsTrigger value="timeline"><History className="size-3.5 mr-1.5" />Timeline</TabsTrigger>
-              <TabsTrigger value="seo"><SeoIcon className="size-3.5 mr-1.5" />SEO Audit</TabsTrigger>
+              <TabsTrigger value="seo"><SeoIcon className="size-3.5 mr-1.5" />Profile Strength</TabsTrigger>
             </TabsList>
 
             <TabsContent value="business" className="mt-0">
@@ -1113,7 +1428,7 @@ function LocationDetailHeader({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <MapPin className="size-3.5" />
-              <span className="truncate">{location.city}, {location.region}, {location.state}</span>
+              <span className="truncate">{formatLocationAreaLine(location)}</span>
               <span className="text-muted-foreground/50">·</span>
               <span className="font-mono">{location.locationCode}</span>
             </div>
@@ -1163,7 +1478,7 @@ function LocationDetailHeader({
                       : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
                   )}>
                     <ShieldCheck className="size-3 mr-1" />
-                    {googleProfile.verificationState === "verified" ? "Verified" : "Unverified"}
+                    {googleProfile.verificationState === "verified" ? "Verified" : formatVerificationLabel(googleProfile.verificationState, googleProfile.verificationPending)}
                   </Badge>
                 </>
               )}
@@ -1249,26 +1564,58 @@ function MiniStat({
   label: string;
   value: string | number;
   icon: React.ComponentType<{ className?: string }>;
-  accent?: "emerald" | "amber" | "teal" | "rose" | "slate";
+  accent?: "emerald" | "amber" | "teal" | "rose" | "slate" | "blue" | "violet" | "orange" | "cyan";
   hint?: React.ReactNode;
 }) {
-  const cls: Record<string, string> = {
-    emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-    amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-    teal: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
-    rose: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-    slate: "bg-slate-500/10 text-slate-600 dark:text-slate-400",
+  const styles: Record<string, { card: string; icon: string }> = {
+    emerald: {
+      card: "bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-100/80 dark:from-emerald-950/30 dark:to-teal-950/20 dark:border-emerald-800/40",
+      icon: "bg-emerald-500 text-white",
+    },
+    amber: {
+      card: "bg-gradient-to-br from-amber-50 to-yellow-50 border-amber-100/80 dark:from-amber-950/30 dark:to-yellow-950/20 dark:border-amber-800/40",
+      icon: "bg-amber-500 text-white",
+    },
+    teal: {
+      card: "bg-gradient-to-br from-teal-50 to-cyan-50 border-teal-100/80 dark:from-teal-950/30 dark:to-cyan-950/20 dark:border-teal-800/40",
+      icon: "bg-teal-500 text-white",
+    },
+    rose: {
+      card: "bg-gradient-to-br from-rose-50 to-pink-50 border-rose-100/80 dark:from-rose-950/30 dark:to-pink-950/20 dark:border-rose-800/40",
+      icon: "bg-rose-500 text-white",
+    },
+    slate: {
+      card: "bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200/80 dark:from-slate-950/30 dark:to-gray-900/20 dark:border-slate-700/40",
+      icon: "bg-slate-500 text-white",
+    },
+    blue: {
+      card: "bg-gradient-to-br from-blue-50 to-sky-50 border-blue-100/80 dark:from-blue-950/30 dark:to-sky-950/20 dark:border-blue-800/40",
+      icon: "bg-blue-500 text-white",
+    },
+    violet: {
+      card: "bg-gradient-to-br from-violet-50 to-purple-50 border-violet-100/80 dark:from-violet-950/30 dark:to-purple-950/20 dark:border-violet-800/40",
+      icon: "bg-violet-500 text-white",
+    },
+    orange: {
+      card: "bg-gradient-to-br from-orange-50 to-amber-50 border-orange-100/80 dark:from-orange-950/30 dark:to-amber-950/20 dark:border-orange-800/40",
+      icon: "bg-orange-500 text-white",
+    },
+    cyan: {
+      card: "bg-gradient-to-br from-cyan-50 to-sky-50 border-cyan-100/80 dark:from-cyan-950/30 dark:to-sky-950/20 dark:border-cyan-800/40",
+      icon: "bg-cyan-500 text-white",
+    },
   };
+  const s = styles[accent] ?? styles.emerald;
   return (
-    <Card>
+    <Card className={cn("border shadow-sm", s.card)}>
       <CardContent className="p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">{label}</div>
             <div className="mt-1 text-lg sm:text-xl font-bold tabular-nums truncate">{value}</div>
             {hint && <div className="mt-1">{hint}</div>}
           </div>
-          <div className={cn("size-8 rounded-md flex items-center justify-center shrink-0", cls[accent])}>
+          <div className={cn("size-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm", s.icon)}>
             <Icon className="size-4" />
           </div>
         </div>
@@ -1316,7 +1663,7 @@ function ScoreRing({ value, label, size = 120 }: { value: number; label?: string
 
 function ProfileCompletenessCard({ completeness }: { completeness: Completeness }) {
   return (
-    <Card>
+    <Card className="border-emerald-100/80 bg-gradient-to-br from-emerald-50/50 to-teal-50/40 dark:from-emerald-950/20 dark:to-teal-950/10 dark:border-emerald-800/40">
       <CardContent className="p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
@@ -1337,7 +1684,15 @@ function ProfileCompletenessCard({ completeness }: { completeness: Completeness 
             {COMPLETENESS_ITEMS.map((item) => {
               const ok = completeness.checklist[item.key];
               return (
-                <div key={item.key} className="flex items-center gap-2 text-sm">
+                <div
+                  key={item.key}
+                  className={cn(
+                    "flex items-center gap-2 text-sm rounded-lg px-2 py-1.5 border",
+                    ok
+                      ? "bg-emerald-50/80 border-emerald-100 dark:bg-emerald-950/20 dark:border-emerald-800/40"
+                      : "bg-rose-50/70 border-rose-100 dark:bg-rose-950/20 dark:border-rose-800/40",
+                  )}
+                >
                   <span className={cn(
                     "inline-flex items-center justify-center size-4 rounded-full shrink-0",
                     ok ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
@@ -1366,7 +1721,7 @@ function HealthBreakdownCard({
   breakdown: HealthBreakdown;
 }) {
   return (
-    <Card>
+    <Card className="border-rose-100/80 bg-gradient-to-br from-rose-50/40 to-orange-50/30 dark:from-rose-950/20 dark:to-orange-950/10 dark:border-rose-800/40">
       <CardContent className="p-4 sm:p-5">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
@@ -1377,7 +1732,7 @@ function HealthBreakdownCard({
               8 factors that determine profile health
             </p>
           </div>
-          <div className="text-right">
+          <div className="text-right rounded-xl bg-white/70 dark:bg-card/50 border border-rose-100/80 dark:border-rose-800/40 px-3 py-1.5">
             <div className="text-xs text-muted-foreground">Overall</div>
             <div className={cn("text-2xl font-bold tabular-nums", scoreColorClass(score))}>{score}</div>
           </div>
@@ -1387,7 +1742,10 @@ function HealthBreakdownCard({
           {HEALTH_FACTORS.map((f) => {
             const v = breakdown[f.key];
             return (
-              <div key={f.key}>
+              <div
+                key={f.key}
+                className="rounded-lg border border-white/80 bg-white/60 dark:bg-card/40 dark:border-border/60 px-2.5 py-2"
+              >
                 <div className="flex items-center justify-between text-xs mb-1">
                   <span className="text-foreground/80">{f.label}</span>
                   <span className={cn("font-semibold tabular-nums", scoreColorClass(v))}>{v}%</span>
@@ -1572,18 +1930,15 @@ function BusinessInfoTab({ detail, canManage }: { detail: LocationDetailResponse
                         ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
                         : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
                     )}>
-                      {googleProfile.verificationState}
+                      {formatVerificationLabel(googleProfile.verificationState, googleProfile.verificationPending)}
                     </Badge>
                   }
                 />
-                {/* Verification actions — surface the single-location verify
-                    flow + history viewer right under the state badge so a
-                    branch manager doesn't have to dig through the Bulk
-                    Verify dialog for a one-off. */}
                 {googleProfile.verificationState !== "verified" && canManage && (
                   <LocationVerifyActions
                     locationId={location.id}
                     locationName={location.name}
+                    mapUrl={googleProfile.mapUrl}
                   />
                 )}
                 {googleProfile.verificationState === "verified" && (
@@ -1602,11 +1957,11 @@ function BusinessInfoTab({ detail, canManage }: { detail: LocationDetailResponse
                         ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
                         : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
                     )}>
-                      {googleProfile.profileStatus}
+                      {formatProfileStatusLabel(googleProfile.profileStatus)}
                     </Badge>
                   }
                 />
-                {googleProfile.mapUrl && (
+                {googleProfile.mapUrl ? (
                   <a
                     href={googleProfile.mapUrl}
                     target="_blank"
@@ -1615,6 +1970,8 @@ function BusinessInfoTab({ detail, canManage }: { detail: LocationDetailResponse
                   >
                     <ExternalLink className="size-3" /> Open on Google Maps
                   </a>
+                ) : (
+                  <p className="text-xs text-muted-foreground pt-1">Google Maps link not available — run Profile sync.</p>
                 )}
               </div>
             ) : (
@@ -2180,108 +2537,41 @@ function TimelineTab({ timeline }: { timeline: TimelineRow[] }) {
 /* ----------------------------- SEO Audit Tab ----------------------------- */
 
 function SeoAuditTab({ detail }: { detail: LocationDetailResponse }) {
-  const { seoAudit, completeness } = detail;
+  const { seoAudit } = detail;
 
-  if (!seoAudit) {
+  if (!seoAudit || seoAudit.recommendations.length === 0) {
     return (
       <Card>
-        <CardContent className="p-12 text-center">
-          <div className="mx-auto size-12 rounded-full bg-muted flex items-center justify-center mb-3">
-            <SeoIcon className="size-6 text-muted-foreground" />
-          </div>
-          <h3 className="text-base font-semibold">No SEO audit yet</h3>
-          <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto mb-4">
-            Run an audit to get profile strength scoring, missing content recommendations, and SEO improvement tips.
-          </p>
-          <Button size="sm" onClick={() => toast.info("SEO audit queued — results will appear here when ready.")}>
-            <Sparkles className="size-3.5 mr-1.5" /> Run New Audit
-          </Button>
+        <CardContent className="p-8 text-center text-sm text-muted-foreground">
+          Profile strength analysis is shown above. No additional AI recommendations at this time.
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-2 mb-4">
-            <div>
-              <h3 className="text-sm font-semibold flex items-center gap-1.5">
-                <Target className="size-4 text-emerald-500" /> SEO Audit Results
-              </h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Last audited {relativeTime(seoAudit.auditedAt)}
-              </p>
-            </div>
-            <Button
-              size="sm" variant="outline"
-              onClick={() => toast.info("SEO audit queued — results will refresh when ready.")}
-            >
-              <Sparkles className="size-3.5 mr-1.5" /> Run New Audit
-            </Button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="rounded-lg border p-4 flex flex-col items-center">
-              <ScoreRing value={seoAudit.auditScore} label="Audit Score" size={130} />
-            </div>
-            <div className="rounded-lg border p-4 flex flex-col items-center">
-              <ScoreRing value={seoAudit.profileStrength} label="Profile Strength" size={130} />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-            <div className="rounded-lg border bg-muted/30 p-3 text-center">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Missing Photos</div>
-              <div className={cn(
-                "mt-1 text-xl font-bold tabular-nums",
-                seoAudit.missingPhotos > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
-              )}>
-                {seoAudit.missingPhotos}
-              </div>
-            </div>
-            <div className="rounded-lg border bg-muted/30 p-3 text-center">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Missing Services</div>
-              <div className={cn(
-                "mt-1 text-xl font-bold tabular-nums",
-                seoAudit.missingServices > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
-              )}>
-                {seoAudit.missingServices}
-              </div>
-            </div>
-            <div className="rounded-lg border bg-muted/30 p-3 text-center">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Completeness</div>
-              <div className="mt-1 text-xl font-bold tabular-nums">{completeness.score}%</div>
-            </div>
-            <div className="rounded-lg border bg-muted/30 p-3 text-center">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Recommendations</div>
-              <div className="mt-1 text-xl font-bold tabular-nums">{seoAudit.recommendations.length}</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {seoAudit.recommendations.length > 0 && (
-        <Card>
-          <CardContent className="p-4 sm:p-5 space-y-3">
-            <h3 className="text-sm font-semibold flex items-center gap-1.5">
-              <Sparkles className="size-4 text-amber-500" /> Recommendations
-            </h3>
-            <ul className="space-y-2">
-              {seoAudit.recommendations.map((r, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm">
-                  <span className="inline-flex items-center justify-center size-5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[11px] font-semibold shrink-0 mt-0.5">
-                    {i + 1}
-                  </span>
-                  <span className="text-foreground/90">{r}</span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
-    </div>
+    <Card>
+      <CardContent className="p-4 sm:p-5 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold flex items-center gap-1.5">
+            <Sparkles className="size-4 text-amber-500" /> AI Recommendations
+          </h3>
+          <span className="text-xs text-muted-foreground">
+            Last updated {relativeTime(seoAudit.auditedAt)}
+          </span>
+        </div>
+        <ul className="space-y-2">
+          {seoAudit.recommendations.map((r, i) => (
+            <li key={i} className="flex items-start gap-2 text-sm">
+              <span className="inline-flex items-center justify-center size-5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[11px] font-semibold shrink-0 mt-0.5">
+                {i + 1}
+              </span>
+              <span className="text-foreground/90">{r}</span>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2687,8 +2977,10 @@ function AddLocationDialog({ open, onOpenChange }: { open: boolean; onOpenChange
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold truncate">{loc.name}</span>
-                        {loc.verificationState === "verified" && (
+                        {loc.verificationState === "verified" ? (
                           <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20 shrink-0">Verified</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 border-amber-500/20 shrink-0">Verification required</Badge>
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">{loc.address || loc.city}</p>
@@ -3422,9 +3714,11 @@ function BulkActionResultCard({
 function LocationVerifyActions({
   locationId,
   locationName,
+  mapUrl,
 }: {
   locationId: string;
   locationName: string;
+  mapUrl?: string | null;
 }) {
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -3441,6 +3735,7 @@ function LocationVerifyActions({
         onOpenChange={setVerifyOpen}
         locationId={locationId}
         locationName={locationName}
+        mapUrl={mapUrl}
       />
       <VerificationHistoryDialog
         open={historyOpen}
@@ -3475,16 +3770,25 @@ function LocationVerifyHistoryButton({
   );
 }
 
+type VerifyOption = {
+  verificationMethod?: "ADDRESS" | "PHONE_CALL" | "SMS" | "EMAIL" | string;
+  phoneNumber?: string;
+  addressData?: { business?: string };
+  emailData?: { user?: string; domain?: string; isUserNameEditable?: boolean };
+};
+
 function SingleVerifyDialog({
   open,
   onOpenChange,
   locationId,
   locationName,
+  mapUrl,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   locationId: string;
   locationName: string;
+  mapUrl?: string | null;
 }) {
   const qc = useQueryClient();
   const [method, setMethod] = useState<"ADDRESS" | "PHONE_CALL" | "SMS" | "EMAIL">("ADDRESS");
@@ -3511,7 +3815,45 @@ function SingleVerifyDialog({
     enabled: open,
   });
 
+  const { data: optionsData, isLoading: optionsLoading } = useQuery<{
+    options: VerifyOption[];
+    linked?: boolean;
+    configured?: boolean;
+    connected?: boolean;
+  }>({
+    queryKey: ["location-verify-options", locationId, historyTick],
+    queryFn: () => api(`/api/locations/${locationId}/verify/options`),
+    enabled: open,
+  });
+
   const pending = (verifyData?.verifications || []).filter((v) => v.state === "PENDING");
+  const googleOptions = optionsData?.options ?? [];
+  const availableMethods = VERIFY_METHODS.filter((m) =>
+    googleOptions.some((o) => o.verificationMethod === m.value),
+  );
+  const selectedOption = googleOptions.find((o) => o.verificationMethod === method);
+  const gbpManageUrl = "https://business.google.com/locations";
+
+  useEffect(() => {
+    if (!open || googleOptions.length === 0) return;
+    const methods = VERIFY_METHODS.filter((m) =>
+      googleOptions.some((o) => o.verificationMethod === m.value),
+    );
+    if (methods.length > 0 && !methods.some((m) => m.value === method)) {
+      setMethod(methods[0]!.value as typeof method);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when Google options load
+  }, [open, googleOptions.length, historyTick]);
+
+  useEffect(() => {
+    if (!selectedOption) return;
+    if (selectedOption.phoneNumber) setPhoneNumber(selectedOption.phoneNumber);
+    if (selectedOption.emailData?.domain) {
+      setEmailAddress(
+        `${selectedOption.emailData.user || "info"}@${selectedOption.emailData.domain}`,
+      );
+    }
+  }, [selectedOption]);
 
   const inputLabel =
     method === "ADDRESS"
@@ -3538,6 +3880,9 @@ function SingleVerifyDialog({
         ? "verify@example.com"
         : "+91 98765 43210";
   const methodHint = VERIFY_METHODS.find((m) => m.value === method)?.hint;
+  const phoneLocked = Boolean(
+    (method === "PHONE_CALL" || method === "SMS") && selectedOption?.phoneNumber,
+  );
 
   async function handleInitiate() {
     const input: any = {};
@@ -3576,7 +3921,7 @@ function SingleVerifyDialog({
       setHistoryTick((n) => n + 1);
       qc.invalidateQueries({ queryKey: ["locations"] });
     } catch (e: any) {
-      toast.error(e.message || "Initiate failed");
+      toast.error(e.message || "Initiate failed", { duration: 9000 });
     } finally {
       setInitiating(false);
     }
@@ -3626,24 +3971,24 @@ function SingleVerifyDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {verifyLoading && (
+        {(verifyLoading || optionsLoading) && (
           <div className="py-8 text-center">
             <Loader2 className="size-6 mx-auto animate-spin text-primary" />
-            <p className="text-xs text-muted-foreground mt-2">Loading verification status…</p>
+            <p className="text-xs text-muted-foreground mt-2">Checking verification options Google allows…</p>
           </div>
         )}
 
-        {!verifyLoading && notLinked && (
+        {!verifyLoading && !optionsLoading && notLinked && (
           <p className="text-sm text-muted-foreground py-4">
             No Google Business Profile linked to this location. Import this location from Google first.
           </p>
         )}
-        {!verifyLoading && notConfigured && (
+        {!verifyLoading && !optionsLoading && notConfigured && (
           <p className="text-sm text-muted-foreground py-4">
             Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file.
           </p>
         )}
-        {!verifyLoading && notConnected && (
+        {!verifyLoading && !optionsLoading && notConnected && (
           <p className="text-sm text-muted-foreground py-4">
             Google account not connected. Reconnect Google OAuth from the Google Integration page.
           </p>
@@ -3651,7 +3996,7 @@ function SingleVerifyDialog({
 
         {/* Pending verification complete panel — show first if there's
             already a pending verification the user can complete. */}
-        {!verifyLoading && !notLinked && !notConfigured && !notConnected && pending.length > 0 && (
+        {!verifyLoading && !optionsLoading && !notLinked && !notConfigured && !notConnected && pending.length > 0 && (
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
             <p className="text-sm font-semibold flex items-center gap-1.5">
               <Clock className="size-4 text-amber-500" /> Pending verification
@@ -3692,8 +4037,36 @@ function SingleVerifyDialog({
           </div>
         )}
 
-        {/* Initiate form — only relevant if no pending verification. */}
-        {!verifyLoading && !notLinked && !notConfigured && !notConnected && pending.length === 0 && (
+        {/* Initiate form — only when Google offers API methods and nothing is pending. */}
+        {!verifyLoading && !optionsLoading && !notLinked && !notConfigured && !notConnected && pending.length === 0 && availableMethods.length === 0 && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+            <p className="text-sm font-semibold flex items-center gap-1.5">
+              <AlertTriangle className="size-4 text-amber-600" />
+              SMS / call not available via API
+            </p>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Google returned no postcard, SMS, phone-call, or email verification options for this listing.
+              That usually means verification must be completed in Google Business Profile (often a short video).
+              After Google marks it verified, sync this location and performance metrics can unlock.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" asChild>
+                <a href={gbpManageUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="size-3.5 mr-1.5" /> Open Google Business Profile
+                </a>
+              </Button>
+              {mapUrl && (
+                <Button size="sm" variant="outline" asChild>
+                  <a href={mapUrl} target="_blank" rel="noopener noreferrer">
+                    <MapPin className="size-3.5 mr-1.5" /> View on Maps
+                  </a>
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!verifyLoading && !optionsLoading && !notLinked && !notConfigured && !notConnected && pending.length === 0 && availableMethods.length > 0 && (
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="sv-method" className="text-xs">Verification method</Label>
@@ -3702,7 +4075,7 @@ function SingleVerifyDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {VERIFY_METHODS.map((m) => (
+                  {availableMethods.map((m) => (
                     <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                   ))}
                 </SelectContent>
@@ -3715,11 +4088,16 @@ function SingleVerifyDialog({
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder={inputPlaceholder}
-                disabled={initiating}
+                disabled={initiating || phoneLocked}
               />
             </div>
             {methodHint && (
               <p className="text-xs text-muted-foreground">{methodHint}</p>
+            )}
+            {phoneLocked && (
+              <p className="text-xs text-muted-foreground">
+                Using the phone number Google listed as eligible for this method.
+              </p>
             )}
             <Button onClick={handleInitiate} disabled={initiating} className="w-full">
               {initiating

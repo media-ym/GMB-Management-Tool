@@ -95,6 +95,23 @@ export async function withRetry<T>(
 
 /** Sanitize Google API error messages for end-user display. */
 export function sanitizeGoogleError(message: string): string {
+  // Prefer Google's human-readable `error.message` when the payload is JSON.
+  const jsonMatch = message.match(/\{[\s\S]*\}$/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const googleMsg = parsed?.error?.message;
+      if (typeof googleMsg === "string" && googleMsg.trim()) {
+        if (/not eligible/i.test(googleMsg)) {
+          return `${googleMsg} Open Google Business Profile to verify (often video) — SMS/call may not be offered for this listing.`;
+        }
+        return googleMsg;
+      }
+    } catch {
+      // fall through
+    }
+  }
+
   // Strip internal request IDs, project numbers, and long JSON payloads
   let clean = message.replace(/Request ID:\s*[^\s,]+/gi, "").trim();
   clean = clean.replace(/projects\/\d+/g, "projects/[REDACTED]");
@@ -102,14 +119,20 @@ export function sanitizeGoogleError(message: string): string {
   if (/401|invalid_grant|invalid_token/i.test(clean)) {
     return "Google authorization expired. Please reconnect your Google account.";
   }
+  if (/403/.test(clean) && /insufficient authentication scopes/i.test(clean)) {
+    return "Google Business Profile permission not granted. Go to More → Google → Disconnect → Connect again and allow all permissions.";
+  }
   if (/403/.test(clean)) {
-    return "Google denied access. Check API permissions and quota.";
+    return "Google API access denied (403). Go to More → Google → reconnect, and enable My Business APIs in Google Cloud Console.";
   }
   if (/429/.test(clean)) {
     return "Google API rate limit reached. Please try again in a few minutes.";
   }
   if (/50\d/.test(clean)) {
     return "Google servers are temporarily unavailable. Please try again.";
+  }
+  if (/INVALID_ARGUMENT|invalid argument/i.test(clean)) {
+    return "Google rejected this verification request. This listing may not offer SMS/call via API — verify in Google Business Profile instead.";
   }
   // Truncate long messages
   return clean.length > 200 ? clean.slice(0, 200) + "…" : clean;

@@ -43,8 +43,11 @@ export async function POST(req: NextRequest) {
           result.synced.photos +
           result.synced.hours +
           result.synced.services +
-          result.synced.categories;
-        const recordsInserted = result.synced.reviews + result.synced.photos;
+          result.synced.categories +
+          result.synced.posts +
+          (result.synced.analytics ?? 0);
+        const recordsInserted =
+          result.synced.reviews + result.synced.photos + (result.synced.analytics ?? 0);
         const recordsUpdated = result.synced.hours + result.synced.services + result.synced.categories;
 
         await db.syncLog.create({

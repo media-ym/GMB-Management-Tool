@@ -10,6 +10,7 @@ import {
   initiateVerification,
   listVerifications,
   completeVerification,
+  fetchVerificationOptions,
 } from "@/lib/google-service";
 
 export const dynamic = "force-dynamic";
@@ -120,7 +121,50 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   try {
-    const verification = await initiateVerification(accessToken, gbp.googleLocationId, method, input);
+    // Only methods Google lists for this location can succeed. Empty options
+    // usually means video/in-app verification only (not SMS/call via API).
+    const optionsData = await fetchVerificationOptions(accessToken, gbp.googleLocationId, "en");
+    const options = Array.isArray(optionsData?.options) ? optionsData.options : [];
+    const eligible = options.filter(
+      (o: { verificationMethod?: string }) => o.verificationMethod === method,
+    );
+    if (options.length === 0) {
+      return fail(
+        "Google is not offering SMS, phone call, email, or postcard verification for this listing through the API. Open Google Business Profile and complete verification there (often video).",
+        400,
+      );
+    }
+    if (eligible.length === 0) {
+      const available = [...new Set(options.map((o: { verificationMethod?: string }) => o.verificationMethod).filter(Boolean))].join(", ");
+      return fail(
+        `${method} is not available for this location. Google currently offers: ${available || "none"}.`,
+        400,
+      );
+    }
+
+    // Prefer the exact phone/email Google returned for eligibility checks.
+    const matched = eligible[0] as {
+      phoneNumber?: string;
+      emailData?: { user?: string; domain?: string };
+    };
+    const resolvedInput = { ...input };
+    if ((method === "PHONE_CALL" || method === "SMS") && matched.phoneNumber) {
+      resolvedInput.phoneNumber = matched.phoneNumber;
+    }
+    if (method === "EMAIL" && matched.emailData?.domain) {
+      const userPart =
+        typeof input.emailAddress === "string" && input.emailAddress.includes("@")
+          ? input.emailAddress.split("@")[0]
+          : matched.emailData.user || "info";
+      resolvedInput.emailAddress = `${userPart}@${matched.emailData.domain}`;
+    }
+
+    const verification = await initiateVerification(
+      accessToken,
+      gbp.googleLocationId,
+      method,
+      resolvedInput,
+    );
 
     await logAudit({
       userId: user.id,
@@ -128,7 +172,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       action: "location.verify_initiated",
       entity: "location",
       entityId: id,
-      newValue: { method, input, verificationName: verification?.name ?? null },
+      newValue: { method, input: resolvedInput, verificationName: verification?.name ?? null },
       ip: req.headers.get("x-forwarded-for") ?? undefined,
     });
 

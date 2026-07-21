@@ -42,7 +42,7 @@ const FULL: Permission[] = [
 const MATRIX: Record<Role, Permission[]> = {
   super_admin: FULL,
   marketing_manager: [
-    "dashboard.view", "locations.view",
+    "dashboard.view", "locations.view", "locations.manage",
     "reviews.view", "reviews.reply", "reviews.ai_reply",
     "posts.view", "posts.manage",
     "analytics.view",
@@ -54,7 +54,7 @@ const MATRIX: Record<Role, Permission[]> = {
     "settings.view", "settings.manage", "system.sync", "system.view",
   ],
   branch_manager: [
-    "dashboard.view", "locations.view",
+    "dashboard.view", "locations.view", "locations.manage",
     "reviews.view", "reviews.reply", "reviews.ai_reply",
     "posts.view", "posts.manage",
     "analytics.view",
@@ -107,11 +107,14 @@ export function canAccessView(role: Role | undefined, view: string): boolean {
     "api-docs": "dashboard.view",
     "openapi-spec": "dashboard.view",
     "google-api-mapping": "dashboard.view",
-    "roadmap": "dashboard.view",
-    "design-system": "dashboard.view",
-    "wireframes": "dashboard.view",
+    "google-billing": "system.view",
     settings: "settings.view",
     clients: "settings.view",
+    "content-updates": "locations.view",
+    "directories": "locations.view",
+    "keywords": "seo.view",
+    "competitors": "seo.view",
+    "market-research": "seo.view",
   };
   const perm = map[view];
   return perm ? can(role, perm) : false;

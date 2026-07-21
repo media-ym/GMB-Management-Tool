@@ -260,13 +260,6 @@ interface ApiToken {
   lastUsed: string;
   expiresAt: string | null; // null = never
 }
-const API_TOKENS: ApiToken[] = [
-  { provider: "Google Business Profile", tokenName: "GBP Sync Token", status: "active", lastUsed: "2025-01-20T09:12:00Z", expiresAt: "2025-02-19T09:12:00Z" },
-  { provider: "Google OAuth", tokenName: "OAuth Refresh Token", status: "active", lastUsed: "2025-01-20T09:12:00Z", expiresAt: "2025-04-20T09:12:00Z" },
-  { provider: "MiSA AI", tokenName: "MiSA AI API Key", status: "active", lastUsed: "2025-01-19T18:42:00Z", expiresAt: null },
-  { provider: "Supabase", tokenName: "Service Role Key", status: "active", lastUsed: "2025-01-20T09:12:00Z", expiresAt: null },
-  { provider: "SMTP", tokenName: "SMTP Credentials", status: "active", lastUsed: "2025-01-19T14:30:00Z", expiresAt: null },
-];
 
 const PUBLIC_BUCKETS = new Set(["business-photos", "post-images", "profile-images"]);
 
@@ -1402,7 +1395,25 @@ const TOKEN_STATUS_META: Record<ApiTokenStatus, { label: string; cls: string }> 
 };
 
 function IntegrationsTab({ data: _data, isLoading }: { data?: SystemResponse; isLoading: boolean }) {
-  if (isLoading) {
+  const { data: googleData, isLoading: googleLoading } = useQuery<any>({
+    queryKey: ["google-integration"],
+    queryFn: () => api("/api/google-integration"),
+  });
+
+  const apiTokens = useMemo<ApiToken[]>(() => {
+    const accounts = googleData?.accounts ?? [];
+    return accounts.map((a: any) => ({
+      provider: "Google Business Profile",
+      tokenName: a.email,
+      status: a.status === "active" ? "active" as const : a.status === "revoked" ? "revoked" as const : "expired" as const,
+      lastUsed: a.createdAt,
+      expiresAt: a.tokenExpiry,
+    }));
+  }, [googleData]);
+
+  const gbpConnected = googleData?.oauth?.status === "connected";
+
+  if (isLoading || googleLoading) {
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1414,7 +1425,13 @@ function IntegrationsTab({ data: _data, isLoading }: { data?: SystemResponse; is
   }
 
   function testConnection(name: string) {
-    toast.success("Connection successful", { description: `${name} is reachable.` });
+    if (name.includes("Google")) {
+      toast.message(googleData?.oauth?.status === "connected" ? "Google OAuth is connected" : "Google OAuth is not connected", {
+        description: "Manage connection from Google Integration.",
+      });
+      return;
+    }
+    toast.message("Health check not configured", { description: `${name} status is shown from live system data.` });
   }
 
   function reauthorize(name: string) {
@@ -1431,6 +1448,18 @@ function IntegrationsTab({ data: _data, isLoading }: { data?: SystemResponse; is
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {INTEGRATIONS.map((int) => {
             const Icon = int.icon;
+            const isGbp = int.key === "gbp" || int.key === "oauth";
+            const status = isGbp
+              ? (gbpConnected ? "connected" as const : googleData?.oauth?.status === "not_configured" ? "error" as const : "error" as const)
+              : int.status;
+            const statusLabel = isGbp
+              ? (gbpConnected ? "Connected" : googleData?.oauth?.status === "not_configured" ? "Not configured" : "Disconnected")
+              : int.statusLabel;
+            const detail = isGbp && googleData?.oauth?.connectedEmail
+              ? `Account: ${googleData.oauth.connectedEmail}`
+              : isGbp
+                ? (googleData?.oauth?.status === "not_configured" ? "Add GOOGLE_CLIENT_ID to .env" : "Not connected")
+                : int.detail;
             return (
               <div key={int.key} className="rounded-lg border bg-card p-4 flex flex-col">
                 <div className="flex items-start justify-between gap-2">
@@ -1447,18 +1476,18 @@ function IntegrationsTab({ data: _data, isLoading }: { data?: SystemResponse; is
                     variant="outline"
                     className={cn(
                       "text-[11px] font-medium shrink-0",
-                      int.status === "error"
+                      status === "error"
                         ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
                         : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
                     )}
                   >
-                    <span className={cn("size-1.5 rounded-full", int.status === "error" ? "bg-rose-500" : "bg-emerald-500")} />
-                    {int.statusLabel}
+                    <span className={cn("size-1.5 rounded-full", status === "error" ? "bg-rose-500" : "bg-emerald-500")} />
+                    {statusLabel}
                   </Badge>
                 </div>
 
                 <div className="mt-3 text-[11px] text-muted-foreground font-mono bg-muted/40 rounded px-2 py-1.5">
-                  {int.detail}
+                  {detail}
                 </div>
 
                 <div className="mt-auto pt-3 flex items-center gap-2">
@@ -1505,7 +1534,13 @@ function IntegrationsTab({ data: _data, isLoading }: { data?: SystemResponse; is
               </TableRow>
             </TableHeader>
             <TableBody>
-              {API_TOKENS.map((t) => {
+              {apiTokens.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center py-8 text-sm text-muted-foreground">
+                    No API tokens — connect Google from Google Integration.
+                  </TableCell>
+                </TableRow>
+              ) : apiTokens.map((t) => {
                 const meta = TOKEN_STATUS_META[t.status];
                 return (
                   <TableRow key={t.tokenName}>

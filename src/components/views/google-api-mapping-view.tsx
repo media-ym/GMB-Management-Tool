@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { PageHeader, CardSection } from "@/components/shared/page-header";
+import { StatCard } from "@/components/shared/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -112,10 +113,10 @@ export function GoogleApiMappingView() {
 
       {/* Overview cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <OverviewCard icon={Layers} label="Google APIs" value={data?.googleApis.length ?? 0} accent="emerald" />
-        <OverviewCard icon={ArrowLeftRight} label="Entity Mappings" value={data?.mappings.length ?? 0} accent="teal" />
-        <OverviewCard icon={RefreshCw} label="Sync Jobs" value={data?.backgroundJobs.length ?? 0} accent="amber" />
-        <OverviewCard icon={Server} label="Service Layer" value={data?.serviceLayer.length ?? 0} accent="rose" />
+        <StatCard icon={Layers} label="Google APIs" value={data?.googleApis.length ?? 0} accent="emerald" />
+        <StatCard icon={ArrowLeftRight} label="Entity Mappings" value={data?.mappings.length ?? 0} accent="teal" />
+        <StatCard icon={RefreshCw} label="Sync Jobs" value={data?.backgroundJobs.length ?? 0} accent="amber" />
+        <StatCard icon={Server} label="Service Layer" value={data?.serviceLayer.length ?? 0} accent="rose" />
       </div>
 
       <Tabs defaultValue="mappings">
@@ -514,27 +515,5 @@ export function GoogleApiMappingView() {
         </TabsContent>
       </Tabs>
     </div>
-  );
-}
-
-function OverviewCard({ icon: Icon, label, value, accent }: { icon: any; label: string; value: number; accent: string }) {
-  const accentMap: Record<string, string> = {
-    emerald: "bg-emerald-500/10 text-emerald-600",
-    teal: "bg-teal-500/10 text-teal-600",
-    amber: "bg-amber-500/10 text-amber-600",
-    rose: "bg-rose-500/10 text-rose-600",
-  };
-  return (
-    <Card>
-      <CardContent className="p-5 flex items-center gap-3">
-        <div className={cn("size-10 rounded-lg flex items-center justify-center", accentMap[accent])}>
-          <Icon className="size-5" />
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground">{label}</div>
-          <div className="text-2xl font-bold tabular-nums">{value}</div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }

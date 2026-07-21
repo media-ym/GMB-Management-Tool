@@ -10,7 +10,16 @@ import { can } from "@/lib/permissions";
 import { useLocations } from "@/hooks/use-locations";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
+import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { LayoutToggle, type LayoutMode } from "@/components/shared/layout-toggle";
+import { NumberedPagination } from "@/components/shared/numbered-pagination";
 import { PostStatusBadge } from "@/components/shared/badges";
+import { appendLocationIdsToParams } from "@/lib/location-filter";
+import {
+  DurationFilter,
+  type DurationValue,
+  type DurationCustomRange,
+} from "@/components/shared/duration-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +39,9 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
+} from "@/components/ui/sheet";
+import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
@@ -46,10 +58,10 @@ import {
 import {
   FileText, Newspaper, Tag, CalendarDays, Info, Plus, MoreVertical,
   Send, CalendarClock, Pencil, Trash2, Sparkles, ArrowRight, CheckCircle2,
-  Clock, Wand2, ExternalLink, MapPin, Loader2,
+  Clock, Wand2, ExternalLink, MapPin, Loader2, Search,
   Phone, Globe, Mail, CalendarCheck, Eye,
   Archive, BarChart3, X, AlertTriangle, Megaphone, Layers, TrendingUp,
-  CheckCheck, List as ListIcon, Calendar as CalendarIcon, Inbox,
+  CheckCheck, List as ListIcon, Calendar as CalendarIcon, Inbox, Repeat,
 } from "lucide-react";
 import { PostsCalendar } from "@/components/views/posts-calendar";
 import { PublishingQueue } from "@/components/views/posts-queue";
@@ -60,12 +72,20 @@ import {
 import { toast } from "sonner";
 import { formatDistanceToNow, format, isToday, isTomorrow } from "date-fns";
 import type { PostWithLocation, PostType } from "@/lib/types";
+import {
+  computeNextWeeklyOccurrence,
+  formatWeeklyRecurrence,
+  WEEKDAY_OPTIONS,
+} from "@/lib/post-recurrence";
 
 /* ---------- Static metadata ---------- */
 
 type StatusFilter = "all" | "published" | "scheduled" | "draft";
 type TypeFilter = "all" | PostType;
+type PostSort = "newest" | "oldest" | "location" | "type";
 type PublishMode = "single" | "multiple" | "all";
+
+const POSTS_PER_PAGE = 15;
 type AiTone = "professional" | "friendly" | "promotional" | "informative" | "urgent";
 
 interface TypeMeta {
@@ -79,7 +99,7 @@ const TYPE_META: Record<PostType, TypeMeta> = {
   whats_new: { icon: Newspaper,    label: "What's New", tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", chartColor: "var(--chart-1)" },
   offer:     { icon: Tag,          label: "Offer",      tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400",      chartColor: "var(--chart-2)" },
   event:     { icon: CalendarDays, label: "Event",      tint: "bg-teal-500/10 text-teal-600 dark:text-teal-400",        chartColor: "var(--chart-3)" },
-  update:    { icon: Info,         label: "Update",     tint: "bg-slate-500/10 text-slate-600 dark:text-slate-300",     chartColor: "var(--chart-4)" },
+  update:    { icon: Newspaper,    label: "Update",     tint: "bg-slate-500/10 text-slate-600 dark:text-slate-300",     chartColor: "var(--chart-4)" },
 };
 
 interface CtaMeta {
@@ -90,12 +110,13 @@ interface CtaMeta {
 }
 
 const CTA_OPTIONS: CtaMeta[] = [
-  { value: "book",           label: "Book Now",       icon: CalendarCheck, tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-  { value: "call",           label: "Call Now",       icon: Phone,         tint: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
-  { value: "learn_more",     label: "Learn More",     icon: ArrowRight,    tint: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
-  { value: "visit_website",  label: "Visit Website",  icon: Globe,         tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  { value: "order",          label: "Get Offer",      icon: Tag,           tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  { value: "sign_up",        label: "Contact Us",     icon: Mail,          tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  { value: "none",           label: "None",           icon: X,             tint: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
+  { value: "book",           label: "Book",           icon: CalendarCheck, tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  { value: "order",          label: "Order online",   icon: Globe,         tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  { value: "shop",           label: "Buy",            icon: Tag,           tint: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  { value: "learn_more",     label: "Learn more",     icon: ArrowRight,    tint: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
+  { value: "sign_up",        label: "Sign up",        icon: Mail,          tint: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  { value: "call",           label: "Call now",        icon: Phone,         tint: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
 ];
 
 const CTA_LABEL: Record<string, string> = Object.fromEntries(
@@ -122,9 +143,9 @@ interface PostsStats {
   todayPublished: number;
   aiDrafts: number;
   successRate: number;
-  upcoming: { id: string; title: string; type: PostType; locationName: string; locationCity: string; scheduledAt: string | null }[];
+  upcoming: { id: string; title: string; content?: string; type: PostType; locationName: string; locationCity: string; scheduledAt: string | null }[];
   typeDistribution: { type: PostType; count: number }[];
-  topPerforming: { id: string; title: string; type: PostType; locationName: string; locationCity: string; publishedAt: string | null }[];
+  topPerforming: { id: string; title: string; content?: string; type: PostType; locationName: string; locationCity: string; publishedAt: string | null }[];
   byLocation: { locationId: string; locationName: string; city: string; count: number }[];
 }
 
@@ -135,7 +156,7 @@ function postTypeLabel(t: string): string {
 }
 
 function postTypeMeta(t: string): TypeMeta {
-  return TYPE_META[t as PostType] ?? TYPE_META.update;
+  return TYPE_META[t as PostType] ?? TYPE_META.whats_new;
 }
 
 function relativeTime(iso: string | null): string | null {
@@ -168,23 +189,47 @@ function fullDateTime(iso: string | null): string {
   }
 }
 
-/* Engagement metrics for display */
-function engagementMetrics(seed: string): { views: number; clicks: number; likes: number } {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return {
-    views: 60 + (h % 380),
-    clicks: 4 + (h % 42),
-    likes: 1 + (h % 18),
-  };
+function applyPostClientFilters(
+  list: PostWithLocation[],
+  typeFilter: TypeFilter,
+  search: string,
+): PostWithLocation[] {
+  let result = list;
+  if (typeFilter !== "all") result = result.filter((p) => p.type === typeFilter);
+  const q = search.trim().toLowerCase();
+  if (q) {
+    result = result.filter(
+      (p) =>
+        p.title.toLowerCase().includes(q) ||
+        p.content.toLowerCase().includes(q) ||
+        p.locationName.toLowerCase().includes(q),
+    );
+  }
+  return result;
+}
+
+function sortPosts(list: PostWithLocation[], sort: PostSort): PostWithLocation[] {
+  return [...list].sort((a, b) => {
+    switch (sort) {
+      case "oldest":
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      case "location":
+        return a.locationName.localeCompare(b.locationName);
+      case "type":
+        return a.type.localeCompare(b.type);
+      case "newest":
+      default:
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    }
+  });
 }
 
 /* ---------- Main view ---------- */
 
 export function PostsView() {
   const user = useUser();
-  const activeLocationId = useAppStore((s) => s.activeLocationId);
-  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+  const selectedLocationIds = useAppStore((s) => s.selectedLocationIds);
+  const setSelectedLocationIds = useAppStore((s) => s.setSelectedLocationIds);
   const qc = useQueryClient();
   const { data: locations } = useLocations();
 
@@ -192,11 +237,15 @@ export function PostsView() {
 
   const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
   const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
+  const [search, setSearch] = React.useState("");
+  const [sort, setSort] = React.useState<PostSort>("newest");
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editingPost, setEditingPost] = React.useState<PostWithLocation | null>(null);
   const [deletingPost, setDeletingPost] = React.useState<PostWithLocation | null>(null);
   const [showAnalytics, setShowAnalytics] = React.useState(true);
-  const [viewMode, setViewMode] = React.useState<"list" | "calendar" | "queue">("list");
+  const [viewMode, setViewMode] = React.useState<"list" | "calendar" | "queue" | "history">("list");
+  const [displayLayout, setDisplayLayout] = React.useState<LayoutMode>("grid");
+  const [page, setPage] = React.useState(0);
   const [presetScheduledAt, setPresetScheduledAt] = React.useState<Date | null>(null);
 
   // Bulk selection
@@ -205,33 +254,31 @@ export function PostsView() {
   const [bulkScheduleDate, setBulkScheduleDate] = React.useState<Date | null>(null);
   const [bulkBusy, setBulkBusy] = React.useState(false);
 
-  // Build query params
   const params = new URLSearchParams();
-  if (activeLocationId && activeLocationId !== "all") params.set("locationId", activeLocationId);
+  appendLocationIdsToParams(params, selectedLocationIds);
   if (statusFilter !== "all") params.set("status", statusFilter);
   params.set("limit", "500");
 
   const { data: posts, isLoading } = useQuery<PostWithLocation[]>({
-    queryKey: ["posts", activeLocationId, statusFilter],
+    queryKey: ["posts", selectedLocationIds, statusFilter],
     queryFn: () => api<PostWithLocation[]>(`/api/posts?${params.toString()}`),
   });
 
   const allPosts = posts ?? [];
 
-  // Stats query — analytics dashboard
   const statsParams = new URLSearchParams();
-  if (activeLocationId && activeLocationId !== "all") statsParams.set("locationId", activeLocationId);
+  appendLocationIdsToParams(statsParams, selectedLocationIds);
   const { data: postsStats, isLoading: statsLoading } = useQuery<PostsStats>({
-    queryKey: ["posts-stats", activeLocationId],
+    queryKey: ["posts-stats", selectedLocationIds],
     queryFn: () => api<PostsStats>(`/api/posts/stats?${statsParams.toString()}`),
   });
 
   // Local computed stats fallback (used by filter tab count)
   const { data: allPostsData } = useQuery<PostWithLocation[]>({
-    queryKey: ["posts", activeLocationId, "all"],
+    queryKey: ["posts", selectedLocationIds, "all"],
     queryFn: () => {
       const p = new URLSearchParams();
-      if (activeLocationId && activeLocationId !== "all") p.set("locationId", activeLocationId);
+      appendLocationIdsToParams(p, selectedLocationIds);
       p.set("limit", "500");
       return api<PostWithLocation[]>(`/api/posts?${p.toString()}`);
     },
@@ -247,26 +294,49 @@ export function PostsView() {
   }, [statsSource]);
 
   const filtered = React.useMemo(() => {
-    let list = allPosts;
-    if (typeFilter !== "all") list = list.filter((p) => p.type === typeFilter);
-    return list;
-  }, [allPosts, typeFilter]);
+    const list = applyPostClientFilters(allPosts, typeFilter, search);
+    return sortPosts(list, sort);
+  }, [allPosts, typeFilter, search, sort]);
+
+  React.useEffect(() => {
+    setPage(0);
+  }, [statusFilter, typeFilter, selectedLocationIds, displayLayout, search, sort]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / POSTS_PER_PAGE));
+  const currentPage = Math.min(page, totalPages - 1);
+
+  React.useEffect(() => {
+    if (page > totalPages - 1) setPage(Math.max(0, totalPages - 1));
+  }, [page, totalPages]);
+
+  const pagedPosts = React.useMemo(
+    () => filtered.slice(currentPage * POSTS_PER_PAGE, (currentPage + 1) * POSTS_PER_PAGE),
+    [filtered, currentPage],
+  );
 
   // Posts for calendar view (scheduled + published, with optional type filter)
   const calendarPosts = React.useMemo(() => {
     let list = (allPostsData ?? []).filter(
       (p) => p.status === "scheduled" || p.status === "published",
     );
-    if (typeFilter !== "all") list = list.filter((p) => p.type === typeFilter);
-    return list;
-  }, [allPostsData, typeFilter]);
+    list = applyPostClientFilters(list, typeFilter, search);
+    return sortPosts(list, sort);
+  }, [allPostsData, typeFilter, search, sort]);
 
   // Posts for queue view (scheduled + failed)
   const queuePosts = React.useMemo(() => {
-    return (allPostsData ?? []).filter(
+    let list = (allPostsData ?? []).filter(
       (p) => p.status === "scheduled" || p.status === "failed",
     );
-  }, [allPostsData]);
+    list = applyPostClientFilters(list, typeFilter, search);
+    return sortPosts(list, sort);
+  }, [allPostsData, typeFilter, search, sort]);
+
+  const historyPosts = React.useMemo(() => {
+    let list = (allPostsData ?? allPosts).filter((p) => p.status === "published");
+    list = applyPostClientFilters(list, typeFilter, search);
+    return sortPosts(list, sort);
+  }, [allPostsData, allPosts, typeFilter, search, sort]);
 
   // Stable per-location color dots (used when "All locations" is selected)
   const locationColorMap = React.useMemo(() => {
@@ -282,11 +352,20 @@ export function PostsView() {
     return map;
   }, [locations]);
 
-  const showLocationDots = !activeLocationId || activeLocationId === "all";
+  const showLocationDots = selectedLocationIds.length !== 1;
+
+  const [presetType, setPresetType] = React.useState<string | undefined>(undefined);
 
   function openCreate() {
     setEditingPost(null);
     setPresetScheduledAt(null);
+    setPresetType(undefined);
+    setEditorOpen(true);
+  }
+  function openCreateWithType(type: string) {
+    setEditingPost(null);
+    setPresetScheduledAt(null);
+    setPresetType(type);
     setEditorOpen(true);
   }
   function openCreateWithDate(date: Date) {
@@ -303,6 +382,7 @@ export function PostsView() {
     setEditorOpen(false);
     setEditingPost(null);
     setPresetScheduledAt(null);
+    setPresetType(undefined);
   }
 
   async function publishNow(p: PostWithLocation) {
@@ -359,10 +439,20 @@ export function PostsView() {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === filtered.length) {
-      setSelectedIds(new Set());
+    const pageIds = pagedPosts.map((p) => p.id);
+    const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+    if (allPageSelected) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        pageIds.forEach((id) => next.delete(id));
+        return next;
+      });
     } else {
-      setSelectedIds(new Set(filtered.map((p) => p.id)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        pageIds.forEach((id) => next.add(id));
+        return next;
+      });
     }
   }
 
@@ -444,14 +534,14 @@ export function PostsView() {
     const ids = [...selectedIds];
     setBulkBusy(true);
     try {
-      toast.loading(`Deleting ${ids.length} drafts…`, { id: "bulk-del" });
+      toast.loading(`Deleting ${ids.length} post(s)…`, { id: "bulk-del" });
       const r = await api<{ deleted: number }>(`/api/posts/bulk`, {
         method: "POST",
         body: JSON.stringify({ action: "delete", postIds: ids }),
       });
       qc.invalidateQueries({ queryKey: ["posts"] });
       qc.invalidateQueries({ queryKey: ["posts-stats"] });
-      toast.success(`Deleted ${r.deleted} draft posts`, { id: "bulk-del" });
+      toast.success(`Deleted ${r.deleted} post(s)`, { id: "bulk-del" });
       clearSelection();
     } catch (e: any) {
       toast.error(e?.message || "Bulk delete failed", { id: "bulk-del" });
@@ -473,20 +563,6 @@ export function PostsView() {
         icon={FileText}
         actions={
           <>
-            <Select value={activeLocationId} onValueChange={(v) => setActiveLocationId(v as any)}>
-              <SelectTrigger size="sm" className="w-full sm:w-[200px]">
-                <MapPin className="size-3.5 mr-1 text-muted-foreground" />
-                <SelectValue placeholder="All locations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All locations</SelectItem>
-                {(locations ?? []).map((l) => (
-                  <SelectItem key={l.id} value={l.id}>
-                    {l.name} — {l.city}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Button
               size="sm"
               variant={showAnalytics ? "default" : "outline"}
@@ -525,62 +601,152 @@ export function PostsView() {
         </div>
       )}
 
-      {/* View-mode toggle + type filter (apply to all modes) */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <ToggleGroup
-          type="single"
-          value={viewMode}
-          onValueChange={(v) => { if (v) setViewMode(v as "list" | "calendar" | "queue"); }}
-          variant="outline"
-          size="sm"
-          aria-label="View mode"
-        >
-          <ToggleGroupItem value="list" aria-label="List view">
-            <ListIcon className="size-3.5 mr-1.5" />
-            <span className="text-xs">List</span>
-          </ToggleGroupItem>
-          <ToggleGroupItem value="calendar" aria-label="Calendar view">
-            <CalendarIcon className="size-3.5 mr-1.5" />
-            <span className="text-xs">Calendar</span>
-          </ToggleGroupItem>
-          <ToggleGroupItem value="queue" aria-label="Publishing queue">
-            <Inbox className="size-3.5 mr-1.5" />
-            <span className="text-xs">Queue</span>
-          </ToggleGroupItem>
-        </ToggleGroup>
+      {/* View mode + filter bar (locations-style) */}
+      <Card>
+        <CardContent className="p-4 space-y-4">
+          <ToggleGroup
+            type="single"
+            value={viewMode}
+            onValueChange={(v) => { if (v) setViewMode(v as "list" | "calendar" | "queue" | "history"); }}
+            variant="outline"
+            size="default"
+            aria-label="View mode"
+            className="w-full sm:w-auto overflow-x-auto"
+          >
+            <ToggleGroupItem value="list" aria-label="Posts browser" className="shrink-0 px-4 gap-2 h-9">
+              <ListIcon className="size-3.5 shrink-0" />
+              <span className="text-xs">Browse</span>
+            </ToggleGroupItem>
+            <ToggleGroupItem value="calendar" aria-label="Calendar view" className="shrink-0 px-4 gap-2 h-9">
+              <CalendarIcon className="size-3.5 shrink-0" />
+              <span className="text-xs">Calendar</span>
+            </ToggleGroupItem>
+            <ToggleGroupItem value="queue" aria-label="Publishing queue" className="shrink-0 px-4 gap-2 h-9">
+              <Inbox className="size-3.5 shrink-0" />
+              <span className="text-xs">Queue</span>
+            </ToggleGroupItem>
+            <ToggleGroupItem value="history" aria-label="Past history" className="shrink-0 px-4 gap-2 h-9">
+              <Clock className="size-3.5 shrink-0" />
+              <span className="text-xs">History</span>
+            </ToggleGroupItem>
+          </ToggleGroup>
 
-        <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeFilter)}>
-          <SelectTrigger size="sm" className="w-full sm:w-[180px]">
-            <SelectValue placeholder="All types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All types</SelectItem>
-            <SelectItem value="whats_new">What&apos;s New</SelectItem>
-            <SelectItem value="offer">Offer</SelectItem>
-            <SelectItem value="event">Event</SelectItem>
-            <SelectItem value="update">Update</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3 pt-1">
+            <div className="flex flex-1 min-w-0 gap-2">
+              <LocationMultiSelect
+                locations={locations}
+                selectedIds={selectedLocationIds}
+                onChange={setSelectedLocationIds}
+                className="w-full sm:w-[200px] shrink-0"
+              />
+              <div className="relative flex-1 min-w-0">
+                <Search className="size-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Input
+                  placeholder="Search by post title, content, or location…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-9"
+                  aria-label="Search posts"
+                />
+              </div>
+            </div>
 
-      {/* Status tabs (list mode only) */}
-      {viewMode === "list" && (
-        <div className="-mt-1">
-          <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
-            <TabsList>
-              <TabsTrigger value="all">
-                All
-                {statsSource.length > 0 && (
-                  <span className="ml-1 text-[10px] text-muted-foreground tabular-nums">
-                    {statsSource.length}
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="published">Published</TabsTrigger>
-              <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
-              <TabsTrigger value="draft">Drafts</TabsTrigger>
-            </TabsList>
-          </Tabs>
+            {viewMode === "list" && (
+              <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+                <TabsList className="w-full lg:w-auto">
+                  <TabsTrigger value="all">
+                    All
+                    {statsSource.length > 0 && (
+                      <span className="ml-1 text-[10px] text-muted-foreground tabular-nums">
+                        {statsSource.length}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="published">Published</TabsTrigger>
+                  <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+                  <TabsTrigger value="draft">Drafts</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as TypeFilter)}>
+                <SelectTrigger size="sm" className="w-full sm:w-[150px]">
+                  <SelectValue placeholder="All types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All types</SelectItem>
+                  <SelectItem value="whats_new">What&apos;s New</SelectItem>
+                  <SelectItem value="offer">Offer</SelectItem>
+                  <SelectItem value="event">Event</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-xs text-muted-foreground hidden sm:inline">Sort by</span>
+              <Select value={sort} onValueChange={(v) => setSort(v as PostSort)}>
+                <SelectTrigger size="sm" className="w-full sm:w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="oldest">Oldest first</SelectItem>
+                  <SelectItem value="location">Location</SelectItem>
+                  <SelectItem value="type">Post type</SelectItem>
+                </SelectContent>
+              </Select>
+              {viewMode === "list" && (
+                <LayoutToggle value={displayLayout} onChange={setDisplayLayout} />
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Result count */}
+      {viewMode === "list" && !isLoading && filtered.length > 0 && (
+        <div className="flex items-center justify-between -mt-2">
+          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            {canManage && (
+              <Checkbox
+                checked={
+                  pagedPosts.length > 0 &&
+                  pagedPosts.every((p) => selectedIds.has(p.id))
+                }
+                onCheckedChange={toggleSelectAll}
+                aria-label="Select all posts on this page"
+              />
+            )}
+            <span>
+              Showing{" "}
+              <span className="font-medium text-foreground">
+                {currentPage * POSTS_PER_PAGE + 1}–{Math.min((currentPage + 1) * POSTS_PER_PAGE, filtered.length)}
+              </span>
+              {" "}of{" "}
+              <span className="font-medium text-foreground">{filtered.length}</span>
+              {filtered.length !== statsSource.length && (
+                <> (filtered from {statsSource.length})</>
+              )}{" "}
+              post{filtered.length === 1 ? "" : "s"}
+              {selectedCount > 0 && (
+                <span className="ml-1 text-primary font-medium">· {selectedCount} selected</span>
+              )}
+            </span>
+          </div>
+          {(search || typeFilter !== "all" || statusFilter !== "all" || selectedLocationIds.length > 0) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs h-7"
+              onClick={() => {
+                setSearch("");
+                setTypeFilter("all");
+                setStatusFilter("all");
+                setSelectedLocationIds([]);
+                setSort("newest");
+              }}
+            >
+              Clear filters
+            </Button>
+          )}
         </div>
       )}
 
@@ -601,42 +767,67 @@ export function PostsView() {
             />
           )}
 
-          {/* Select-all row (only when manage + posts exist) */}
-          {canManage && !isLoading && filtered.length > 0 && (
-            <div className="flex items-center gap-2 px-1">
-              <Checkbox
-                checked={selectedCount > 0 && selectedCount === filtered.length}
-                onCheckedChange={toggleSelectAll}
-                aria-label="Select all posts"
-              />
-              <span className="text-xs text-muted-foreground">
-                {selectedCount > 0 ? `${selectedCount} of ${filtered.length} selected` : "Select all"}
-              </span>
-            </div>
-          )}
-
-          {/* Posts grid */}
+          {/* Posts grid / list */}
           {isLoading ? (
-            <PostsGridSkeleton />
+            <PostsGridSkeleton layout={displayLayout} />
           ) : filtered.length === 0 ? (
-            <EmptyState canManage={canManage} onCreate={openCreate} />
+            <EmptyState
+              canManage={canManage}
+              onCreate={openCreate}
+              hasFilters={Boolean(search || typeFilter !== "all" || statusFilter !== "all" || selectedLocationIds.length > 0)}
+              onClearFilters={() => {
+                setSearch("");
+                setTypeFilter("all");
+                setStatusFilter("all");
+                setSelectedLocationIds([]);
+                setSort("newest");
+              }}
+            />
           ) : (
-            <div className="max-h-[calc(100vh-22rem)] overflow-y-auto scroll-area pr-0.5">
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pb-2">
-                {filtered.map((p) => (
-                  <PostCard
-                    key={p.id}
-                    post={p}
-                    canManage={canManage}
-                    selected={selectedIds.has(p.id)}
-                    onToggleSelect={toggleSelected}
-                    onPublish={publishNow}
-                    onEdit={openEdit}
-                    onDelete={setDeletingPost}
-                  />
-                ))}
-              </div>
-            </div>
+            <>
+              {displayLayout === "list" ? (
+                <div className="space-y-2 pb-2">
+                  {pagedPosts.map((p) => (
+                    <PostCard
+                      key={p.id}
+                      layout="list"
+                      post={p}
+                      canManage={canManage}
+                      selected={selectedIds.has(p.id)}
+                      onToggleSelect={toggleSelected}
+                      onPublish={publishNow}
+                      onEdit={openEdit}
+                      onDelete={setDeletingPost}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 pb-2">
+                  {pagedPosts.map((p) => (
+                    <PostCard
+                      key={p.id}
+                      layout="grid"
+                      post={p}
+                      canManage={canManage}
+                      selected={selectedIds.has(p.id)}
+                      onToggleSelect={toggleSelected}
+                      onPublish={publishNow}
+                      onEdit={openEdit}
+                      onDelete={setDeletingPost}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <NumberedPagination
+                page={currentPage}
+                totalPages={totalPages}
+                totalItems={filtered.length}
+                perPage={POSTS_PER_PAGE}
+                onPageChange={setPage}
+                itemLabel="posts"
+              />
+            </>
           )}
         </>
       )}
@@ -664,14 +855,24 @@ export function PostsView() {
         />
       )}
 
+      {/* Past History view */}
+      {viewMode === "history" && (
+        <PastHistoryTable
+          posts={historyPosts}
+          isLoading={isLoading}
+          onEdit={openEdit}
+        />
+      )}
+
       {/* Editor dialog */}
       <PostEditorDialog
         open={editorOpen}
         onOpenChange={(o) => (o ? setEditorOpen(true) : closeEditor())}
         post={editingPost}
         locations={locations ?? []}
-        defaultLocationId={activeLocationId !== "all" ? activeLocationId : undefined}
+        defaultLocationId={selectedLocationIds.length === 1 ? selectedLocationIds[0] : undefined}
         defaultScheduledAt={presetScheduledAt}
+        defaultType={presetType}
         onSaved={handleSaved}
       />
 
@@ -730,7 +931,7 @@ export function PostsView() {
             <AlertDialogDescription>
               {deletingPost && (
                 <>
-                  This will permanently delete <span className="font-medium text-foreground">“{deletingPost.title}”</span>.
+                  This will permanently delete <span className="font-medium text-foreground">“{deletingPost.title || deletingPost.content?.slice(0, 40) || "this post"}”</span>.
                   This action cannot be undone.
                 </>
               )}
@@ -768,7 +969,7 @@ function AnalyticsDashboard({ stats, isLoading }: { stats?: PostsStats; isLoadin
     );
   }
 
-  const typeData = (["whats_new", "offer", "event", "update"] as PostType[]).map((t) => ({
+  const typeData = (["whats_new", "offer", "event"] as PostType[]).map((t) => ({
     type: t,
     label: TYPE_META[t].label,
     count: stats.typeDistribution.find((d) => d.type === t)?.count ?? 0,
@@ -830,7 +1031,7 @@ function AnalyticsDashboard({ stats, isLoading }: { stats?: PostsStats; isLoadin
                         <Ic className="size-3.5" />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="text-xs font-medium line-clamp-1">{p.title || "Untitled post"}</div>
+                        <div className="text-xs font-medium line-clamp-1">{p.title || p.content?.slice(0, 60) || "Untitled post"}</div>
                         <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1 mt-0.5">
                           <MapPin className="size-2.5 shrink-0" />
                           {p.locationName} — {p.locationCity}
@@ -940,7 +1141,6 @@ function AnalyticsDashboard({ stats, isLoading }: { stats?: PostsStats; isLoadin
                 {stats.topPerforming.map((p, idx) => {
                   const m = postTypeMeta(p.type);
                   const Ic = m.icon;
-                  const eng = engagementMetrics(p.id);
                   return (
                     <li key={p.id} className="flex items-start gap-3 p-2 rounded-md hover:bg-muted/40 transition-colors">
                       <span className="text-xs font-bold text-muted-foreground tabular-nums w-4 shrink-0 mt-0.5">
@@ -950,21 +1150,10 @@ function AnalyticsDashboard({ stats, isLoading }: { stats?: PostsStats; isLoadin
                         <Ic className="size-3.5" />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="text-xs font-medium line-clamp-1">{p.title || "Untitled post"}</div>
+                        <div className="text-xs font-medium line-clamp-1">{p.title || p.content?.slice(0, 60) || "Untitled post"}</div>
                         <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1 mt-0.5">
                           <MapPin className="size-2.5 shrink-0" />
                           {p.locationName} — {p.locationCity}
-                        </div>
-                        <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
-                          <span className="inline-flex items-center gap-0.5">
-                            <Eye className="size-2.5" /> {eng.views}
-                          </span>
-                          <span className="inline-flex items-center gap-0.5">
-                            <ArrowRight className="size-2.5" /> {eng.clicks}
-                          </span>
-                          <span className="inline-flex items-center gap-0.5">
-                            <TrendingUp className="size-2.5" /> {eng.likes}
-                          </span>
                         </div>
                       </div>
                       <div className="text-right shrink-0">
@@ -1094,9 +1283,9 @@ function BulkActionBar({
         size="sm"
         variant="outline"
         onClick={onDelete}
-        disabled={busy || selectedDraftsCount === 0}
+        disabled={busy}
         className="border-rose-500/40 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10"
-        title={selectedDraftsCount === 0 ? "Only draft posts can be deleted" : `Delete ${selectedDraftsCount} draft(s)`}
+        title={`Delete ${selectedCount} post(s)`}
       >
         <Trash2 className="size-3.5 mr-1.5" /> Delete
         {selectedDraftsCount > 0 && (
@@ -1116,7 +1305,7 @@ function BulkActionBar({
 
 function PostCard({
   post, canManage, selected, onToggleSelect,
-  onPublish, onEdit, onDelete,
+  onPublish, onEdit, onDelete, layout = "grid",
 }: {
   post: PostWithLocation;
   canManage: boolean;
@@ -1125,6 +1314,7 @@ function PostCard({
   onPublish: (p: PostWithLocation) => void;
   onEdit: (p: PostWithLocation) => void;
   onDelete: (p: PostWithLocation) => void;
+  layout?: "grid" | "list";
 }) {
   const meta = postTypeMeta(post.type);
   const Icon = meta.icon;
@@ -1141,6 +1331,10 @@ function PostCard({
 
   const ctaMeta = post.ctaType ? CTA_META_BY_VALUE[post.ctaType] : undefined;
   const CtaIcon = ctaMeta?.icon;
+  const isWeeklyRecurring =
+    post.recurrenceType === "weekly"
+    && post.recurrenceDayOfWeek != null
+    && post.recurrenceTime;
 
   async function applySchedule() {
     if (!scheduleDate) return;
@@ -1161,11 +1355,212 @@ function PostCard({
     }
   }
 
+  const actionsMenu = canManage ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="size-7 opacity-60 group-hover:opacity-100 transition-opacity">
+          <MoreVertical className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        {(post.status === "draft" || post.status === "scheduled" || post.status === "failed") && (
+          <DropdownMenuItem onClick={() => onPublish(post)}>
+            <Send className="size-3.5 mr-2 text-emerald-500" /> Publish now
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={() => setScheduleOpen(true)}>
+          <CalendarClock className="size-3.5 mr-2 text-amber-500" /> Schedule…
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onEdit(post)}>
+          <Pencil className="size-3.5 mr-2" /> Edit
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="text-rose-600 dark:text-rose-400 focus:text-rose-700"
+          onClick={() => onDelete(post)}
+        >
+          <Trash2 className="size-3.5 mr-2" /> Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
+
+  const scheduleDialog = (
+    <Dialog open={scheduleOpen} onOpenChange={(o) => setScheduleOpen(o)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Schedule post</DialogTitle>
+          <DialogDescription>
+            Pick when this post should go live on Google Business Profile.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col items-center gap-3">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" className="w-full justify-start text-left font-normal">
+                <CalendarClock className="size-4 mr-2 text-amber-500" />
+                {scheduleDate ? scheduleLabel(scheduleDate.toISOString()) : "Pick a date & time"}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0">
+              <Calendar
+                mode="single"
+                selected={scheduleDate ?? undefined}
+                onSelect={(d) => d && setScheduleDate(d)}
+                disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+              />
+            </PopoverContent>
+          </Popover>
+          <Input
+            type="time"
+            value={scheduleDate ? format(scheduleDate, "HH:mm") : "10:00"}
+            onChange={(e) => {
+              const [h, m] = e.target.value.split(":").map(Number);
+              const d = scheduleDate ? new Date(scheduleDate) : new Date();
+              d.setHours(h, m, 0, 0);
+              setScheduleDate(d);
+            }}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setScheduleOpen(false)}>Cancel</Button>
+          <Button onClick={applySchedule} disabled={!scheduleDate || scheduling}>
+            {scheduling ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <CalendarClock className="size-3.5 mr-1.5" />}
+            Schedule
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  if (layout === "list") {
+    return (
+      <Card className={cn(
+        "group relative hover:shadow-md transition-shadow overflow-hidden",
+        selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+      )}>
+        <div className="flex flex-row">
+          {canManage && (
+            <div className="flex items-center justify-center px-3 border-r bg-muted/20 shrink-0">
+              <Checkbox
+                checked={selected}
+                onCheckedChange={() => onToggleSelect(post.id)}
+                aria-label={`Select post ${post.title}`}
+              />
+            </div>
+          )}
+
+          <div className="sm:w-40 md:w-48 shrink-0 bg-muted border-r">
+            {post.imageUrl ? (
+              <img
+                src={post.imageUrl}
+                alt=""
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                className="w-full h-36 sm:h-full sm:min-h-[112px] object-cover"
+                onError={(e) => {
+                  e.currentTarget.parentElement?.classList.add("hidden");
+                }}
+              />
+            ) : (
+              <div className="flex h-28 sm:h-full sm:min-h-[112px] items-center justify-center">
+                <span className={cn("size-10 rounded-lg flex items-center justify-center", meta.tint)}>
+                  <Icon className="size-5" />
+                </span>
+              </div>
+            )}
+          </div>
+
+          <CardContent className="flex-1 p-3 sm:p-4 flex flex-col lg:flex-row lg:items-center gap-3 min-w-0">
+            <div className="flex-1 min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                  {meta.label}
+                </span>
+                <span className="text-[10px] text-muted-foreground flex items-center gap-1 truncate">
+                  <MapPin className="size-2.5 shrink-0" />
+                  {post.locationName}
+                </span>
+              </div>
+              {post.title && post.type !== "whats_new" && (
+                <h3 className="font-semibold text-sm leading-snug line-clamp-1">{post.title}</h3>
+              )}
+              <p className={cn(
+                "text-xs line-clamp-2 leading-relaxed",
+                !post.title || post.type === "whats_new" ? "font-medium text-foreground" : "text-muted-foreground",
+              )}>
+                {post.content || "No content"}
+              </p>
+                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                  <PostStatusBadge status={post.status} />
+                  {isWeeklyRecurring && (
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 gap-0.5 bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/20 font-medium">
+                      <Repeat className="size-2.5" />
+                      {formatWeeklyRecurrence(post.recurrenceDayOfWeek!, post.recurrenceTime!)}
+                    </Badge>
+                  )}
+                {post.source === "ai" && (
+                  <Badge variant="outline" className="text-[10px] py-0 px-1.5 gap-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-medium">
+                    <Sparkles className="size-2.5" />
+                    MiSA AI
+                  </Badge>
+                )}
+                {ctaMeta && CtaIcon && (
+                  <Badge variant="outline" className={cn("text-[10px] py-0 px-1.5 font-normal gap-0.5 border-l-2", ctaMeta.tint)}>
+                    <CtaIcon className="size-2.5" />
+                    {ctaMeta.label}
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between lg:justify-end gap-2 shrink-0 lg:w-44 lg:flex-col lg:items-end">
+              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground truncate">
+                {post.status === "published" && relPublished ? (
+                  <>
+                    <CheckCircle2 className="size-2.5 text-emerald-500 shrink-0" />
+                    <span className="truncate">Published {relPublished}</span>
+                  </>
+                ) : post.status === "scheduled" && relScheduled ? (
+                  <>
+                    <Clock className="size-2.5 text-amber-500 shrink-0" />
+                    <span className="truncate">Goes live {relScheduled}</span>
+                  </>
+                ) : (
+                  <>
+                    <Clock className="size-2.5 shrink-0" />
+                    <span className="truncate">Created {relCreated}</span>
+                  </>
+                )}
+              </span>
+              {actionsMenu}
+            </div>
+          </CardContent>
+        </div>
+        {scheduleDialog}
+      </Card>
+    );
+  }
+
   return (
     <Card className={cn(
       "group relative hover:shadow-md transition-shadow overflow-hidden",
       selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
     )}>
+      {post.imageUrl && (
+        <div className="aspect-[16/10] w-full overflow-hidden bg-muted border-b">
+          <img
+            src={post.imageUrl}
+            alt=""
+            referrerPolicy="no-referrer"
+            loading="lazy"
+            className="w-full h-full object-cover"
+            onError={(e) => {
+              e.currentTarget.parentElement?.classList.add("hidden");
+            }}
+          />
+        </div>
+      )}
       <CardContent className="p-4 space-y-3">
         {/* Header: checkbox + type + actions */}
         <div className="flex items-start justify-between gap-2">
@@ -1192,48 +1587,28 @@ function PostCard({
             </div>
           </div>
 
-          {canManage && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="size-7 -mt-1 -mr-1 opacity-60 group-hover:opacity-100 transition-opacity">
-                  <MoreVertical className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                {(post.status === "draft" || post.status === "scheduled" || post.status === "failed") && (
-                  <DropdownMenuItem onClick={() => onPublish(post)}>
-                    <Send className="size-3.5 mr-2 text-emerald-500" /> Publish now
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onClick={() => setScheduleOpen(true)}>
-                  <CalendarClock className="size-3.5 mr-2 text-amber-500" /> Schedule…
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onEdit(post)}>
-                  <Pencil className="size-3.5 mr-2" /> Edit
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="text-rose-600 dark:text-rose-400 focus:text-rose-700"
-                  onClick={() => onDelete(post)}
-                >
-                  <Trash2 className="size-3.5 mr-2" /> Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          {actionsMenu}
         </div>
 
-        {/* Title */}
-        <h3 className="font-semibold text-sm leading-snug line-clamp-1">{post.title || "Untitled post"}</h3>
+        {/* Title — only for Offer/Event; Update posts show content directly */}
+        {post.title && post.type !== "whats_new" && (
+          <h3 className="font-semibold text-sm leading-snug line-clamp-1">{post.title}</h3>
+        )}
 
         {/* Content preview */}
-        <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed">
-          {post.content}
+        <p className={cn("text-xs text-muted-foreground line-clamp-3 leading-relaxed", !post.title || post.type === "whats_new" ? "font-medium text-foreground" : "")}>
+          {post.content || "No content"}
         </p>
 
         {/* Status + AI badge + CTA badge */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <PostStatusBadge status={post.status} />
+          {isWeeklyRecurring && (
+            <Badge variant="outline" className="text-[10px] py-0 px-1.5 gap-0.5 bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/20 font-medium">
+              <Repeat className="size-2.5" />
+              {formatWeeklyRecurrence(post.recurrenceDayOfWeek!, post.recurrenceTime!)}
+            </Badge>
+          )}
           {post.source === "ai" && (
             <Badge
               variant="outline"
@@ -1285,71 +1660,44 @@ function PostCard({
         </div>
       </CardContent>
 
-      {/* Schedule popover */}
-      <Dialog open={scheduleOpen} onOpenChange={(o) => setScheduleOpen(o)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Schedule post</DialogTitle>
-            <DialogDescription>
-              Pick when this post should go live on Google Business Profile.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col items-center gap-3">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full justify-start text-left font-normal">
-                  <CalendarClock className="size-4 mr-2 text-amber-500" />
-                  {scheduleDate ? scheduleLabel(scheduleDate.toISOString()) : "Pick a date & time"}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0">
-                <Calendar
-                  mode="single"
-                  selected={scheduleDate ?? undefined}
-                  onSelect={(d) => d && setScheduleDate(d)}
-                  disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
-                />
-              </PopoverContent>
-            </Popover>
-            <Input
-              type="time"
-              value={scheduleDate ? format(scheduleDate, "HH:mm") : "10:00"}
-              onChange={(e) => {
-                const [h, m] = e.target.value.split(":").map(Number);
-                const d = scheduleDate ? new Date(scheduleDate) : new Date();
-                d.setHours(h, m, 0, 0);
-                setScheduleDate(d);
-              }}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setScheduleOpen(false)}>Cancel</Button>
-            <Button onClick={applySchedule} disabled={!scheduleDate || scheduling}>
-              {scheduling ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <CalendarClock className="size-3.5 mr-1.5" />}
-              Schedule post
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {scheduleDialog}
     </Card>
   );
 }
 
 /* ---------- Empty state ---------- */
 
-function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () => void }) {
+function EmptyState({
+  canManage,
+  onCreate,
+  hasFilters,
+  onClearFilters,
+}: {
+  canManage: boolean;
+  onCreate: () => void;
+  hasFilters?: boolean;
+  onClearFilters?: () => void;
+}) {
   return (
     <Card>
       <CardContent className="p-12 flex flex-col items-center justify-center text-center">
         <div className="size-14 rounded-full bg-amber-500/10 flex items-center justify-center mb-4">
           <Sparkles className="size-7 text-amber-500" />
         </div>
-        <h3 className="text-base font-semibold">No posts yet</h3>
+        <h3 className="text-base font-semibold">
+          {hasFilters ? "No posts found" : "No posts yet"}
+        </h3>
         <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-          Create your first post or let MiSA AI generate one. Posts help your locations stay
-          visible and engage customers on Google Search &amp; Maps.
+          {hasFilters
+            ? "Try adjusting your search or filters to find what you're looking for."
+            : "Create your first post or let MiSA AI generate one. Posts help your locations stay visible and engage customers on Google Search & Maps."}
         </p>
-        {canManage && (
+        {hasFilters && onClearFilters && (
+          <Button variant="outline" className="mt-4" size="sm" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        )}
+        {canManage && !hasFilters && (
           <Button className="mt-4" size="sm" onClick={onCreate}>
             <Plus className="size-3.5 mr-1.5" /> New post
           </Button>
@@ -1361,9 +1709,29 @@ function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () 
 
 /* ---------- Skeleton ---------- */
 
-function PostsGridSkeleton() {
+function PostsGridSkeleton({ layout = "grid" }: { layout?: "grid" | "list" }) {
+  if (layout === "list") {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Card key={i}>
+            <div className="flex flex-row">
+              <Skeleton className="w-10 shrink-0 rounded-none" />
+              <Skeleton className="h-28 sm:h-auto sm:w-40 sm:min-h-[112px] rounded-none shrink-0" />
+              <CardContent className="flex-1 p-4 space-y-2">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-2/3" />
+              </CardContent>
+            </div>
+          </Card>
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
       {Array.from({ length: 6 }).map((_, i) => (
         <Card key={i}>
           <CardContent className="p-4 space-y-3">
@@ -1392,6 +1760,7 @@ function PostsGridSkeleton() {
 /* ---------- Post editor dialog ---------- */
 
 type EditorStatus = "draft" | "scheduled" | "published";
+type ScheduleMode = "once" | "weekly";
 
 interface EditorState {
   locationId: string;
@@ -1400,24 +1769,111 @@ interface EditorState {
   content: string;
   ctaType: string;
   ctaUrl: string;
+  imageUrl: string;
+  imageFile: File | null;
   status: EditorStatus;
+  scheduleMode: ScheduleMode;
   scheduledAt: Date | null;
-  source: "manual" | "ai";
+  recurrenceDayOfWeek: number;
+  recurrenceTime: string;
+  source: "manual" | "ai" | "google";
   tone: AiTone;
   publishMode: PublishMode;
   selectedLocationIds: string[];
   internalNotes: string;
+  startDate: string;
+  startTime: string;
+  endDate: string;
+  endTime: string;
+  couponCode: string;
+  redeemUrl: string;
+  offerTerms: string;
+}
+
+function buildSchedulePayload(state: EditorState) {
+  if (state.status !== "scheduled") {
+    return {
+      scheduledAt: null as string | null,
+      recurrenceType: null as string | null,
+      recurrenceDayOfWeek: null as number | null,
+      recurrenceTime: null as string | null,
+    };
+  }
+  if (state.scheduleMode === "weekly") {
+    return {
+      recurrenceType: "weekly" as const,
+      recurrenceDayOfWeek: state.recurrenceDayOfWeek,
+      recurrenceTime: state.recurrenceTime,
+      scheduledAt: computeNextWeeklyOccurrence(
+        state.recurrenceDayOfWeek,
+        state.recurrenceTime,
+      ).toISOString(),
+    };
+  }
+  return {
+    recurrenceType: null,
+    recurrenceDayOfWeek: null,
+    recurrenceTime: null,
+    scheduledAt: state.scheduledAt?.toISOString() ?? null,
+  };
+}
+
+function editorStateFromPost(
+  post: PostWithLocation | null,
+  opts: {
+    defaultLocationId?: string;
+    defaultScheduledAt?: Date | null;
+    defaultType?: string;
+    locations: { id: string }[];
+    isEdit: boolean;
+  },
+): EditorState {
+  const isWeekly = post?.recurrenceType === "weekly";
+  return {
+    locationId: post?.locationId ?? opts.defaultLocationId ?? opts.locations[0]?.id ?? "",
+    type: (post?.type ?? opts.defaultType ?? "whats_new") as PostType,
+    title: post?.title ?? "",
+    content: post?.content ?? "",
+    ctaType: post?.ctaType ?? "none",
+    ctaUrl: post?.ctaUrl ?? "",
+    imageUrl: post?.imageUrl ?? "",
+    imageFile: null,
+    status: (post?.status === "published"
+      ? "published"
+      : post?.status === "scheduled"
+        ? "scheduled"
+        : (!opts.isEdit && opts.defaultScheduledAt ? "scheduled" : "draft")) as EditorStatus,
+    scheduleMode: isWeekly ? "weekly" : "once",
+    scheduledAt: post?.scheduledAt
+      ? new Date(post.scheduledAt)
+      : (!opts.isEdit && opts.defaultScheduledAt ? opts.defaultScheduledAt : null),
+    recurrenceDayOfWeek: post?.recurrenceDayOfWeek ?? 3,
+    recurrenceTime: post?.recurrenceTime ?? "10:00",
+    source: (post?.source ?? "manual") as "manual" | "ai" | "google",
+    tone: "professional",
+    publishMode: "single",
+    selectedLocationIds: [],
+    internalNotes: "",
+    startDate: "",
+    startTime: "",
+    endDate: "",
+    endTime: "",
+    couponCode: "",
+    redeemUrl: "",
+    offerTerms: "",
+  };
 }
 
 function PostEditorDialog({
-  open, onOpenChange, post, locations, defaultLocationId, defaultScheduledAt, onSaved,
+  open, onOpenChange, post, locations, defaultLocationId, defaultScheduledAt, defaultType, onSaved,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   post: PostWithLocation | null;
-  locations: { id: string; name: string; city: string; status?: string }[];
+  locations: { id: string; name: string; city: string; status?: string; phone?: string | null }[];
   defaultLocationId?: string;
   defaultScheduledAt?: Date | null;
+  defaultType?: string;
   onSaved: () => void;
 }) {
   const isEdit = !!post;
@@ -1427,42 +1883,28 @@ function PostEditorDialog({
     [locations],
   );
 
-  const [state, setState] = React.useState<EditorState>(() => ({
-    locationId: post?.locationId ?? defaultLocationId ?? locations[0]?.id ?? "",
-    type: post?.type ?? "whats_new",
-    title: post?.title ?? "",
-    content: post?.content ?? "",
-    ctaType: post?.ctaType ?? "learn_more",
-    ctaUrl: post?.ctaUrl ?? "",
-    status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : (!isEdit && defaultScheduledAt ? "scheduled" : "draft")) as EditorStatus,
-    scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : (!isEdit && defaultScheduledAt ? defaultScheduledAt : null),
-    source: post?.source ?? "manual",
-    tone: "professional",
-    publishMode: "single",
-    selectedLocationIds: [],
-    internalNotes: "",
-  }));
+  const [state, setState] = React.useState<EditorState>(() =>
+    editorStateFromPost(post, {
+      defaultLocationId,
+      defaultScheduledAt,
+      defaultType,
+      locations,
+      isEdit,
+    }),
+  );
 
   // Reset when opening
   React.useEffect(() => {
     if (open) {
-      setState({
-        locationId: post?.locationId ?? defaultLocationId ?? locations[0]?.id ?? "",
-        type: post?.type ?? "whats_new",
-        title: post?.title ?? "",
-        content: post?.content ?? "",
-        ctaType: post?.ctaType ?? "learn_more",
-        ctaUrl: post?.ctaUrl ?? "",
-        status: (post?.status === "published" ? "published" : post?.status === "scheduled" ? "scheduled" : (!post && defaultScheduledAt ? "scheduled" : "draft")) as EditorStatus,
-        scheduledAt: post?.scheduledAt ? new Date(post.scheduledAt) : (!post && defaultScheduledAt ? defaultScheduledAt : null),
-        source: post?.source ?? "manual",
-        tone: "professional",
-        publishMode: "single",
-        selectedLocationIds: [],
-        internalNotes: "",
-      });
+      setState(editorStateFromPost(post, {
+        defaultLocationId,
+        defaultScheduledAt,
+        defaultType,
+        locations,
+        isEdit,
+      }));
     }
-  }, [open, post, defaultLocationId, defaultScheduledAt, locations]);
+  }, [open, post, defaultLocationId, defaultScheduledAt, defaultType, locations, isEdit]);
 
   const [aiTopic, setAiTopic] = React.useState("");
   const [aiLoading, setAiLoading] = React.useState(false);
@@ -1523,11 +1965,15 @@ function PostEditorDialog({
   }
 
   function attemptSave() {
-    if (!state.title.trim()) { toast.error("Title is required"); return; }
-    if (!state.content.trim()) { toast.error("Content is required"); return; }
-    if (state.status === "scheduled" && !state.scheduledAt) {
-      toast.error("Pick a schedule date & time");
-      return;
+    if ((state.type === "offer" || state.type === "event") && !state.title.trim()) { toast.error("Title is required for Offer/Event posts"); return; }
+    if (!state.content.trim()) { toast.error("Content/Description is required"); return; }
+    if ((state.type === "offer" || state.type === "event") && !state.startDate) { toast.error("Start date is required"); return; }
+    if ((state.type === "offer" || state.type === "event") && !state.endDate) { toast.error("End date is required"); return; }
+    if (state.status === "scheduled") {
+      if (state.scheduleMode === "once" && !state.scheduledAt) {
+        toast.error("Pick a schedule date & time");
+        return;
+      }
     }
 
     // Multi-location publish only on create
@@ -1553,6 +1999,17 @@ function PostEditorDialog({
     }
   }
 
+  async function uploadImageIfNeeded(): Promise<string | null> {
+    if (!state.imageFile) return null;
+    const fd = new FormData();
+    fd.append("file", state.imageFile);
+    fd.append("locationId", state.locationId);
+    const res = await fetch("/api/media", { method: "POST", body: fd });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Image upload failed");
+    return json.data?.fileUrl || null;
+  }
+
   async function saveSingle() {
     if (state.publishMode === "single" && !state.locationId) {
       toast.error("Select a location");
@@ -1560,6 +2017,11 @@ function PostEditorDialog({
     }
     setSaving(true);
     try {
+      let uploadedImageUrl: string | null = null;
+      if (state.imageFile) {
+        uploadedImageUrl = await uploadImageIfNeeded();
+      }
+
       if (isEdit && post) {
         await api(`/api/posts/${post.id}`, {
           method: "PATCH",
@@ -1568,11 +2030,25 @@ function PostEditorDialog({
             content: state.content,
             ctaType: state.ctaType || null,
             ctaUrl: state.ctaUrl || null,
+            imageUrl: uploadedImageUrl || undefined,
             status: state.status,
-            scheduledAt: state.status === "scheduled" ? state.scheduledAt?.toISOString() : null,
+            ...buildSchedulePayload(state),
+            startDate: state.startDate || null,
+            startTime: state.startTime || null,
+            endDate: state.endDate || null,
+            endTime: state.endTime || null,
+            couponCode: state.couponCode || null,
+            redeemUrl: state.redeemUrl || null,
+            offerTerms: state.offerTerms || null,
           }),
         });
-        toast.success(state.status === "published" ? "Post published" : state.status === "scheduled" ? "Post scheduled" : "Post saved");
+        toast.success(
+          state.status === "published"
+            ? "Post published"
+            : state.status === "scheduled"
+              ? (state.scheduleMode === "weekly" ? "Weekly recurring post scheduled" : "Post scheduled")
+              : "Post saved",
+        );
       } else {
         await api("/api/posts", {
           method: "POST",
@@ -1583,12 +2059,26 @@ function PostEditorDialog({
             content: state.content,
             ctaType: state.ctaType || null,
             ctaUrl: state.ctaUrl || null,
+            imageUrl: uploadedImageUrl || null,
             status: state.status,
-            scheduledAt: state.status === "scheduled" ? state.scheduledAt?.toISOString() : null,
+            ...buildSchedulePayload(state),
             source: state.source,
+            startDate: state.startDate || null,
+            startTime: state.startTime || null,
+            endDate: state.endDate || null,
+            endTime: state.endTime || null,
+            couponCode: state.couponCode || null,
+            redeemUrl: state.redeemUrl || null,
+            offerTerms: state.offerTerms || null,
           }),
         });
-        toast.success(state.status === "published" ? "Post published to Google Business Profile" : state.status === "scheduled" ? "Post scheduled" : "Draft saved");
+        toast.success(
+          state.status === "published"
+            ? "Post published to Google Business Profile"
+            : state.status === "scheduled"
+              ? (state.scheduleMode === "weekly" ? "Weekly recurring post scheduled" : "Post scheduled")
+              : "Draft saved",
+        );
       }
       onSaved();
     } catch (e: any) {
@@ -1606,6 +2096,15 @@ function PostEditorDialog({
     }
     setSaving(true);
     try {
+      let uploadedImageUrl: string | null = null;
+      if (state.imageFile && locationIds[0]) {
+        const fd = new FormData();
+        fd.append("file", state.imageFile);
+        fd.append("locationId", locationIds[0]);
+        const res = await fetch("/api/media", { method: "POST", body: fd });
+        const json = await res.json();
+        if (res.ok) uploadedImageUrl = json.data?.fileUrl || null;
+      }
       const r = await api<{ created: number }>("/api/posts/bulk", {
         method: "POST",
         body: JSON.stringify({
@@ -1617,10 +2116,17 @@ function PostEditorDialog({
             content: state.content,
             ctaType: state.ctaType || null,
             ctaUrl: state.ctaUrl || null,
-            imageUrl: null,
+            imageUrl: uploadedImageUrl,
             status: state.status,
             source: state.source,
-            scheduledAt: state.status === "scheduled" ? state.scheduledAt?.toISOString() : null,
+            ...buildSchedulePayload(state),
+            startDate: state.startDate || null,
+            startTime: state.startTime || null,
+            endDate: state.endDate || null,
+            endTime: state.endTime || null,
+            couponCode: state.couponCode || null,
+            redeemUrl: state.redeemUrl || null,
+            offerTerms: state.offerTerms || null,
           },
         }),
       });
@@ -1643,21 +2149,27 @@ function PostEditorDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-5xl max-h-[calc(100vh-2rem)] overflow-y-auto scroll-area">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileText className="size-4 text-primary" />
-              {isEdit ? "Edit post" : "Create post"}
-            </DialogTitle>
-            <DialogDescription>
-              {isEdit
-                ? "Update post content, CTA, or schedule."
-                : "Write a new Google Business Profile post or let MiSA AI draft one for you."}
-            </DialogDescription>
-          </DialogHeader>
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent
+          side="right"
+          className="w-full sm:max-w-none sm:w-[min(1100px,96vw)] p-0 gap-0 overflow-hidden flex flex-col h-full border-l shadow-2xl [&>button]:top-5 [&>button]:right-5 [&>button]:size-9 [&>button]:rounded-full [&>button]:border [&>button]:bg-background [&>button]:opacity-100"
+        >
+          <SheetHeader className="px-6 pt-6 pb-4 border-b shrink-0 text-left bg-gradient-to-r from-cyan-50/80 to-sky-50/50">
+            <div className="pr-10 space-y-1">
+              <SheetTitle className="text-xl font-bold tracking-tight flex items-center gap-2">
+                <FileText className="size-5 text-primary" />
+                {isEdit ? "Edit post" : "Create post"}
+              </SheetTitle>
+              <SheetDescription>
+                {isEdit
+                  ? "Update post content, CTA, or schedule."
+                  : "Write a new Google Business Profile post or let MiSA AI draft one for you."}
+              </SheetDescription>
+            </div>
+          </SheetHeader>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+          <div className="flex-1 min-h-0 overflow-y-auto scroll-area px-6 py-5">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
             {/* Left: form */}
             <div className="space-y-4">
               {/* AI generator */}
@@ -1833,7 +2345,10 @@ function PostEditorDialog({
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs">Post type <span className="text-rose-500">*</span></Label>
-                    <Select value={state.type} onValueChange={(v) => update("type", v as PostType)}>
+                    <Select value={state.type} onValueChange={(v) => {
+                      update("type", v as PostType);
+                      if (v === "offer") { update("ctaType", "none"); update("ctaUrl", ""); }
+                    }}>
                       <SelectTrigger className="w-full">
                         <SelectValue />
                       </SelectTrigger>
@@ -1854,7 +2369,10 @@ function PostEditorDialog({
               {!isEdit && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">Post type <span className="text-rose-500">*</span></Label>
-                  <Select value={state.type} onValueChange={(v) => update("type", v as PostType)}>
+                  <Select value={state.type} onValueChange={(v) => {
+                    update("type", v as PostType);
+                    if (v === "offer") { update("ctaType", "none"); update("ctaUrl", ""); }
+                  }}>
                     <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
@@ -1871,32 +2389,35 @@ function PostEditorDialog({
                 </div>
               )}
 
-              {/* Title */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">Title <span className="text-rose-500">*</span></Label>
-                  <span className={cn("text-[10px] tabular-nums", titleCount > 60 ? "text-rose-500" : "text-muted-foreground")}>
-                    {titleCount}/60
-                  </span>
+              {/* Title — only for Offer & Event */}
+              {(state.type === "offer" || state.type === "event") && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Title <span className="text-rose-500">*</span></Label>
+                    <span className={cn("text-[10px] tabular-nums", titleCount > 58 ? "text-rose-500" : "text-muted-foreground")}>
+                      {titleCount}/58
+                    </span>
+                  </div>
+                  <Input
+                    value={state.title}
+                    maxLength={58}
+                    onChange={(e) => update("title", e.target.value.slice(0, 58))}
+                    placeholder={state.type === "offer" ? "e.g. Monsoon Sale — 30% off AC service" : "e.g. Free Car Health Checkup Camp"}
+                  />
                 </div>
-                <Input
-                  value={state.title}
-                  maxLength={80}
-                  onChange={(e) => update("title", e.target.value.slice(0, 60))}
-                  placeholder="e.g. Monsoon Sale — Up to 30% off car AC service"
-                />
-              </div>
+              )}
 
-              {/* Content */}
+              {/* Description */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs">Content <span className="text-rose-500">*</span></Label>
+                  <Label className="text-xs">Description <span className="text-rose-500">*</span></Label>
                   <span className="text-[10px] text-muted-foreground tabular-nums">
-                    {contentWords} words · {state.content.length} chars
+                    {state.content.length}/1500
                   </span>
                 </div>
                 <Textarea
                   value={state.content}
+                  maxLength={1500}
                   onChange={(e) => update("content", e.target.value)}
                   rows={5}
                   placeholder="Write 100–180 words. Mention the offer, time window & how to redeem…"
@@ -1907,92 +2428,254 @@ function PostEditorDialog({
                 </p>
               </div>
 
-              {/* CTA */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Call-to-action</Label>
-                  <Select value={state.ctaType} onValueChange={(v) => update("ctaType", v)}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CTA_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          <span className="inline-flex items-center gap-2">
-                            <o.icon className="size-3.5" /> {o.label}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              {/* Offer / Event specific fields */}
+              {(state.type === "offer" || state.type === "event") && (
+                <>
+                  {/* Start / End date+time */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Start date <span className="text-rose-500">*</span></Label>
+                      <Input type="date" value={state.startDate} onChange={(e) => update("startDate", e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Start time</Label>
+                      <Input type="time" value={state.startTime} onChange={(e) => update("startTime", e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">End date <span className="text-rose-500">*</span></Label>
+                      <Input type="date" value={state.endDate} onChange={(e) => update("endDate", e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">End time</Label>
+                      <Input type="time" value={state.endTime} onChange={(e) => update("endTime", e.target.value)} />
+                    </div>
+                  </div>
+
+                  {/* Offer-only: Terms, Coupon code, Redeem link */}
+                  {state.type === "offer" && (
+                    <div className="space-y-3 rounded-lg border border-dashed p-3 bg-amber-500/5">
+                      <p className="text-xs font-medium text-amber-600 dark:text-amber-400">Offer details</p>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Coupon code</Label>
+                        <Input value={state.couponCode} onChange={(e) => update("couponCode", e.target.value)} placeholder="e.g. MONSOON30" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Link to redeem offer</Label>
+                        <Input value={state.redeemUrl} onChange={(e) => update("redeemUrl", e.target.value)} placeholder="https://myfng.in/offers" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Terms & conditions</Label>
+                        <Textarea value={state.offerTerms} onChange={(e) => update("offerTerms", e.target.value)} rows={2} placeholder="e.g. Valid on bookings above ₹2000. Not combinable with other offers." className="resize-y min-h-[50px]" />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Image upload */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Post Image (optional)</Label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="flex-1"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setState((s) => ({ ...s, imageFile: file, imageUrl: URL.createObjectURL(file) }));
+                      }
+                    }}
+                  />
+                  {state.imageUrl && (
+                    <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0"
+                      onClick={() => setState((s) => ({ ...s, imageFile: null, imageUrl: "" }))}>
+                      <X className="size-4" />
+                    </Button>
+                  )}
                 </div>
+                {state.imageUrl && (
+                  <img src={state.imageUrl} alt="Preview" className="mt-2 rounded-lg max-h-40 object-cover border" />
+                )}
+              </div>
+
+              {/* CTA — Add a button (optional) — not supported for Offer posts */}
+              {state.type !== "offer" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Add a button (optional)</Label>
+                <Select value={state.ctaType} onValueChange={(v) => {
+                  update("ctaType", v);
+                  if (v === "call") {
+                    const loc = locations.find((l) => l.id === state.locationId);
+                    update("ctaUrl", loc?.phone || "");
+                  } else {
+                    update("ctaUrl", "");
+                  }
+                }}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CTA_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        <span className="inline-flex items-center gap-2">
+                          <o.icon className="size-3.5" /> {o.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              )}
+              {state.type !== "offer" && state.ctaType === "call" && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">
-                    {state.ctaType === "call" ? "Phone number" : "CTA URL"}
-                  </Label>
+                  <Label className="text-xs">Phone number</Label>
+                  <Input
+                    value={state.ctaUrl || locations.find((l) => l.id === state.locationId)?.phone || ""}
+                    readOnly
+                    className="bg-muted"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Customers will call this number</p>
+                </div>
+              )}
+              {state.type !== "offer" && state.ctaType !== "none" && state.ctaType !== "call" && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">URL</Label>
                   <Input
                     value={state.ctaUrl}
                     onChange={(e) => update("ctaUrl", e.target.value)}
-                    placeholder={state.ctaType === "call" ? "+91 98765 43210" : "https://…"}
+                    placeholder="https://…"
                   />
                 </div>
-              </div>
+              )}
 
               {/* Status + schedule */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Status</Label>
-                  <Select value={state.status} onValueChange={(v) => update("status", v as EditorStatus)}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="draft">Save as Draft</SelectItem>
-                      <SelectItem value="scheduled">Schedule</SelectItem>
-                      <SelectItem value="published">Publish now</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {state.status === "scheduled" && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label className="text-xs">Schedule date &amp; time</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button variant="outline" className="w-full justify-start text-left font-normal">
-                          <CalendarClock className="size-3.5 mr-1.5 text-amber-500" />
-                          {state.scheduledAt ? scheduleLabel(state.scheduledAt.toISOString()) : "Pick date"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0">
-                        <Calendar
-                          mode="single"
-                          selected={state.scheduledAt ?? undefined}
-                          onSelect={(d) => {
-                            if (!d) return;
-                            const next = new Date(d);
-                            if (state.scheduledAt) {
-                              next.setHours(state.scheduledAt.getHours(), state.scheduledAt.getMinutes(), 0, 0);
-                            } else {
-                              next.setHours(10, 0, 0, 0);
-                            }
-                            update("scheduledAt", next);
-                          }}
-                          disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
-                        />
-                        <div className="p-2 border-t">
+                    <Label className="text-xs">Status</Label>
+                    <Select value={state.status} onValueChange={(v) => update("status", v as EditorStatus)}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="draft">Save as Draft</SelectItem>
+                        <SelectItem value="scheduled">Schedule</SelectItem>
+                        <SelectItem value="published">Publish now</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {state.status === "scheduled" && (
+                  <div className="rounded-lg border bg-muted/20 p-3 space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Schedule type</Label>
+                      <ToggleGroup
+                        type="single"
+                        value={state.scheduleMode}
+                        onValueChange={(v) => { if (v) update("scheduleMode", v as ScheduleMode); }}
+                        variant="outline"
+                        size="default"
+                        className="w-full sm:w-auto"
+                      >
+                        <ToggleGroupItem value="once" className="shrink-0 px-4 gap-2 h-9">
+                          <CalendarClock className="size-3.5 shrink-0" />
+                          <span className="text-xs">One-time</span>
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="weekly" className="shrink-0 px-4 gap-2 h-9">
+                          <Repeat className="size-3.5 shrink-0" />
+                          <span className="text-xs">Repeat weekly</span>
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </div>
+
+                    {state.scheduleMode === "once" ? (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Date &amp; time</Label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button variant="outline" className="w-full justify-start text-left font-normal">
+                              <CalendarClock className="size-3.5 mr-1.5 text-amber-500" />
+                              {state.scheduledAt ? scheduleLabel(state.scheduledAt.toISOString()) : "Pick date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0">
+                            <Calendar
+                              mode="single"
+                              selected={state.scheduledAt ?? undefined}
+                              onSelect={(d) => {
+                                if (!d) return;
+                                const next = new Date(d);
+                                if (state.scheduledAt) {
+                                  next.setHours(state.scheduledAt.getHours(), state.scheduledAt.getMinutes(), 0, 0);
+                                } else {
+                                  next.setHours(10, 0, 0, 0);
+                                }
+                                update("scheduledAt", next);
+                              }}
+                              disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+                            />
+                            <div className="p-2 border-t">
+                              <Input
+                                type="time"
+                                value={state.scheduledAt ? format(state.scheduledAt, "HH:mm") : "10:00"}
+                                onChange={(e) => {
+                                  const [h, m] = e.target.value.split(":").map(Number);
+                                  const d = state.scheduledAt ? new Date(state.scheduledAt) : new Date();
+                                  d.setHours(h, m, 0, 0);
+                                  update("scheduledAt", d);
+                                }}
+                              />
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Repeat on</Label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {WEEKDAY_OPTIONS.map((day) => (
+                              <Button
+                                key={day.value}
+                                type="button"
+                                size="sm"
+                                variant={state.recurrenceDayOfWeek === day.value ? "default" : "outline"}
+                                className="h-8 min-w-[2.75rem] px-3"
+                                onClick={() => update("recurrenceDayOfWeek", day.value)}
+                              >
+                                {day.label}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Time</Label>
                           <Input
                             type="time"
-                            value={state.scheduledAt ? format(state.scheduledAt, "HH:mm") : "10:00"}
-                            onChange={(e) => {
-                              const [h, m] = e.target.value.split(":").map(Number);
-                              const d = state.scheduledAt ? new Date(state.scheduledAt) : new Date();
-                              d.setHours(h, m, 0, 0);
-                              update("scheduledAt", d);
-                            }}
+                            value={state.recurrenceTime}
+                            onChange={(e) => update("recurrenceTime", e.target.value)}
+                            className="max-w-[180px]"
                           />
                         </div>
-                      </PopoverContent>
-                    </Popover>
+                        <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                          <Repeat className="size-3.5 shrink-0 mt-0.5 text-primary" />
+                          <span>
+                            {formatWeeklyRecurrence(state.recurrenceDayOfWeek, state.recurrenceTime)}.
+                            {" "}Next post:{" "}
+                            <span className="font-medium text-foreground">
+                              {scheduleLabel(
+                                computeNextWeeklyOccurrence(
+                                  state.recurrenceDayOfWeek,
+                                  state.recurrenceTime,
+                                ).toISOString(),
+                              )}
+                            </span>
+                          </span>
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2057,6 +2740,16 @@ function PostEditorDialog({
                       </div>
                     </div>
                   </div>
+                  {state.imageUrl && (
+                    <div className="aspect-[16/10] w-full overflow-hidden bg-muted border-b">
+                      <img
+                        src={state.imageUrl}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}
                   <div className="p-4 space-y-2">
                     <div className="flex items-center gap-1.5">
                       <span className={cn("size-5 rounded-md flex items-center justify-center", meta.tint)}>
@@ -2066,9 +2759,11 @@ function PostEditorDialog({
                         {meta.label}
                       </span>
                     </div>
-                    <h4 className="text-sm font-semibold leading-snug">
-                      {state.title || <span className="text-muted-foreground italic">Post title…</span>}
-                    </h4>
+                    {(state.type === "offer" || state.type === "event") && (
+                      <h4 className="text-sm font-semibold leading-snug">
+                        {state.title || <span className="text-muted-foreground italic">Post title…</span>}
+                      </h4>
+                    )}
                     <p className="text-xs text-muted-foreground line-clamp-6 leading-relaxed whitespace-pre-wrap">
                       {state.content || <span className="italic">Your post content will appear here…</span>}
                     </p>
@@ -2093,8 +2788,9 @@ function PostEditorDialog({
               </div>
             </div>
           </div>
+          </div>
 
-          <DialogFooter className="border-t pt-4">
+          <SheetFooter className="border-t px-6 py-4 shrink-0 flex-row justify-end gap-2 sm:justify-end">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               Cancel
             </Button>
@@ -2109,9 +2805,9 @@ function PostEditorDialog({
                 <><FileText className="size-3.5 mr-1.5" /> Save draft</>
               )}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       {/* Multi-location publish confirmation */}
       <AlertDialog open={multiConfirmOpen} onOpenChange={setMultiConfirmOpen}>
@@ -2146,5 +2842,159 @@ function PostEditorDialog({
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+function PastHistoryTable({
+  posts,
+  isLoading,
+  onEdit,
+}: {
+  posts: PostWithLocation[];
+  isLoading: boolean;
+  onEdit: (p: PostWithLocation) => void;
+}) {
+  const [page, setPage] = React.useState(0);
+  const [timeFilter, setTimeFilter] = React.useState<DurationValue>("30");
+  const [customRange, setCustomRange] = React.useState<DurationCustomRange | null>(null);
+  const perPage = 15;
+
+  const filtered = React.useMemo(() => {
+    if (timeFilter === "all") return posts;
+
+    let from: Date | null = null;
+    let to: Date | null = null;
+    const now = new Date();
+
+    if (timeFilter === "custom" && customRange?.from) {
+      from = new Date(customRange.from);
+      from.setHours(0, 0, 0, 0);
+      if (customRange.to) {
+        to = new Date(customRange.to);
+        to.setHours(23, 59, 59, 999);
+      }
+    } else if (timeFilter === "today") {
+      from = new Date(now);
+      from.setHours(0, 0, 0, 0);
+    } else if (timeFilter === "yesterday") {
+      from = new Date(now);
+      from.setDate(from.getDate() - 1);
+      from.setHours(0, 0, 0, 0);
+      to = new Date(from);
+      to.setHours(23, 59, 59, 999);
+    } else {
+      const days = parseInt(timeFilter, 10);
+      if (Number.isFinite(days)) {
+        from = new Date(now);
+        from.setDate(from.getDate() - days);
+      }
+    }
+
+    return posts.filter((p) => {
+      const d = p.publishedAt ? new Date(p.publishedAt) : null;
+      if (!d) return false;
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    });
+  }, [posts, timeFilter, customRange]);
+
+  const totalPages = Math.ceil(filtered.length / perPage);
+  const paged = filtered.slice(page * perPage, (page + 1) * perPage);
+
+  if (isLoading) {
+    return (
+      <Card>
+        <div className="p-6 space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <div className="p-4 border-b flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Clock className="size-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">Previous Posts</span>
+          <Badge variant="outline" className="text-xs">{filtered.length} posts</Badge>
+        </div>
+        <DurationFilter
+          value={timeFilter}
+          onChange={(v) => {
+            setTimeFilter(v);
+            setPage(0);
+          }}
+          customRange={customRange}
+          onCustomRangeChange={(r) => {
+            setCustomRange(r);
+            setPage(0);
+          }}
+          className="w-[150px]"
+        />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b bg-muted/30">
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Post Type</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Title / Content</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Location</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Published On</th>
+              <th className="px-4 py-2.5 text-center font-medium text-muted-foreground">Channel</th>
+              <th className="px-4 py-2.5 text-center font-medium text-muted-foreground">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paged.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                  No published posts in this time period.
+                </td>
+              </tr>
+            ) : (
+              paged.map(p => (
+                <tr key={p.id} className="border-b last:border-0 hover:bg-accent/30 transition">
+                  <td className="px-4 py-3">
+                    <Badge variant="outline" className="text-[10px] capitalize">
+                      {p.type === "whats_new" ? "What's New" : p.type}
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 max-w-[250px]">
+                    <span className="font-medium truncate block">{p.title || p.content?.slice(0, 60) || "Untitled"}</span>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{p.locationName}</td>
+                  <td className="px-4 py-3 text-muted-foreground tabular-nums">
+                    {p.publishedAt ? new Date(p.publishedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <Badge variant="outline" className="text-[10px] bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400">
+                      Google
+                    </Badge>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onEdit(p)}>
+                      <Eye className="size-3 mr-1" /> View
+                    </Button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-4 pb-3">
+        <NumberedPagination
+          page={page}
+          totalPages={Math.max(1, totalPages)}
+          totalItems={filtered.length}
+          perPage={perPage}
+          onPageChange={setPage}
+          itemLabel="posts"
+          hideWhenSinglePage
+        />
+      </div>
+    </Card>
   );
 }

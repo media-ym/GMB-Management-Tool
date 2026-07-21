@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { useAppStore } from "@/lib/store";
@@ -9,8 +9,21 @@ import { useLocations } from "@/hooks/use-locations";
 import { can } from "@/lib/permissions";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
+import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { DurationFilter, getDurationLabel, type DurationValue, type DurationCustomRange } from "@/components/shared/duration-filter";
+import { LayoutToggle, type LayoutMode } from "@/components/shared/layout-toggle";
+import { NumberedPagination } from "@/components/shared/numbered-pagination";
 import { RatingStars, SentimentBadge } from "@/components/shared/badges";
-import type { ReviewWithLocation } from "@/lib/types";
+import type { ReviewWithLocation, ReviewChangeWithLocation } from "@/lib/types";
+import { appendLocationIdsToParams, appendDurationToParams } from "@/lib/location-filter";
+import type { NpsBreakdown } from "@/lib/location-filter";
+import {
+  mergeAutoReplyConfig,
+  substituteReviewReplyTemplate,
+  autoReplyCharLimit,
+  type AutoReplyConfig,
+  type AutoReplyReviewType,
+} from "@/lib/auto-reply";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -35,6 +48,14 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { LucideIcon } from "lucide-react";
@@ -66,7 +87,27 @@ import {
   Zap,
   TrendingUp,
   ListChecks,
+  ChevronDown,
+  Cpu,
 } from "lucide-react";
+import {
+  AUTO_MODEL_ID,
+  DEFAULT_OPENROUTER_MODEL,
+  OPENROUTER_MODELS,
+  getOpenRouterModelLabel,
+  type OpenRouterModel,
+} from "@/lib/openrouter-models";
+
+const MISA_MODEL_STORAGE_KEY = "myfng-misa-model";
+const MISA_MODEL_OPTIONS: OpenRouterModel[] = [
+  {
+    id: AUTO_MODEL_ID,
+    label: "Auto (best available)",
+    provider: "OpenRouter",
+    free: true,
+  },
+  ...OPENROUTER_MODELS,
+];
 import { toast } from "sonner";
 import { formatDistanceToNow, format, parseISO, isValid } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -78,6 +119,9 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip as RTooltip,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 
 // ============================================================================
@@ -87,12 +131,13 @@ import {
 type StatusFilter = "all" | "pending" | "replied" | "ignored";
 type SentimentFilter = "all" | "positive" | "neutral" | "negative";
 type RatingFilter = "all" | "5" | "4" | "3" | "low";
-type ViewTab = "inbox" | "analytics";
+type ViewTab = "inbox" | "analytics" | "deleted-edited" | "auto-replies";
 type EditorPanelTab = "templates" | "notes";
 
 interface ReviewStats {
   total: number;
   pending: number;
+  pendingAll?: number;
   negative: number;
   positive: number;
   replied: number;
@@ -110,6 +155,7 @@ interface ReviewStats {
   topAppreciation: { topic: string; count: number }[];
   sentimentCounts: { positive: number; neutral: number; negative: number };
   aiSuggestedCount: number;
+  nps: NpsBreakdown;
 }
 
 interface ReplyTemplate {
@@ -197,18 +243,47 @@ function computeSla(createdAt: string, rating: number) {
   };
 }
 
-// Template variable substitution
+// Template variable substitution (client preview — server re-substitutes on publish)
 function applyTemplate(
   tpl: string,
   review: ReviewWithLocation,
   managerName: string,
 ): string {
-  return tpl
-    .replace(/\{\{customer_name\}\}/g, review.authorName)
-    .replace(/\{\{location_name\}\}/g, review.locationName)
-    .replace(/\{\{manager_name\}\}/g, managerName)
-    .replace(/\{\{city\}\}/g, review.locationCity)
-    .replace(/\{\{rating\}\}/g, String(review.rating));
+  return substituteReviewReplyTemplate(tpl, {
+    customerName: review.authorName,
+    businessName: review.locationName,
+    category: "Auto Service",
+    address: review.locationCity,
+    area: review.locationCity,
+    city: review.locationCity,
+    managerName,
+    rating: review.rating,
+  });
+}
+
+/** Pick the best active template for one-click reply on a review card. */
+function resolveQuickReplyTemplate(
+  rating: number,
+  templates: ReplyTemplate[] | undefined,
+  autoReply?: AutoReplyConfig | null,
+): string | null {
+  const active = (templates ?? []).filter((t) => t.isActive);
+  const exact = active.find((t) => t.rating === rating);
+  if (exact?.template.trim()) return exact.template;
+
+  if (
+    autoReply?.enabled &&
+    autoReply.mode === "manual" &&
+    autoReply.template.trim() &&
+    autoReply.selectedRatings.includes(rating)
+  ) {
+    return autoReply.template;
+  }
+
+  const nearest = active
+    .filter((t) => t.rating <= rating && t.template.trim())
+    .sort((a, b) => b.rating - a.rating)[0];
+  return nearest?.template ?? null;
 }
 
 // Highlight {{variables}} in template preview
@@ -255,8 +330,8 @@ function safeRelativeTime(iso: string) {
 
 export function ReviewsView() {
   const user = useUser();
-  const activeLocationId = useAppStore((s) => s.activeLocationId);
-  const setActiveLocationId = useAppStore((s) => s.setActiveLocationId);
+  const selectedLocationIds = useAppStore((s) => s.selectedLocationIds);
+  const setSelectedLocationIds = useAppStore((s) => s.setSelectedLocationIds);
   const qc = useQueryClient();
 
   const canReply = can(user.role, "reviews.reply");
@@ -264,31 +339,60 @@ export function ReviewsView() {
   const canView = can(user.role, "reviews.view");
 
   const [viewTab, setViewTab] = useState<ViewTab>("inbox");
+  const [analyticsDays, setAnalyticsDays] = useState<DurationValue>("all");
+  const [customDurationRange, setCustomDurationRange] = useState<DurationCustomRange | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sentimentFilter, setSentimentFilter] =
     useState<SentimentFilter>("all");
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>("all");
   const [search, setSearch] = useState("");
+  const [displayLayout, setDisplayLayout] = useState<LayoutMode>("grid");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 12;
 
   // reply editor state
   const [editorOpen, setEditorOpen] = useState(false);
   const [activeReviewId, setActiveReviewId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [aiLoadingId, setAiLoadingId] = useState<string | null>(null);
+  const [quickTemplateLoadingId, setQuickTemplateLoadingId] = useState<string | null>(null);
   const [editorText, setEditorText] = useState("");
   // editor side panel tab
   const [editorPanel, setEditorPanel] = useState<EditorPanelTab>("templates");
+  const [misaModel, setMisaModel] = useState(DEFAULT_OPENROUTER_MODEL);
 
   // manage templates dialog
   const [manageTemplatesOpen, setManageTemplatesOpen] = useState(false);
 
   const { data: locations } = useLocations();
 
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MISA_MODEL_STORAGE_KEY);
+      if (saved && MISA_MODEL_OPTIONS.some((m) => m.id === saved)) {
+        setMisaModel(saved);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MISA_MODEL_STORAGE_KEY, misaModel);
+    } catch {
+      /* ignore */
+    }
+  }, [misaModel]);
+
+  function appendReviewDurationParams(params: URLSearchParams) {
+    appendDurationToParams(params, analyticsDays, customDurationRange);
+  }
+
   // Reviews query
   const reviewsUrl = useMemo(() => {
     const params = new URLSearchParams();
-    if (activeLocationId && activeLocationId !== "all")
-      params.set("locationId", activeLocationId);
+    appendLocationIdsToParams(params, selectedLocationIds);
     if (statusFilter !== "all") params.set("status", statusFilter);
     if (sentimentFilter !== "all") params.set("sentiment", sentimentFilter);
     if (ratingFilter === "5") {
@@ -300,26 +404,28 @@ export function ReviewsView() {
     } else if (ratingFilter === "3") {
       params.set("minRating", "3");
       params.set("maxRating", "3");
-    } else if (ratingFilter === "low") {
+    } else     if (ratingFilter === "low") {
       params.set("minRating", "1");
       params.set("maxRating", "2");
     }
-    params.set("limit", "200");
+    if (analyticsDays !== "all" || customDurationRange?.from) {
+      appendReviewDurationParams(params);
+    }
+    params.set("limit", "500");
     return `/api/reviews?${params.toString()}`;
-  }, [activeLocationId, statusFilter, sentimentFilter, ratingFilter]);
+  }, [selectedLocationIds, statusFilter, sentimentFilter, ratingFilter, analyticsDays, customDurationRange]);
 
   const { data: reviews, isLoading } = useQuery<ReviewWithLocation[]>({
     queryKey: ["reviews", reviewsUrl],
     queryFn: () => api<ReviewWithLocation[]>(reviewsUrl),
   });
 
-  // Stats query (always fetch — used by analytics tab)
   const statsUrl = useMemo(() => {
     const params = new URLSearchParams();
-    if (activeLocationId && activeLocationId !== "all")
-      params.set("locationId", activeLocationId);
+    appendLocationIdsToParams(params, selectedLocationIds);
+    appendReviewDurationParams(params);
     return `/api/reviews/stats?${params.toString()}`;
-  }, [activeLocationId]);
+  }, [selectedLocationIds, analyticsDays, customDurationRange]);
 
   const { data: stats, isLoading: statsLoading } = useQuery<ReviewStats>({
     queryKey: ["reviews-stats", statsUrl],
@@ -332,6 +438,11 @@ export function ReviewsView() {
   >({
     queryKey: ["review-templates"],
     queryFn: () => api<ReplyTemplate[]>("/api/review-templates"),
+  });
+
+  const { data: autoReplyConfig } = useQuery<AutoReplyConfig>({
+    queryKey: ["review-auto-reply"],
+    queryFn: () => api<AutoReplyConfig>("/api/reviews/auto-reply"),
   });
 
   // Notes for active review
@@ -358,27 +469,69 @@ export function ReviewsView() {
     );
   }, [reviews, search]);
 
-  // Client-side fallback stats (computed from fetched set, pre-search)
-  const clientStats = useMemo(() => {
+  // Reset page when filters/search change
+  useEffect(() => {
+    setPage(0);
+  }, [
+    statusFilter,
+    sentimentFilter,
+    ratingFilter,
+    search,
+    selectedLocationIds,
+    analyticsDays,
+    customDurationRange,
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pagedReviews = useMemo(() => {
+    const start = safePage * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, safePage, PAGE_SIZE]);
+
+  // Inbox KPIs: prefer live /api/reviews/stats (true DB totals).
+  // Previously this used the fetched list length (capped at limit) which under-counted.
+  const inboxStats = useMemo(() => {
+    if (stats) {
+      return {
+        total: stats.total,
+        pending: stats.pendingAll ?? stats.pending,
+        negative: stats.negative,
+        avg: stats.avgRating,
+        fromApi: true as const,
+      };
+    }
     const list = reviews ?? [];
     const total = list.length;
     const pending = list.filter((r) => r.replyStatus === "pending").length;
     const negative = list.filter((r) => r.rating <= 2).length;
     const avg = total > 0 ? list.reduce((s, r) => s + r.rating, 0) / total : 0;
-    return { total, pending, negative, avg };
-  }, [reviews]);
+    return { total, pending, negative, avg, fromApi: false as const };
+  }, [stats, reviews]);
 
   // ---- Mutations ----
   const aiDraftMut = useMutation({
-    mutationFn: (id: string) =>
-      api<{ reply: string }>(`/api/reviews/${id}/reply`),
+    mutationFn: ({ id, model }: { id: string; model: string }) => {
+      const params = new URLSearchParams({ ai: "1", model });
+      return api<{ reply: string; model?: string }>(
+        `/api/reviews/${id}/reply?${params.toString()}`,
+      );
+    },
   });
 
   const publishMut = useMutation({
-    mutationFn: ({ id, replyText }: { id: string; replyText: string }) =>
+    mutationFn: ({
+      id,
+      replyText,
+      replySource,
+    }: {
+      id: string;
+      replyText: string;
+      replySource?: "manual" | "template";
+    }) =>
       api(`/api/reviews/${id}/reply`, {
         method: "POST",
-        body: JSON.stringify({ replyText }),
+        body: JSON.stringify({ replyText, replySource }),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["reviews"] });
@@ -388,6 +541,20 @@ export function ReviewsView() {
     },
     onError: (e: unknown) => {
       const msg = e instanceof Error ? e.message : "Failed to publish reply";
+      toast.error(msg);
+    },
+  });
+
+  const deleteReplyMut = useMutation({
+    mutationFn: (id: string) =>
+      api(`/api/reviews/${id}/reply`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reviews"] });
+      qc.invalidateQueries({ queryKey: ["reviews-stats"] });
+      toast.success("Reply deleted from Google Business Profile");
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Failed to delete reply";
       toast.error(msg);
     },
   });
@@ -490,6 +657,7 @@ export function ReviewsView() {
       toast.loading("Triggering Google sync…", { id: "sync-rev" });
       await api("/api/dashboard", { method: "POST", body: JSON.stringify({}) });
       qc.invalidateQueries();
+      qc.invalidateQueries({ queryKey: ["review-changes"] });
       toast.success("Sync complete.", { id: "sync-rev" });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Sync failed";
@@ -499,25 +667,37 @@ export function ReviewsView() {
 
   function handleExport() {
     const params = new URLSearchParams();
-    if (activeLocationId && activeLocationId !== "all")
-      params.set("locationId", activeLocationId);
+    appendLocationIdsToParams(params, selectedLocationIds);
     if (statusFilter !== "all") params.set("status", statusFilter);
     if (sentimentFilter !== "all") params.set("sentiment", sentimentFilter);
+    appendReviewDurationParams(params);
     const url = `/api/reviews/export?${params.toString()}`;
     window.open(url, "_blank");
     toast.success("Preparing CSV download…");
   }
 
-  async function handleAiDraft(review: ReviewWithLocation) {
+  function handleAnalyticsExport() {
+    const params = new URLSearchParams();
+    appendLocationIdsToParams(params, selectedLocationIds);
+    if (analyticsDays !== "all" || customDurationRange?.from) {
+      appendReviewDurationParams(params);
+    }
+    window.open(`/api/reviews/export?${params.toString()}`, "_blank");
+    toast.success("Preparing analytics CSV…");
+  }
+
+  async function handleAiDraft(review: ReviewWithLocation, modelOverride?: string) {
+    const model = modelOverride || misaModel;
+    if (modelOverride) setMisaModel(modelOverride);
     setActiveReviewId(review.id);
     setAiLoadingId(review.id);
     try {
-      const { reply } = await aiDraftMut.mutateAsync(review.id);
+      const { reply } = await aiDraftMut.mutateAsync({ id: review.id, model });
       setDrafts((d) => ({ ...d, [review.id]: reply }));
       setEditorText(reply);
       setEditorPanel("templates");
       setEditorOpen(true);
-      toast.success("MiSA AI draft ready");
+      toast.success(`MiSA AI draft ready · ${getOpenRouterModelLabel(model)}`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "AI draft failed";
       toast.error(msg);
@@ -542,16 +722,57 @@ export function ReviewsView() {
   }
 
   function handlePublish() {
-    if (!activeReviewId) return;
+    if (!activeReviewId || !activeReview) return;
     if (editorText.trim().length < 3) {
       toast.error("Reply must be at least 3 characters");
       return;
     }
-    publishMut.mutate({ id: activeReviewId, replyText: editorText.trim() });
+    const filled = substituteReviewReplyTemplate(editorText.trim(), {
+      customerName: activeReview.authorName,
+      businessName: activeReview.locationName,
+      category: "Auto Service",
+      address: activeReview.locationCity,
+      area: activeReview.locationCity,
+      city: activeReview.locationCity,
+      managerName: user.name,
+      rating: activeReview.rating,
+    });
+    publishMut.mutate({ id: activeReviewId, replyText: filled });
   }
 
   function handleIgnore(id: string) {
     ignoreMut.mutate(id);
+  }
+
+  async function handleQuickTemplateReply(review: ReviewWithLocation) {
+    const tplText = resolveQuickReplyTemplate(
+      review.rating,
+      templates,
+      autoReplyConfig,
+    );
+    if (!tplText) {
+      toast.error(
+        `No active template for ${review.rating}★ reviews. Set one up in Auto Replies or Templates.`,
+      );
+      return;
+    }
+    const filled = applyTemplate(tplText, review, user.name);
+    if (filled.trim().length < 3) {
+      toast.error("Template reply is too short");
+      return;
+    }
+    setQuickTemplateLoadingId(review.id);
+    try {
+      await publishMut.mutateAsync({
+        id: review.id,
+        replyText: filled,
+        replySource: "template",
+      });
+    } catch {
+      /* publishMut handles toast */
+    } finally {
+      setQuickTemplateLoadingId(null);
+    }
   }
 
   function handleUseTemplate(tpl: ReplyTemplate) {
@@ -573,6 +794,8 @@ export function ReviewsView() {
     statusFilter !== "all" ||
     sentimentFilter !== "all" ||
     ratingFilter !== "all" ||
+    analyticsDays !== "all" ||
+    !!customDurationRange?.from ||
     !!search.trim();
 
   return (
@@ -581,24 +804,20 @@ export function ReviewsView() {
         title="Reviews"
         description="Sync, monitor & reply to Google Business Profile reviews"
         icon={Star}
+        accent="amber"
         actions={
           <>
-            <Select
-              value={activeLocationId}
-              onValueChange={(v) => setActiveLocationId(v as string | "all")}
-            >
-              <SelectTrigger size="sm" className="min-w-[140px] w-full sm:w-auto">
-                <SelectValue placeholder="All locations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All locations</SelectItem>
-                {locations?.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>
-                    {l.name} · {l.city}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <DurationFilter
+              value={analyticsDays}
+              onChange={setAnalyticsDays}
+              customRange={customDurationRange}
+              onCustomRangeChange={setCustomDurationRange}
+            />
+            <LocationMultiSelect
+              locations={locations}
+              selectedIds={selectedLocationIds}
+              onChange={setSelectedLocationIds}
+            />
             {canView && (
               <Button
                 size="sm"
@@ -625,13 +844,19 @@ export function ReviewsView() {
           <TabsTrigger value="analytics">
             <BarChart3 className="size-3.5 mr-1.5" /> Analytics
           </TabsTrigger>
+          <TabsTrigger value="deleted-edited">
+            <Trash2 className="size-3.5 mr-1.5" /> Deleted & Edited
+          </TabsTrigger>
+          <TabsTrigger value="auto-replies">
+            <Zap className="size-3.5 mr-1.5" /> Auto Replies
+          </TabsTrigger>
         </TabsList>
 
         {/* INBOX TAB */}
         <TabsContent value="inbox" className="space-y-4">
           {/* Compact stat row (kept from existing) */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            {isLoading ? (
+            {isLoading && !stats ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton key={i} className="h-28 rounded-xl" />
               ))
@@ -639,28 +864,28 @@ export function ReviewsView() {
               <>
                 <StatCard
                   label="Total Reviews"
-                  value={clientStats.total}
+                  value={inboxStats.total}
                   icon={Star}
                   accent="emerald"
-                  hint="In current filter"
+                  hint={inboxStats.fromApi ? "All synced reviews (live DB)" : "Loaded list only"}
                 />
                 <StatCard
                   label="Pending Reply"
-                  value={clientStats.pending}
+                  value={inboxStats.pending}
                   icon={MessageSquare}
                   accent="amber"
                   hint="Awaiting response"
                 />
                 <StatCard
                   label="Avg Rating"
-                  value={clientStats.avg.toFixed(2)}
+                  value={inboxStats.avg.toFixed(2)}
                   icon={Star}
                   accent="teal"
                   hint="0–5 scale"
                 />
                 <StatCard
                   label="Negative Reviews"
-                  value={clientStats.negative}
+                  value={inboxStats.negative}
                   icon={Ban}
                   accent="rose"
                   hint="Rating ≤ 2 stars"
@@ -668,6 +893,11 @@ export function ReviewsView() {
               </>
             )}
           </div>
+          {stats && reviews && reviews.length < stats.total && statusFilter === "all" && !search.trim() && (
+            <p className="text-xs text-muted-foreground -mt-2">
+              Showing latest {reviews.length} of {stats.total} reviews in the inbox list. Totals above are the full database count.
+            </p>
+          )}
 
           {/* Filter bar */}
           <Card>
@@ -742,39 +972,77 @@ export function ReviewsView() {
                       aria-label="Search reviews by author, text, or location"
                     />
                   </div>
+
+                  <LayoutToggle value={displayLayout} onChange={setDisplayLayout} />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Reviews list (independently scrollable) */}
-          <div className="max-h-[calc(100vh-26rem)] overflow-y-auto scroll-area pr-1 -mr-1">
+          {/* Reviews list / grid (independently scrollable) */}
+          <div className="max-h-[calc(100vh-26rem)] overflow-y-auto scroll-area pr-1 -mr-1 space-y-3">
             {isLoading ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-56 rounded-xl" />
-                ))}
-              </div>
+              displayLayout === "grid" ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {Array.from({ length: 9 }).map((_, i) => (
+                    <Skeleton key={i} className="h-56 rounded-xl" />
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <Skeleton key={i} className="h-24 rounded-xl" />
+                  ))}
+                </div>
+              )
             ) : filtered.length === 0 ? (
               <EmptyState hasFilters={hasActiveFilters} />
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {filtered.map((r) => (
-                  <ReviewCard
-                    key={r.id}
-                    review={r}
-                    canReply={canReply}
-                    canAiReply={canAiReply}
-                    aiLoading={aiLoadingId === r.id}
-                    onAiDraft={() => handleAiDraft(r)}
-                    onReply={() => handleOpenEditor(r)}
-                    onIgnore={() => handleIgnore(r.id)}
-                    ignoring={
-                      ignoreMut.isPending && ignoreMut.variables === r.id
-                    }
-                  />
-                ))}
-              </div>
+              <>
+                <div
+                  className={cn(
+                    displayLayout === "grid"
+                      ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"
+                      : "flex flex-col gap-2",
+                  )}
+                >
+                  {pagedReviews.map((r) => (
+                    <ReviewCard
+                      key={r.id}
+                      review={r}
+                      layout={displayLayout}
+                      canReply={canReply}
+                      canAiReply={canAiReply}
+                      aiLoading={aiLoadingId === r.id}
+                      quickTemplateLoading={quickTemplateLoadingId === r.id}
+                      hasQuickTemplate={
+                        !!resolveQuickReplyTemplate(r.rating, templates, autoReplyConfig)
+                      }
+                      onQuickTemplate={() => handleQuickTemplateReply(r)}
+                      onAiDraft={(model) => handleAiDraft(r, model)}
+                      misaModel={misaModel}
+                      onReply={() => handleOpenEditor(r)}
+                      onIgnore={() => handleIgnore(r.id)}
+                      ignoring={
+                        ignoreMut.isPending && ignoreMut.variables === r.id
+                      }
+                      onDeleteReply={() => deleteReplyMut.mutate(r.id)}
+                      deletingReply={
+                        deleteReplyMut.isPending && deleteReplyMut.variables === r.id
+                      }
+                    />
+                  ))}
+                </div>
+                <NumberedPagination
+                  page={safePage}
+                  totalPages={totalPages}
+                  totalItems={filtered.length}
+                  perPage={PAGE_SIZE}
+                  onPageChange={setPage}
+                  itemLabel="reviews"
+                  sticky
+                />
+              </>
             )}
           </div>
         </TabsContent>
@@ -796,8 +1064,27 @@ export function ReviewsView() {
           ) : !stats ? (
             <EmptyState hasFilters={false} />
           ) : (
-            <AnalyticsDashboard stats={stats} />
+            <AnalyticsDashboard
+              stats={stats}
+              daysFilter={analyticsDays}
+              customRange={customDurationRange}
+              onExport={handleAnalyticsExport}
+              canExport={canView}
+            />
           )}
+        </TabsContent>
+
+        {/* DELETED & EDITED REVIEWS TAB */}
+        <TabsContent value="deleted-edited" className="space-y-4">
+          <DeletedEditedReviews
+            daysFilter={analyticsDays}
+            customRange={customDurationRange}
+          />
+        </TabsContent>
+
+        {/* AUTO REPLIES TAB */}
+        <TabsContent value="auto-replies" className="space-y-4">
+          <AutoRepliesConfig />
         </TabsContent>
       </Tabs>
 
@@ -965,17 +1252,40 @@ export function ReviewsView() {
 // Analytics Dashboard
 // ============================================================================
 
-function AnalyticsDashboard({ stats }: { stats: ReviewStats }) {
+function AnalyticsDashboard({
+  stats,
+  daysFilter,
+  customRange,
+  onExport,
+  canExport,
+}: {
+  stats: ReviewStats;
+  daysFilter: DurationValue;
+  customRange?: DurationCustomRange | null;
+  onExport: () => void;
+  canExport: boolean;
+}) {
+  const periodHint = getDurationLabel(daysFilter, customRange);
+
   return (
     <div className="space-y-4">
-      {/* Enhanced stat row (8 cards) */}
+      {/* Rating + NPS overview (reference layout) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <RatingOverviewCard stats={stats} periodHint={periodHint} />
+        <NpsScoreCard
+          stats={stats}
+          onExport={canExport ? onExport : undefined}
+        />
+      </div>
+
+      {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard
           label="Total Reviews"
           value={stats.total}
           icon={Star}
           accent="emerald"
-          hint="All time"
+          hint={periodHint}
         />
         <StatCard
           label="Avg Rating"
@@ -1034,7 +1344,7 @@ function AnalyticsDashboard({ stats }: { stats: ReviewStats }) {
           distribution={stats.ratingDistribution}
           total={stats.total}
         />
-        <ReviewTrendCard trend={stats.trend} />
+        <ReviewTrendCard trend={stats.trend} daysFilter={daysFilter} customRange={customRange} />
       </div>
 
       {/* Charts row 2 — SLA + sentiment + response health */}
@@ -1049,8 +1359,34 @@ function AnalyticsDashboard({ stats }: { stats: ReviewStats }) {
         />
       </div>
 
-      {/* Topics row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Review summary + topics — single row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <ListChecks className="size-4 text-primary" />
+              <h3 className="text-sm font-semibold">Review Summary</h3>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Text Reviews</span>
+                <span className="font-semibold">{stats.total - (stats.sentimentCounts.neutral ?? 0)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Rating Only</span>
+                <span className="font-semibold">{stats.sentimentCounts.neutral ?? 0}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Replied</span>
+                <span className="font-semibold text-emerald-600">{stats.replied} ({stats.responseRate}%)</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Not Replied</span>
+                <span className="font-semibold text-rose-600">{stats.pending}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         <TopTopicsCard
           title="Top Complaints"
           icon={ThumbsDown}
@@ -1067,6 +1403,61 @@ function AnalyticsDashboard({ stats }: { stats: ReviewStats }) {
         />
       </div>
     </div>
+  );
+}
+
+function RatingOverviewCard({
+  stats,
+  periodHint,
+}: {
+  stats: ReviewStats;
+  periodHint: string;
+}) {
+  const sorted = [...stats.ratingDistribution].sort((a, b) => b.rating - a.rating);
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Star className="size-4 text-amber-500" />
+            <h3 className="text-sm font-semibold">Rating</h3>
+          </div>
+          <Badge variant="secondary" className="text-[10px] font-normal">
+            Total Reviews {stats.total}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-3 mb-5">
+          <span className="text-3xl font-bold tabular-nums">{stats.avgRating.toFixed(2)}</span>
+          <RatingStars rating={Math.round(stats.avgRating)} size={16} />
+        </div>
+        <div className="space-y-2">
+          {sorted.map((d) => (
+            <div key={d.rating} className="flex items-center gap-3">
+              <div
+                className={cn(
+                  "flex items-center gap-1 w-12 text-xs font-semibold shrink-0",
+                  RATING_LABEL_COLORS[d.rating],
+                )}
+              >
+                {d.rating}
+                <Star className="size-3 fill-current" />
+              </div>
+              <div className="flex-1 h-6 bg-muted rounded-md overflow-hidden relative">
+                <div
+                  className={cn("h-full rounded-md", RATING_BAR_COLORS[d.rating])}
+                  style={{ width: `${Math.max(d.percentage, d.count > 0 ? 4 : 0)}%` }}
+                />
+                <span className="absolute inset-0 flex items-center justify-end pr-2 text-[10px] font-medium tabular-nums">
+                  {d.percentage}%
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-3">{periodHint}</p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1124,7 +1515,15 @@ function RatingDistributionCard({
   );
 }
 
-function ReviewTrendCard({ trend }: { trend: ReviewStats["trend"] }) {
+function ReviewTrendCard({
+  trend,
+  daysFilter,
+  customRange,
+}: {
+  trend: ReviewStats["trend"];
+  daysFilter: DurationValue;
+  customRange?: DurationCustomRange | null;
+}) {
   const data = useMemo(
     () =>
       trend.map((t) => ({
@@ -1140,7 +1539,13 @@ function ReviewTrendCard({ trend }: { trend: ReviewStats["trend"] }) {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <TrendingUp className="size-4 text-primary" />
-            <h3 className="text-sm font-semibold">30-Day Review Trend</h3>
+            <h3 className="text-sm font-semibold">
+              {daysFilter === "custom"
+                ? `${getDurationLabel(daysFilter, customRange)} Trend`
+                : daysFilter === "all"
+                  ? "30-Day Review Trend"
+                  : `${daysFilter}-Day Review Trend`}
+            </h3>
           </div>
           <div className="flex items-center gap-3 text-[11px]">
             <span className="flex items-center gap-1">
@@ -2122,27 +2527,207 @@ function TemplateForm({
 }
 
 // ============================================================================
-// Subcomponents — ReviewCard, SlaBadge, ReplyStatusBadge, EmptyState
+// Subcomponents — ReviewCard, Pagination, SlaBadge, ReplyStatusBadge, EmptyState
 // ============================================================================
 
-function ReviewCard({
+function ReviewCardActions({
   review,
   canReply,
   canAiReply,
   aiLoading,
+  quickTemplateLoading,
+  hasQuickTemplate,
+  onQuickTemplate,
   onAiDraft,
+  misaModel,
   onReply,
   onIgnore,
   ignoring,
+  onDeleteReply,
+  deletingReply,
+  compact,
 }: {
   review: ReviewWithLocation;
   canReply: boolean;
   canAiReply: boolean;
   aiLoading: boolean;
+  quickTemplateLoading: boolean;
+  hasQuickTemplate: boolean;
+  onQuickTemplate: () => void;
   onReply: () => void;
-  onAiDraft: () => void;
+  onAiDraft: (model?: string) => void;
+  misaModel: string;
   onIgnore: () => void;
   ignoring: boolean;
+  onDeleteReply: () => void;
+  deletingReply: boolean;
+  compact?: boolean;
+}) {
+  if (!canReply) return null;
+  const hasReply = !!review.replyText && review.replyStatus === "replied";
+  const btn = compact ? "h-8 px-2.5 text-xs" : "min-h-11";
+
+  return (
+    <div className={cn("flex flex-wrap items-center gap-1.5", !compact && "pt-1 border-t gap-2")}>
+      {hasReply && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onDeleteReply}
+          disabled={deletingReply}
+          className={cn(btn, "text-rose-600 hover:text-rose-700 hover:bg-rose-500/10")}
+        >
+          {deletingReply ? (
+            <Loader2 className="size-3.5 mr-1 animate-spin" />
+          ) : (
+            <Trash2 className="size-3.5 mr-1" />
+          )}
+          {compact ? "Delete" : "Delete reply"}
+        </Button>
+      )}
+      {canAiReply && (
+        <div className="inline-flex items-stretch rounded-md shadow-xs">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onAiDraft(misaModel)}
+            disabled={aiLoading}
+            className={cn(
+              btn,
+              "rounded-r-none border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10",
+            )}
+          >
+            {aiLoading ? (
+              <>
+                <Loader2 className="size-3.5 mr-1 animate-spin" /> MiSA…
+              </>
+            ) : (
+              <>
+                <Sparkles className="size-3.5 mr-1" /> {compact ? "MiSA" : "MiSA AI draft"}
+              </>
+            )}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={aiLoading}
+                className={cn(
+                  compact ? "h-8 px-1.5" : "min-h-11 px-2",
+                  "rounded-l-none border-l-0 border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10",
+                )}
+                aria-label="Choose MiSA AI model"
+              >
+                <ChevronDown className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuLabel className="flex items-center gap-1.5 text-xs">
+                <Cpu className="size-3.5" /> OpenRouter model
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {MISA_MODEL_OPTIONS.map((m) => (
+                <DropdownMenuItem
+                  key={m.id}
+                  onClick={() => onAiDraft(m.id)}
+                  className="text-xs"
+                >
+                  <span className="flex flex-col gap-0.5">
+                    <span className="font-medium">
+                      {m.label}
+                      {m.id === misaModel ? " · selected" : ""}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {m.provider}{m.free ? " · free" : ""}
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+      {!hasReply && review.replyStatus === "pending" && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onQuickTemplate}
+          disabled={quickTemplateLoading || !hasQuickTemplate}
+          title={
+            hasQuickTemplate
+              ? `Send ${review.rating}★ template reply to Google`
+              : `No active template for ${review.rating}★ reviews`
+          }
+          className={cn(
+            btn,
+            "border-teal-500/40 text-teal-700 dark:text-teal-400 hover:bg-teal-500/10 disabled:opacity-50",
+          )}
+        >
+          {quickTemplateLoading ? (
+            <Loader2 className="size-3.5 mr-1 animate-spin" />
+          ) : (
+            <Zap className="size-3.5 mr-1" />
+          )}
+          {compact ? "Template" : "Quick template reply"}
+        </Button>
+      )}
+      <Button size="sm" variant="outline" onClick={onReply} className={btn}>
+        <MessageSquare className="size-3.5 mr-1" />
+        {hasReply ? "Edit" : "Reply"}
+      </Button>
+      {review.replyStatus !== "ignored" && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onIgnore}
+          disabled={ignoring}
+          className={cn(btn, "ml-auto text-muted-foreground hover:text-rose-600")}
+        >
+          {ignoring ? (
+            <Loader2 className="size-3.5 mr-1 animate-spin" />
+          ) : (
+            <EyeOff className="size-3.5 mr-1" />
+          )}
+          Ignore
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function ReviewCard({
+  review,
+  layout = "grid",
+  canReply,
+  canAiReply,
+  aiLoading,
+  quickTemplateLoading,
+  hasQuickTemplate,
+  onQuickTemplate,
+  onAiDraft,
+  misaModel,
+  onReply,
+  onIgnore,
+  ignoring,
+  onDeleteReply,
+  deletingReply,
+}: {
+  review: ReviewWithLocation;
+  layout?: LayoutMode;
+  canReply: boolean;
+  canAiReply: boolean;
+  aiLoading: boolean;
+  quickTemplateLoading: boolean;
+  hasQuickTemplate: boolean;
+  onQuickTemplate: () => void;
+  onReply: () => void;
+  onAiDraft: (model?: string) => void;
+  misaModel: string;
+  onIgnore: () => void;
+  ignoring: boolean;
+  onDeleteReply: () => void;
+  deletingReply: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isNegative = review.rating <= 2;
@@ -2153,15 +2738,96 @@ function ReviewCard({
     ? computeSla(review.createdAt, review.rating)
     : null;
 
+  const actions = (
+    <ReviewCardActions
+      review={review}
+      canReply={canReply}
+      canAiReply={canAiReply}
+      aiLoading={aiLoading}
+      quickTemplateLoading={quickTemplateLoading}
+      hasQuickTemplate={hasQuickTemplate}
+      onQuickTemplate={onQuickTemplate}
+      onAiDraft={onAiDraft}
+      misaModel={misaModel}
+      onReply={onReply}
+      onIgnore={onIgnore}
+      ignoring={ignoring}
+      onDeleteReply={onDeleteReply}
+      deletingReply={deletingReply}
+      compact={layout === "list"}
+    />
+  );
+
+  if (layout === "list") {
+    return (
+      <Card
+        className={cn(
+          "p-0 overflow-hidden transition-shadow hover:shadow-md",
+          isNegative && "border-l-4 border-l-rose-500",
+        )}
+      >
+        <CardContent className="p-3 sm:p-4">
+          <div className="flex flex-col lg:flex-row lg:items-start gap-3">
+            <div className="flex items-start gap-3 min-w-0 lg:w-[220px] shrink-0">
+              <Avatar className="size-9">
+                {review.authorPhoto && (
+                  <AvatarImage src={review.authorPhoto} alt={review.authorName} />
+                )}
+                <AvatarFallback className={colorFor(review.authorName)}>
+                  {initials(review.authorName)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate">{review.authorName}</div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {review.locationName} · {review.locationCity}
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <RatingStars rating={review.rating} size={14} />
+                  <span className="text-[11px] text-muted-foreground">
+                    {formatDistanceToNow(new Date(review.createdAt), { addSuffix: true })}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="min-w-0 flex-1 space-y-2">
+              <p className="text-sm leading-relaxed text-foreground/90 line-clamp-2 whitespace-pre-line">
+                {review.text}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <SentimentBadge sentiment={review.sentiment} />
+                <ReplyStatusBadge status={review.replyStatus} source={review.replySource} />
+                {sla && (
+                  <SlaBadge
+                    status={sla.status}
+                    target={sla.targetLabel}
+                    remainingMs={sla.remainingMs}
+                  />
+                )}
+                {hasReply && review.replyText && (
+                  <span className="text-[11px] text-muted-foreground truncate max-w-[280px]">
+                    Reply: {review.replyText}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="lg:max-w-[420px] shrink-0">{actions}</div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card
       className={cn(
-        "p-0 overflow-hidden transition-shadow hover:shadow-md",
+        "p-0 overflow-hidden transition-shadow hover:shadow-md h-full",
         isNegative && "border-l-4 border-l-rose-500",
       )}
     >
-      <CardContent className="p-4 space-y-3">
-        {/* header */}
+      <CardContent className="p-4 space-y-3 flex flex-col h-full">
         <div className="flex items-start gap-3">
           <Avatar className="size-10">
             {review.authorPhoto && (
@@ -2191,8 +2857,7 @@ function ReviewCard({
           </div>
         </div>
 
-        {/* review text */}
-        <div>
+        <div className="flex-1">
           <p
             className={cn(
               "text-sm leading-relaxed text-foreground/90 whitespace-pre-line",
@@ -2212,7 +2877,6 @@ function ReviewCard({
           )}
         </div>
 
-        {/* tags */}
         <div className="flex flex-wrap items-center gap-2">
           <SentimentBadge sentiment={review.sentiment} />
           <ReplyStatusBadge
@@ -2228,7 +2892,6 @@ function ReviewCard({
           )}
         </div>
 
-        {/* existing reply */}
         {hasReply && review.replyText && (
           <div className="rounded-lg bg-muted/40 border border-muted p-3">
             <div className="flex items-center gap-1.5 mb-1 flex-wrap">
@@ -2236,7 +2899,9 @@ function ReviewCard({
               <span className="text-[11px] font-medium text-muted-foreground">
                 {review.replySource === "ai"
                   ? "Replied by MiSA AI"
-                  : "Replied manually"}
+                  : review.replySource === "template"
+                    ? "Replied with template"
+                    : "Replied manually"}
               </span>
               {review.replySource === "ai" && (
                 <Badge
@@ -2260,56 +2925,7 @@ function ReviewCard({
           </div>
         )}
 
-        {/* actions */}
-        {canReply && (
-          <div className="flex flex-wrap items-center gap-2 pt-1 border-t">
-            {canAiReply && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onAiDraft}
-                disabled={aiLoading}
-                className="min-h-11 border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
-              >
-                {aiLoading ? (
-                  <>
-                    <Loader2 className="size-3.5 mr-1.5 animate-spin" /> MiSA
-                    AI…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="size-3.5 mr-1.5" /> MiSA AI draft
-                  </>
-                )}
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onReply}
-              className="min-h-11"
-            >
-              <MessageSquare className="size-3.5 mr-1.5" />{" "}
-              {hasReply ? "Edit reply" : "Reply"}
-            </Button>
-            {review.replyStatus !== "ignored" && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={onIgnore}
-                disabled={ignoring}
-                className="min-h-11 ml-auto text-muted-foreground hover:text-rose-600"
-              >
-                {ignoring ? (
-                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
-                ) : (
-                  <EyeOff className="size-3.5 mr-1.5" />
-                )}
-                Ignore
-              </Button>
-            )}
-          </div>
-        )}
+        {actions}
       </CardContent>
     </Card>
   );
@@ -2366,6 +2982,8 @@ function ReplyStatusBadge({
         Replied
         {source === "ai"
           ? " · AI"
+          : source === "template"
+            ? " · Template"
           : source === "manual"
             ? " · Manual"
             : ""}
@@ -2411,3 +3029,892 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
     </Card>
   );
 }
+
+function NpsScoreCard({
+  stats,
+  onExport,
+}: {
+  stats: ReviewStats;
+  onExport?: () => void;
+}) {
+  const nps = stats.nps;
+  const segments = [
+    { name: "Promoters", value: nps.promoters, color: "#22c55e" },
+    { name: "Passives", value: nps.passives, color: "#94a3b8" },
+    { name: "Detractors", value: nps.detractors, color: "#ef4444" },
+  ].filter((d) => d.value > 0);
+  const donutData =
+    segments.length > 0 ? segments : [{ name: "Empty", value: 1, color: "#e2e8f0" }];
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="size-4 text-primary" />
+            <h3 className="text-sm font-semibold">NPS Score</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="text-[10px] font-normal">
+              Total Reviews {stats.total}
+            </Badge>
+            {onExport && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onExport}>
+                <Download className="size-3 mr-1" /> Export CSV
+              </Button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-6">
+          <div className="relative size-32 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={donutData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={38}
+                  outerRadius={52}
+                  paddingAngle={2}
+                  dataKey="value"
+                  strokeWidth={0}
+                >
+                  {donutData.map((entry) => (
+                    <Cell key={entry.name} fill={entry.color} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-3xl font-bold tabular-nums">
+              {nps.score.toFixed(2)}{" "}
+              <span className="text-base font-semibold text-muted-foreground">NPS</span>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 mt-5 pt-4 border-t">
+          <NpsBreakdownItem
+            label="Promoters"
+            pct={nps.promoterPct}
+            color="bg-emerald-500"
+            textColor="text-emerald-600"
+          />
+          <NpsBreakdownItem
+            label="Passives"
+            pct={nps.passivePct}
+            color="bg-slate-400"
+            textColor="text-slate-600"
+          />
+          <NpsBreakdownItem
+            label="Detractors"
+            pct={nps.detractorPct}
+            color="bg-rose-500"
+            textColor="text-rose-600"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function NpsBreakdownItem({
+  label,
+  pct,
+  color,
+  textColor,
+}: {
+  label: string;
+  pct: number;
+  color: string;
+  textColor: string;
+}) {
+  return (
+    <div className="text-center">
+      <div className="flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground mb-0.5">
+        <span className={cn("size-2 rounded-full", color)} />
+        {label}
+      </div>
+      <div className={cn("text-sm font-bold tabular-nums", textColor)}>{pct}%</div>
+    </div>
+  );
+}
+
+function DeletedEditedReviews({
+  daysFilter,
+  customRange,
+}: {
+  daysFilter: DurationValue;
+  customRange?: DurationCustomRange | null;
+}) {
+  const selectedLocationIds = useAppStore((s) => s.selectedLocationIds);
+  const [subTab, setSubTab] = useState<"deleted" | "edited">("deleted");
+
+  const changesUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    appendLocationIdsToParams(params, selectedLocationIds);
+    appendDurationToParams(params, daysFilter, customRange);
+    return `/api/reviews/changes?${params.toString()}`;
+  }, [selectedLocationIds, daysFilter, customRange]);
+
+  const { data, isLoading } = useQuery<{
+    items: ReviewChangeWithLocation[];
+    deletedCount: number;
+    editedCount: number;
+  }>({
+    queryKey: ["review-changes", changesUrl],
+    queryFn: () =>
+      api<{ items: ReviewChangeWithLocation[]; deletedCount: number; editedCount: number }>(
+        changesUrl,
+      ),
+  });
+
+  const deletedItems = useMemo(
+    () => data?.items.filter((i) => i.changeType === "deleted") ?? [],
+    [data],
+  );
+  const editedItems = useMemo(
+    () => data?.items.filter((i) => i.changeType === "edited") ?? [],
+    [data],
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold">Deleted & Edited Reviews</h3>
+        <Badge variant="outline" className="text-xs">Beta</Badge>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Card
+          className={cn(
+            "cursor-pointer transition",
+            subTab === "deleted" ? "ring-2 ring-rose-500/40" : "hover:ring-2 hover:ring-rose-500/30",
+          )}
+          onClick={() => setSubTab("deleted")}
+        >
+          <CardContent className="p-5 text-center">
+            <Trash2 className="size-6 text-rose-500 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-rose-600 tabular-nums">
+              {isLoading ? "—" : data?.deletedCount ?? 0}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">Deleted Reviews</div>
+          </CardContent>
+        </Card>
+        <Card
+          className={cn(
+            "cursor-pointer transition",
+            subTab === "edited" ? "ring-2 ring-blue-500/40" : "hover:ring-2 hover:ring-blue-500/30",
+          )}
+          onClick={() => setSubTab("edited")}
+        >
+          <CardContent className="p-5 text-center">
+            <Pencil className="size-6 text-blue-500 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-blue-600 tabular-nums">
+              {isLoading ? "—" : data?.editedCount ?? 0}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">Edited Reviews</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Tabs value={subTab} onValueChange={(v) => setSubTab(v as "deleted" | "edited")}>
+        <TabsList>
+          <TabsTrigger value="deleted" className="text-xs">Deleted Reviews</TabsTrigger>
+          <TabsTrigger value="edited" className="text-xs">Edited Reviews</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="deleted">
+          <ReviewChangeList
+            items={deletedItems}
+            isLoading={isLoading}
+            emptyIcon={Trash2}
+            emptyTitle="No Deleted Reviews Detected"
+            emptyText="When a review is deleted from Google, it will be tracked here after the next sync."
+            mode="deleted"
+          />
+        </TabsContent>
+
+        <TabsContent value="edited">
+          <ReviewChangeList
+            items={editedItems}
+            isLoading={isLoading}
+            emptyIcon={Pencil}
+            emptyTitle="No Edited Reviews Detected"
+            emptyText="When a reviewer edits their review on Google, changes appear here after the next sync."
+            mode="edited"
+          />
+        </TabsContent>
+      </Tabs>
+
+      <Card className="border-blue-500/20 bg-blue-50/50 dark:bg-blue-900/10">
+        <CardContent className="p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="size-5 text-blue-500 shrink-0 mt-0.5" />
+            <div>
+              <div className="text-sm font-medium text-blue-700 dark:text-blue-400">How This Works</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Deleted and edited reviews are detected during each sync by comparing the current Google reviews with previously synced data.
+                Run Sync regularly to detect changes accurately.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function ReviewChangeList({
+  items,
+  isLoading,
+  emptyIcon: EmptyIcon,
+  emptyTitle,
+  emptyText,
+  mode,
+}: {
+  items: ReviewChangeWithLocation[];
+  isLoading: boolean;
+  emptyIcon: LucideIcon;
+  emptyTitle: string;
+  emptyText: string;
+  mode: "deleted" | "edited";
+}) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="p-6 space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 rounded-lg" />
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-8 text-center">
+          <EmptyIcon className="size-10 text-muted-foreground mx-auto mb-3" />
+          <h4 className="text-sm font-semibold">{emptyTitle}</h4>
+          <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">{emptyText}</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-0 divide-y">
+        {items.map((item) => (
+          <div key={item.id} className="p-4 space-y-2">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold">{item.authorName}</p>
+                <p className="text-xs text-muted-foreground">
+                  {item.locationName} · {item.locationCity}
+                </p>
+              </div>
+              <Badge variant="outline" className="text-[10px] shrink-0">
+                {formatDistanceToNow(parseISO(item.detectedAt), { addSuffix: true })}
+              </Badge>
+            </div>
+            {mode === "deleted" ? (
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1">
+                <div className="flex items-center gap-2">
+                  <RatingStars rating={item.previousRating ?? 0} size={12} />
+                  <span className="text-xs text-muted-foreground">before deletion</span>
+                </div>
+                {item.previousText ? (
+                  <p className="text-muted-foreground italic line-clamp-3">&ldquo;{item.previousText}&rdquo;</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Rating-only review</p>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-lg border bg-rose-500/5 p-3 text-sm">
+                  <p className="text-[10px] font-semibold uppercase text-rose-600 mb-1">Before</p>
+                  <RatingStars rating={item.previousRating ?? 0} size={12} />
+                  <p className="text-muted-foreground italic mt-1 line-clamp-3 text-xs">
+                    {item.previousText || "Rating only"}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-emerald-500/5 p-3 text-sm">
+                  <p className="text-[10px] font-semibold uppercase text-emerald-600 mb-1">After</p>
+                  <RatingStars rating={item.newRating ?? 0} size={12} />
+                  <p className="text-muted-foreground italic mt-1 line-clamp-3 text-xs">
+                    {item.newText || "Rating only"}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AutoRepliesConfig() {
+  const user = useUser();
+  const qc = useQueryClient();
+  const { data: locations } = useLocations();
+  const canReply = can(user.role, "reviews.reply");
+  const templateRef = useRef<HTMLTextAreaElement>(null);
+
+  const [mode, setMode] = useState<"manual" | "ai" | "history">("manual");
+  const [config, setConfig] = useState<AutoReplyConfig>(() => mergeAutoReplyConfig(null));
+  const [sampleOpen, setSampleOpen] = useState(false);
+  const [sampleText, setSampleText] = useState("");
+
+  const { data: savedConfig, isLoading: configLoading } = useQuery<AutoReplyConfig>({
+    queryKey: ["review-auto-reply"],
+    queryFn: () => api<AutoReplyConfig>("/api/reviews/auto-reply"),
+  });
+
+  useEffect(() => {
+    if (savedConfig) setConfig(savedConfig);
+  }, [savedConfig]);
+
+  const { data: templates } = useQuery<ReplyTemplate[]>({
+    queryKey: ["reply-templates"],
+    queryFn: () => api<ReplyTemplate[]>("/api/reviews/templates"),
+  });
+
+  const saveMut = useMutation({
+    mutationFn: (payload: AutoReplyConfig) =>
+      api<AutoReplyConfig>("/api/reviews/auto-reply", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: (data) => {
+      setConfig(data);
+      qc.invalidateQueries({ queryKey: ["review-auto-reply"] });
+      qc.invalidateQueries({ queryKey: ["reply-templates"] });
+      qc.invalidateQueries({ queryKey: ["review-templates"] });
+      toast.success("Auto reply settings saved");
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : "Failed to save auto reply");
+    },
+  });
+
+  function patchConfig(partial: Partial<AutoReplyConfig>) {
+    setConfig((prev) => ({ ...prev, ...partial }));
+  }
+
+  function toggleRating(r: number) {
+    setConfig((prev) => ({
+      ...prev,
+      selectedRatings: prev.selectedRatings.includes(r)
+        ? prev.selectedRatings.filter((x) => x !== r)
+        : [...prev.selectedRatings, r],
+    }));
+  }
+
+  function toggleReviewType(type: AutoReplyReviewType) {
+    setConfig((prev) => ({
+      ...prev,
+      reviewTypes: prev.reviewTypes.includes(type)
+        ? prev.reviewTypes.filter((t) => t !== type)
+        : [...prev.reviewTypes, type],
+    }));
+  }
+
+  function insertVariable(tag: string) {
+    const token = `{{${tag}}}`;
+    const el = templateRef.current;
+    if (!el) {
+      patchConfig({ template: config.template + token });
+      return;
+    }
+    const start = el.selectionStart ?? config.template.length;
+    const end = el.selectionEnd ?? start;
+    const next = config.template.slice(0, start) + token + config.template.slice(end);
+    patchConfig({ template: next });
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + token.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
+  function buildSampleReply() {
+    const loc = locations?.[0];
+    let text = substituteReviewReplyTemplate(config.template, {
+      businessName: loc?.name ?? "My FNG",
+      category: "Auto Service",
+      address: loc?.city ?? "",
+      area: loc?.city ?? "Mumbai",
+      customerName: "Rajesh Kumar",
+      phone: loc?.phone ?? "+91 98765 43210",
+      managerName: user.name,
+      city: loc?.city ?? "Mumbai",
+      rating: 5,
+    });
+    if (config.advanced.addRegards && !/regards/i.test(text)) {
+      text += `\n\nRegards,\n${config.advanced.supportName || loc?.name || "My FNG Team"}`;
+    }
+    if (config.advanced.addSupportFooter) {
+      const parts = [
+        config.advanced.supportEmail,
+        config.advanced.supportPhone,
+        config.advanced.supportLink,
+      ].filter(Boolean);
+      if (parts.length) text += `\n\nSupport: ${parts.join(" · ")}`;
+    }
+    if (config.addEmoji && !/[\u{1F300}-\u{1FAFF}]/u.test(text)) {
+      text += " 🙏";
+    }
+    const limit = autoReplyCharLimit(config.replyLength);
+    if (text.length > limit) text = text.slice(0, limit - 3) + "...";
+    setSampleText(text);
+    setSampleOpen(true);
+  }
+
+  function handleSave() {
+    if (!canReply) {
+      toast.error("You don't have permission to save auto replies");
+      return;
+    }
+    if (config.enabled && mode === "manual" && !config.template.trim()) {
+      toast.error("Please write a reply template before saving");
+      return;
+    }
+    if (config.selectedRatings.length === 0) {
+      toast.error("Select at least one star rating");
+      return;
+    }
+    saveMut.mutate({ ...config, mode: mode === "ai" ? "ai" : "manual" });
+  }
+
+  function handleStopAll() {
+    saveMut.mutate({ ...config, enabled: false });
+  }
+
+  const wordCount = config.template.trim() ? config.template.trim().split(/\s+/).length : 0;
+  const charCount = config.template.length;
+  const charLimit = autoReplyCharLimit(config.replyLength);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-semibold">Set Auto Reply</h3>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={config.enabled}
+              onCheckedChange={(enabled) => patchConfig({ enabled })}
+              disabled={!canReply}
+            />
+            <span className="text-xs text-muted-foreground">{config.enabled ? "ON" : "OFF"}</span>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          onClick={buildSampleReply}
+          disabled={!config.template.trim()}
+        >
+          <Sparkles className="size-3.5" /> AI Generate Sample Reply
+        </Button>
+      </div>
+
+      {configLoading ? (
+        <Skeleton className="h-64 rounded-xl" />
+      ) : (
+      <Tabs value={mode} onValueChange={(v) => setMode(v as typeof mode)}>
+        <TabsList>
+          <TabsTrigger value="manual" className="text-xs">Manual</TabsTrigger>
+          <TabsTrigger value="ai" className="text-xs">With AI</TabsTrigger>
+          <TabsTrigger value="history" className="text-xs">Template History</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="manual" className="space-y-4">
+          <Card>
+            <CardContent className="p-5 space-y-4">
+              <div>
+                <label className="text-xs font-medium mb-2 block">Source</label>
+                <Badge variant="outline" className="text-xs">Google</Badge>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium mb-2 block">Rating Filter</label>
+                <div className="flex flex-wrap gap-2">
+                  {[5, 4, 3, 2, 1].map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => toggleRating(r)}
+                      className={cn(
+                        "flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition",
+                        config.selectedRatings.includes(r)
+                          ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                          : "bg-muted border-transparent text-muted-foreground",
+                      )}
+                    >
+                      {r} <Star className="size-3 fill-current" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium mb-2 block">Review Type</label>
+                <div className="flex gap-2">
+                  {(["text", "no_text"] as const).map((type) => (
+                    <Badge
+                      key={type}
+                      variant="outline"
+                      className={cn(
+                        "cursor-pointer",
+                        config.reviewTypes.includes(type) && "bg-primary/10 border-primary text-primary",
+                      )}
+                      onClick={() => toggleReviewType(type)}
+                    >
+                      {type === "text" ? "Text" : "No Text"}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium mb-2 block">Reply Template</label>
+                <div className="rounded-lg border bg-muted/30 p-3 min-h-[120px]">
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {["BusinessName", "Category", "Address", "Area", "CustomerName", "Phone"].map((tag) => (
+                      <Button
+                        key={tag}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-[10px] px-2"
+                        onClick={() => insertVariable(tag)}
+                      >
+                        {`{{${tag}}}`}
+                      </Button>
+                    ))}
+                  </div>
+                  <Textarea
+                    ref={templateRef}
+                    value={config.template}
+                    onChange={(e) => patchConfig({ template: e.target.value })}
+                    placeholder="Write your auto reply template here..."
+                    className="min-h-[120px] bg-transparent border-0 p-0 resize-y focus-visible:ring-0"
+                    disabled={!canReply}
+                  />
+                  <div className="flex items-center justify-between mt-2 text-[10px] text-muted-foreground">
+                    <span>
+                      Word Count: {wordCount} | Character Count: {charCount}
+                      {charCount > charLimit && (
+                        <span className="text-rose-500 ml-1">(exceeds {charLimit} limit)</span>
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium mb-2 block">Select Length</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => patchConfig({ replyLength: "short" })}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-xs font-medium border transition",
+                      config.replyLength === "short"
+                        ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                        : "bg-muted",
+                    )}
+                  >
+                    Short - 200 Chars
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => patchConfig({ replyLength: "long" })}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-xs font-medium border transition",
+                      config.replyLength === "long"
+                        ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                        : "bg-muted",
+                    )}
+                  >
+                    Long - 400 Chars
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium">Add Emoji</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => patchConfig({ addEmoji: true })}
+                    className={cn(
+                      "px-3 py-1 rounded-full text-xs border",
+                      config.addEmoji ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-muted",
+                    )}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => patchConfig({ addEmoji: false })}
+                    className={cn(
+                      "px-3 py-1 rounded-full text-xs border",
+                      !config.addEmoji ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-muted",
+                    )}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-blue-200 dark:border-blue-900/50">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium">Advance Settings</span>
+                  <Switch
+                    checked={config.advanced.addSupportFooter || config.advanced.addRegards || !!config.advanced.supportName}
+                    onCheckedChange={(open) => {
+                      if (!open) {
+                        patchConfig({
+                          advanced: {
+                            ...config.advanced,
+                            addSupportFooter: false,
+                            addRegards: false,
+                          },
+                        });
+                      }
+                    }}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  onClick={buildSampleReply}
+                  disabled={!config.template.trim()}
+                >
+                  Generate Sample Reply
+                </Button>
+              </div>
+              <div className="mt-4 space-y-3 bg-blue-50/50 dark:bg-blue-900/10 rounded-lg p-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-medium mb-1 block">Support Brand Name</label>
+                    <Input
+                      value={config.advanced.supportName}
+                      onChange={(e) =>
+                        patchConfig({ advanced: { ...config.advanced, supportName: e.target.value } })
+                      }
+                      placeholder="e.g. MyFNG"
+                      className="h-8 text-xs"
+                      disabled={!canReply}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-medium mb-1 block">Support Email Address</label>
+                    <Input
+                      value={config.advanced.supportEmail}
+                      onChange={(e) =>
+                        patchConfig({ advanced: { ...config.advanced, supportEmail: e.target.value } })
+                      }
+                      placeholder="support@example.com"
+                      className="h-8 text-xs"
+                      disabled={!canReply}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-medium mb-1 block">Support Phone No.</label>
+                    <Input
+                      value={config.advanced.supportPhone}
+                      onChange={(e) =>
+                        patchConfig({ advanced: { ...config.advanced, supportPhone: e.target.value } })
+                      }
+                      placeholder="+91..."
+                      className="h-8 text-xs"
+                      disabled={!canReply}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-medium mb-1 block">Support Link</label>
+                    <Input
+                      value={config.advanced.supportLink}
+                      onChange={(e) =>
+                        patchConfig({ advanced: { ...config.advanced, supportLink: e.target.value } })
+                      }
+                      placeholder="https://..."
+                      className="h-8 text-xs"
+                      disabled={!canReply}
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-4 text-xs">
+                  <label className="flex items-center gap-1.5">
+                    <Switch
+                      className="scale-75"
+                      checked={config.advanced.addSupportFooter}
+                      onCheckedChange={(addSupportFooter) =>
+                        patchConfig({ advanced: { ...config.advanced, addSupportFooter } })
+                      }
+                      disabled={!canReply}
+                    />
+                    Add Support details in Reply Footer
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <Switch
+                      className="scale-75"
+                      checked={config.advanced.addRegards}
+                      onCheckedChange={(addRegards) =>
+                        patchConfig({ advanced: { ...config.advanced, addRegards } })
+                      }
+                      disabled={!canReply}
+                    />
+                    Add Regards in Reply
+                  </label>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button
+              className="flex-1 bg-slate-800 hover:bg-slate-900 text-white"
+              onClick={handleSave}
+              disabled={!canReply || saveMut.isPending}
+            >
+              {saveMut.isPending ? (
+                <>
+                  <Loader2 className="size-3.5 mr-1.5 animate-spin" /> Saving…
+                </>
+              ) : (
+                "Save & Update Auto Replies"
+              )}
+            </Button>
+            <Button
+              variant="destructive"
+              className="gap-1.5"
+              onClick={handleStopAll}
+              disabled={!canReply || saveMut.isPending}
+            >
+              <Ban className="size-3.5" /> Stop All Review Auto Reply
+            </Button>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="ai" className="space-y-4">
+          <Card>
+            <CardContent className="p-8 text-center">
+              <Sparkles className="size-10 text-amber-500 mx-auto mb-3" />
+              <h4 className="text-sm font-semibold">AI-Powered Auto Replies</h4>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+                MiSA AI analyzes each review&apos;s sentiment, keywords, and context to generate personalized replies automatically.
+              </p>
+              <Button
+                className="mt-4"
+                size="sm"
+                onClick={() => {
+                  patchConfig({ enabled: true, mode: "ai" });
+                  setMode("ai");
+                  saveMut.mutate({ ...config, enabled: true, mode: "ai" });
+                }}
+                disabled={!canReply || saveMut.isPending}
+              >
+                <Sparkles className="size-3.5 mr-1.5" /> Enable AI Auto Reply
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="history" className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold">Pre-Written Templates</h4>
+          </div>
+          {templates && templates.length > 0 ? (
+            <div className="grid gap-3">
+              {templates.map((t) => (
+                <Card key={t.id}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold">{t.title}</span>
+                        <Badge variant="outline" className="text-[10px]">{t.rating} star</Badge>
+                        {!t.isActive && (
+                          <Badge variant="secondary" className="text-[10px]">Inactive</Badge>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground line-clamp-2">{t.template}</p>
+                    <div className="text-[10px] text-muted-foreground mt-2">
+                      Template Type: {t.language === "manual" ? "Manual Reply" : "AI Reply"} | Created:{" "}
+                      {safeFormatDate(t.createdAt, "MMM d, yyyy")}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <FileText className="size-10 text-muted-foreground mx-auto mb-3" />
+                <h4 className="text-sm font-semibold">No Templates Yet</h4>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Save auto replies from the Manual tab to create templates here.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+      )}
+
+      <Dialog open={sampleOpen} onOpenChange={setSampleOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sample Auto Reply</DialogTitle>
+            <DialogDescription>Preview with sample customer and location data</DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border bg-muted/30 p-3 text-sm whitespace-pre-wrap">{sampleText}</div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Close</Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Card className="bg-purple-50/50 dark:bg-purple-900/10 border-purple-200 dark:border-purple-900/50">
+        <CardContent className="p-4">
+          <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+            <Sparkles className="size-4 text-purple-500" /> Tips to Improve Ranking
+          </h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {[
+              { title: "Sentimental Auto-Reply", desc: "AI-generated auto replies based on sentiment and keywords to provide relevant responses." },
+              { title: "Addition of Keywords", desc: "Add relevant keywords in auto-replies to improve your profile ranking on Google Maps." },
+              { title: "Support Details in Auto Reply", desc: "Include escalation email and support number for creating support tickets." },
+              { title: "Impact on Profile Strength", desc: "Review replies help with escalations. Rating has 30% impact on ranking." },
+            ].map(tip => (
+              <div key={tip.title} className="rounded-lg border bg-card p-3">
+                <div className="flex items-start gap-2">
+                  <Sparkles className="size-4 text-purple-500 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-xs font-semibold">{tip.title}</div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{tip.desc}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+

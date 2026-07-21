@@ -41,6 +41,8 @@
     "examples",
     "mini-services",
     "skills",
-    "upload"
+    "upload",
+    "scripts",
+    "download"
   ]
 }

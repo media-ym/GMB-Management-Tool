@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   title: "MyFNG Local AI Manager — Internal Platform",
   description:
     "Centralized Google Business Profile management for MyFNG operations & marketing team. Powered by MiSA AI.",
-  icons: { icon: "/logo.svg" },
+  icons: { icon: "/favicon.png", apple: "/myfng-logo-transparent.png" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

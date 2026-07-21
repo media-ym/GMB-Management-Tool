@@ -4,8 +4,36 @@ import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import { aiChat, aiSeoSuggestions, aiMonthlySummary } from "@/lib/ai";
+import {
+  AUTO_MODEL_ID,
+  DEFAULT_OPENROUTER_MODEL,
+  OPENROUTER_MODELS,
+  isValidOpenRouterModel,
+} from "@/lib/openrouter-models";
 
 export const dynamic = "force-dynamic";
+
+// GET /api/ai — list available OpenRouter models for the selector
+export async function GET() {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+  if (!can(user.role, "ai.use")) return forbidden();
+
+  return ok({
+    models: [
+      {
+        id: AUTO_MODEL_ID,
+        label: "Auto (best available)",
+        provider: "OpenRouter",
+        free: true,
+        description: "Tries free models in order until one responds",
+      },
+      ...OPENROUTER_MODELS,
+    ],
+    defaultModel: DEFAULT_OPENROUTER_MODEL,
+    configured: Boolean(process.env.OPENROUTER_API_KEY),
+  });
+}
 
 // POST /api/ai — unified AI endpoint (chat / seo / summary)
 export async function POST(req: NextRequest) {
@@ -15,14 +43,25 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}));
   const action: string = body.action || "chat";
+  const requestedModel =
+    typeof body.model === "string" && isValidOpenRouterModel(body.model)
+      ? body.model
+      : DEFAULT_OPENROUTER_MODEL;
 
   try {
     if (action === "chat") {
       const messages: { role: "user" | "assistant"; content: string }[] = body.messages || [];
       if (!messages.length) return fail("messages required");
-      const { reply } = await aiChat({ user, messages });
-      await logAudit({ userId: user.id, userName: user.name, action: "ai.generate", entity: "chat", newValue: { msgCount: messages.length }, ip: req.headers.get("x-forwarded-for") ?? undefined });
-      return ok({ reply }, "MiSA AI response");
+      const { reply, model } = await aiChat({ user, messages, model: requestedModel });
+      await logAudit({
+        userId: user.id,
+        userName: user.name,
+        action: "ai.generate",
+        entity: "chat",
+        newValue: { msgCount: messages.length, model },
+        ip: req.headers.get("x-forwarded-for") ?? undefined,
+      });
+      return ok({ reply, model }, "MiSA AI response");
     }
 
     if (action === "seo") {
@@ -45,9 +84,22 @@ export async function POST(req: NextRequest) {
       const avgRank = topKeywords.length ? topKeywords.reduce((a, k) => a + k.rank, 0) / topKeywords.length : 0;
 
       const { recommendations } = await aiSeoSuggestions({
-        user, locationName: loc.name, avgRank, topKeywords, healthScore: loc.healthScore, visibilityScore: loc.visibilityScore,
+        user,
+        locationName: loc.name,
+        avgRank,
+        topKeywords,
+        healthScore: loc.healthScore,
+        visibilityScore: loc.visibilityScore,
+        model: requestedModel,
       });
-      await logAudit({ userId: user.id, userName: user.name, action: "ai.generate", entity: "seo", entityId: locationId, ip: req.headers.get("x-forwarded-for") ?? undefined });
+      await logAudit({
+        userId: user.id,
+        userName: user.name,
+        action: "ai.generate",
+        entity: "seo",
+        entityId: locationId,
+        ip: req.headers.get("x-forwarded-for") ?? undefined,
+      });
       return ok({ recommendations }, "MiSA AI SEO recommendations");
     }
 
@@ -60,15 +112,41 @@ export async function POST(req: NextRequest) {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
       const [current, previous, reviewsNow, reviewsPrev] = await Promise.all([
-        db.analyticDaily.aggregate({ where: { locationId, date: { gte: thirtyDaysAgo } }, _sum: { searchViews: true, mapsViews: true, websiteClicks: true, phoneCalls: true, directionRequests: true } }),
-        db.analyticDaily.aggregate({ where: { locationId, date: { gte: sixtyDaysAgo, lt: thirtyDaysAgo } }, _sum: { searchViews: true, mapsViews: true, websiteClicks: true, phoneCalls: true, directionRequests: true } }),
+        db.analyticDaily.aggregate({
+          where: { locationId, date: { gte: thirtyDaysAgo } },
+          _sum: {
+            searchViews: true,
+            mapsViews: true,
+            websiteClicks: true,
+            phoneCalls: true,
+            directionRequests: true,
+          },
+        }),
+        db.analyticDaily.aggregate({
+          where: { locationId, date: { gte: sixtyDaysAgo, lt: thirtyDaysAgo } },
+          _sum: {
+            searchViews: true,
+            mapsViews: true,
+            websiteClicks: true,
+            phoneCalls: true,
+            directionRequests: true,
+          },
+        }),
         db.review.count({ where: { locationId, createdAt: { gte: thirtyDaysAgo } } }),
-        db.review.aggregate({ where: { locationId, createdAt: { gte: thirtyDaysAgo } }, _avg: { rating: true } }),
+        db.review.aggregate({
+          where: { locationId, createdAt: { gte: thirtyDaysAgo } },
+          _avg: { rating: true },
+        }),
       ]);
-      const prevAvgAgg = await db.review.aggregate({ where: { locationId, createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo } }, _avg: { rating: true } });
+      const prevAvgAgg = await db.review.aggregate({
+        where: { locationId, createdAt: { gte: sixtyDaysAgo, lt: thirtyDaysAgo } },
+        _avg: { rating: true },
+      });
 
       const { summary } = await aiMonthlySummary({
-        user, locationName: loc.name,
+        user,
+        locationName: loc.name,
+        model: requestedModel,
         metrics: {
           searchViews: current._sum.searchViews ?? 0,
           mapsViews: current._sum.mapsViews ?? 0,
@@ -80,8 +158,23 @@ export async function POST(req: NextRequest) {
           prevAvgRating: Math.round((prevAvgAgg._avg.rating ?? loc.avgRating) * 100) / 100,
         },
       });
-      await logAudit({ userId: user.id, userName: user.name, action: "ai.generate", entity: "summary", entityId: locationId, ip: req.headers.get("x-forwarded-for") ?? undefined });
-      return ok({ summary, deltas: { searchViews: (current._sum.searchViews ?? 0) - (previous._sum.searchViews ?? 0) } }, "MiSA AI monthly summary");
+      await logAudit({
+        userId: user.id,
+        userName: user.name,
+        action: "ai.generate",
+        entity: "summary",
+        entityId: locationId,
+        ip: req.headers.get("x-forwarded-for") ?? undefined,
+      });
+      return ok(
+        {
+          summary,
+          deltas: {
+            searchViews: (current._sum.searchViews ?? 0) - (previous._sum.searchViews ?? 0),
+          },
+        },
+        "MiSA AI monthly summary",
+      );
     }
 
     return fail("Unknown action");

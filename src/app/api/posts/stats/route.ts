@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds } from "@/lib/session";
 import { ok, unauthorized, forbidden } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { buildLocationIdFilter, parseLocationIdsParam } from "@/lib/location-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -14,10 +15,10 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const locationId = url.searchParams.get("locationId") || undefined;
-  const scoped = scopeLocationIds(user, locationId);
-  const where: any = {};
-  if (scoped) where.locationId = { in: scoped };
-  if (locationId && (!scoped || scoped.includes(locationId))) where.locationId = locationId;
+  const filterLocationIds = parseLocationIdsParam(url.searchParams.get("locationIds"));
+  const where: Record<string, unknown> = {
+    ...buildLocationIdFilter(user, { locationId, locationIds: filterLocationIds }),
+  };
 
   const [total, drafts, scheduled, published, failed, todayPublished, aiDrafts] = await Promise.all([
     db.post.count({ where }),
@@ -74,13 +75,13 @@ export async function GET(req: NextRequest) {
     aiDrafts,
     successRate,
     upcoming: upcoming.map(p => ({
-      id: p.id, title: p.title, type: p.type,
+      id: p.id, title: p.title, content: p.content, type: p.type,
       locationName: p.location.name, locationCity: p.location.city,
       scheduledAt: p.scheduledAt?.toISOString() ?? null,
     })),
     typeDistribution: typeCounts.map(t => ({ type: t.type, count: t._count.type })),
     topPerforming: topPerforming.map(p => ({
-      id: p.id, title: p.title, type: p.type,
+      id: p.id, title: p.title, content: p.content, type: p.type,
       locationName: p.location.name, locationCity: p.location.city,
       publishedAt: p.publishedAt?.toISOString() ?? null,
     })),

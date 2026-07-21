@@ -5,27 +5,22 @@ import { persist } from "zustand/middleware";
 import type { Role, ViewKey, SessionUser } from "@/lib/types";
 
 interface AppState {
-  // session (mirrors NextAuth for client use)
   user: SessionUser | null;
   setUser: (u: SessionUser | null) => void;
 
-  // active view (single-route SPA navigation)
   view: ViewKey;
   setView: (v: ViewKey) => void;
 
-  // active location filter (used by reviews/posts/analytics/seo)
-  activeLocationId: string | "all";
-  setActiveLocationId: (id: string | "all") => void;
+  /** Empty = all locations; non-empty = filter to those ids */
+  selectedLocationIds: string[];
+  setSelectedLocationIds: (ids: string[]) => void;
 
-  // mobile sidebar open
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
 
-  // command palette
   commandOpen: boolean;
   setCommandOpen: (open: boolean) => void;
 
-  // theme (light/dark) — managed by next-themes but mirrored for UI bits
   theme: "light" | "dark";
   setTheme: (t: "light" | "dark") => void;
 }
@@ -37,8 +32,8 @@ export const useAppStore = create<AppState>()(
       setUser: (u) => set({ user: u }),
       view: "dashboard",
       setView: (v) => set({ view: v }),
-      activeLocationId: "all",
-      setActiveLocationId: (id) => set({ activeLocationId: id }),
+      selectedLocationIds: [],
+      setSelectedLocationIds: (ids) => set({ selectedLocationIds: ids }),
       sidebarOpen: false,
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       commandOpen: false,
@@ -48,7 +43,21 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: "myfng-app-store",
-      partialize: (s) => ({ view: s.view, activeLocationId: s.activeLocationId, theme: s.theme }),
+      version: 3,
+      partialize: (s) => ({
+        selectedLocationIds: s.selectedLocationIds,
+        theme: s.theme,
+      }),
+      migrate: (persisted: unknown) => {
+        const state = persisted as Record<string, unknown>;
+        if (state && !Array.isArray(state.selectedLocationIds)) {
+          const legacy = state.activeLocationId as string | "all" | undefined;
+          state.selectedLocationIds =
+            legacy && legacy !== "all" ? [legacy] : [];
+          delete state.activeLocationId;
+        }
+        return state as unknown as AppState;
+      },
     },
   ),
 );

@@ -32,11 +32,17 @@ export type ViewKey =
   | "api-docs"
   | "openapi-spec"
   | "google-api-mapping"
+  | "google-billing"
   | "roadmap"
   | "design-system"
   | "wireframes"
   | "settings"
-  | "clients";
+  | "clients"
+  | "content-updates"
+  | "directories"
+  | "keywords"
+  | "competitors"
+  | "market-research";
 
 export interface SessionUser {
   id: string;
@@ -64,6 +70,7 @@ export interface ApiResponse<T = unknown> {
 }
 
 export interface DashboardSummary {
+  googleConnected?: boolean;
   totalLocations: number;
   activeLocations: number;
   syncErrors: number;
@@ -72,9 +79,17 @@ export interface DashboardSummary {
   avgRating: number;
   totalSearchViews: number;
   totalMapsViews: number;
+  totalSearchDesktop?: number;
+  totalSearchMobile?: number;
+  totalMapsDesktop?: number;
+  totalMapsMobile?: number;
   totalWebsiteClicks: number;
   totalPhoneCalls: number;
   totalDirectionRequests: number;
+  totalConversations?: number;
+  totalBookings?: number;
+  /** GBP-style interactions: website + calls + directions + chat + bookings */
+  totalInteractions?: number;
   avgHealthScore: number;
   avgVisibilityScore: number;
   publishedPosts: number;
@@ -99,6 +114,7 @@ export interface LocationWithStats {
   visibilityScore: number;
   latitude: number | null;
   longitude: number | null;
+  verificationState: string | null;
 }
 
 export interface ReviewWithLocation {
@@ -113,10 +129,27 @@ export interface ReviewWithLocation {
   text: string;
   sentiment: Sentiment;
   replyText: string | null;
-  replySource: "manual" | "ai" | null;
+  replySource: "manual" | "ai" | "template" | null;
   replyStatus: ReplyStatus;
   repliedAt: string | null;
   createdAt: string;
+}
+
+export interface ReviewChangeWithLocation {
+  id: string;
+  reviewId: string | null;
+  locationId: string;
+  locationName: string;
+  locationCity: string;
+  googleReviewId: string;
+  changeType: "deleted" | "edited";
+  authorName: string;
+  authorPhoto: string | null;
+  previousRating: number | null;
+  previousText: string | null;
+  newRating: number | null;
+  newText: string | null;
+  detectedAt: string;
 }
 
 export interface PostWithLocation {
@@ -128,9 +161,13 @@ export interface PostWithLocation {
   content: string;
   ctaType: string | null;
   ctaUrl: string | null;
+  imageUrl: string | null;
   status: PostStatus;
-  source: "manual" | "ai";
+  source: "manual" | "ai" | "google";
   scheduledAt: string | null;
+  recurrenceType: "once" | "weekly" | null;
+  recurrenceDayOfWeek: number | null;
+  recurrenceTime: string | null;
   publishedAt: string | null;
   createdAt: string;
 }

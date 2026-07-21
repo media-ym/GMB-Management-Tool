@@ -10,7 +10,9 @@ import {
   initiateVerification,
   listVerifications,
   completeVerification,
+  getVoiceOfMerchantState,
 } from "@/lib/google-service";
+import { resolveVerificationFromVoiceOfMerchant } from "@/lib/gbp-profile-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -91,22 +93,15 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-      const verifications = await listVerifications(accessToken, gbp.googleLocationId);
+      const [verifications, vom] = await Promise.all([
+        listVerifications(accessToken, gbp.googleLocationId),
+        getVoiceOfMerchantState(accessToken, gbp.googleLocationId),
+      ]);
       const pending = verifications.filter((v: any) => v.state === "PENDING");
       base.pendingVerifications = pending;
-      // A location can be initiated only if it's not verified AND has no
-      // outstanding PENDING verification. Google will reject a second
-      // initiate on top of a pending one.
-      base.canInitiate = gbp.verificationState !== "verified" && pending.length === 0;
+      base.verificationState = resolveVerificationFromVoiceOfMerchant(vom);
+      base.canInitiate = base.verificationState !== "verified" && pending.length === 0;
       base.canComplete = pending.length > 0;
-      // Reconcile the local verificationState — if Google reports a
-      // COMPLETED verification we treat the location as verified even if our
-      // cached state hasn't caught up yet.
-      if (gbp.verificationState !== "verified" && verifications.some((v: any) => v.state === "COMPLETED")) {
-        base.verificationState = "verified";
-        base.canInitiate = false;
-        base.canComplete = false;
-      }
     } catch (e: any) {
       base.error = e.message || "Failed to load verification history";
     }

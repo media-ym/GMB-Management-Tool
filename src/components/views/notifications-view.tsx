@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import { useAppStore } from "@/lib/store";
+import { useAppNavigation } from "@/hooks/use-app-navigation";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -79,7 +79,7 @@ const VALID_VIEWS: ViewKey[] = [
 ];
 
 export function NotificationsView() {
-  const setView = useAppStore((s) => s.setView);
+  const { navigate } = useAppNavigation();
   const qc = useQueryClient();
 
   const [tab, setTab] = useState<Tab>("all");
@@ -125,7 +125,7 @@ export function NotificationsView() {
 
   async function markRead(n: NotificationItem) {
     if (n.read) {
-      navigate(n.link);
+      openNotificationLink(n.link);
       return;
     }
     setMarkingId(n.id);
@@ -135,7 +135,7 @@ export function NotificationsView() {
         body: JSON.stringify({}),
       });
       qc.invalidateQueries({ queryKey: ["notifications"] });
-      navigate(n.link);
+      openNotificationLink(n.link);
     } catch (e: any) {
       toast.error(e?.message || "Failed to mark notification");
     } finally {
@@ -143,10 +143,10 @@ export function NotificationsView() {
     }
   }
 
-  function navigate(link: string | null) {
+  function openNotificationLink(link: string | null) {
     if (!link) return;
     if (VALID_VIEWS.includes(link as ViewKey)) {
-      setView(link as ViewKey);
+      navigate(link as ViewKey);
     }
   }
 
