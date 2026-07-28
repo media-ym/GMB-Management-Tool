@@ -1457,8 +1457,9 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
               {(researchError as Error).message}
               {!plannerStatus?.loginCustomerIdSet && (
                 <p className="mt-2 text-xs opacity-90">
-                  Tip: Developer token `yunickmedia` MCC se hai toh `.env` mein{" "}
-                  <code>GOOGLE_ADS_LOGIN_CUSTOMER_ID</code> = us MCC ka 10-digit ID set karo.
+                  Tip: MyFNG MCC ke liye <code>.env</code> mein{" "}
+                  <code>GOOGLE_ADS_LOGIN_CUSTOMER_ID=2510208286</code> set karo
+                  (client: <code>GOOGLE_ADS_CUSTOMER_ID=8343316060</code>).
                 </p>
               )}
             </div>

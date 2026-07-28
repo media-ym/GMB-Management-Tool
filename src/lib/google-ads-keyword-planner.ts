@@ -1,8 +1,8 @@
 import { getValidAccessToken, getGoogleOAuthScopeStatus } from "@/lib/google-service";
 import { db } from "@/lib/db";
 
-/** Prefer newest; fall back if gateway returns HTML 404 */
-const ADS_API_VERSIONS = ["v20", "v19", "v18"] as const;
+/** Prefer newest supported; v20+ older majors are sunset */
+const ADS_API_VERSIONS = ["v25", "v24", "v23", "v22"] as const;
 
 /** Language: English */
 export const LANGUAGE_ENGLISH = "1000";
@@ -346,7 +346,7 @@ export async function getKeywordPlannerStatus(): Promise<{
               keywordPlanNetwork: "GOOGLE_SEARCH",
               keywordSeed: { keywords: ["car service"] },
             },
-            version: "v20",
+            version: ADS_API_VERSIONS[0],
           });
           keywordPlannerReachable = probe.ok;
           if (!probe.ok && (probe.status === 404 || /<html/i.test(probe.text))) {
