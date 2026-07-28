@@ -246,18 +246,26 @@ export async function generateKeywordIdeas(opts: {
     body.keywordSeed = { keywords: seeds };
   }
 
-  // Login customer candidates: env MCC first, then accessible managers/accounts
+  // Login-customer-id candidates. Only use MCC if the OAuth user can actually access it.
   const accessible = await listAccessibleCustomerIds(accessToken, developerToken);
-  const loginCandidates = Array.from(
-    new Set(
-      [loginCustomerId, customerId, ...accessible].filter((id): id is string => !!id),
-    ),
+  const mccUsable = !!(loginCustomerId && accessible.includes(loginCustomerId));
+  const loginCandidates: (string | null)[] = Array.from(
+    new Set<(string | null)>([
+      // Prefer MCC when OAuth user is on that manager
+      ...(mccUsable ? [loginCustomerId] : []),
+      // Direct access to the client (your case: 8343316060 is accessible, MCC is not)
+      customerId,
+      ...accessible,
+      // Some setups work with no login-customer-id header
+      null,
+    ]),
   );
 
   let lastError = "Google Ads Keyword Planner request failed";
+  let sawPermissionDenied = false;
 
   for (const version of ADS_API_VERSIONS) {
-    for (const loginId of loginCandidates.length ? loginCandidates : [null]) {
+    for (const loginId of loginCandidates) {
       const res = await adsFetch(`/customers/${customerId}:generateKeywordIdeas`, {
         accessToken,
         developerToken,
@@ -282,28 +290,36 @@ export async function generateKeywordIdeas(opts: {
       }
 
       lastError = extractAdsError(res.status, res.text, res.json);
-
-      // Auth / permission errors won't be fixed by version hopping
       if (res.status === 401 || res.status === 403) {
-        throw new Error(
-          `${lastError} — OAuth user must have access to Ads customer ${customerId}. ` +
-            (loginCustomerId
-              ? ""
-              : "If developer token is from an MCC, set GOOGLE_ADS_LOGIN_CUSTOMER_ID to that manager ID (My FNG: 2510208286)."),
-        );
+        sawPermissionDenied = true;
+        // Try next login-customer-id / version — do not hard-fail on the first 403
+        continue;
       }
     }
   }
 
-  // If configured customer isn't in accessible list, surface that clearly
   if (accessible.length && !accessible.includes(customerId)) {
     throw new Error(
       `${lastError} Connected Google user can access: ${accessible.join(", ") || "(none)"}. ` +
-        `Update GOOGLE_ADS_CUSTOMER_ID to one of these, and if using MCC set GOOGLE_ADS_LOGIN_CUSTOMER_ID.`,
+        `Update GOOGLE_ADS_CUSTOMER_ID to one of these.`,
     );
   }
 
-  throw new Error(lastError);
+  if (loginCustomerId && !mccUsable && sawPermissionDenied) {
+    throw new Error(
+      `${lastError} — OAuth Google user can access ${accessible.join(", ") || "(none)"} ` +
+        `but NOT MyFNG MCC ${loginCustomerId}. ` +
+        `Fix: Google Ads → MyFNG MCC (251-020-8286) → Admin → Access and security → add this Google user, ` +
+        `then reconnect Google in the app. Or if MYFNG ${customerId} is used directly, keep trying after refresh.`,
+    );
+  }
+
+  throw new Error(
+    sawPermissionDenied
+      ? `${lastError} — OAuth user must have Ads access to customer ${customerId}` +
+        (loginCustomerId ? ` (and MCC ${loginCustomerId} if login-customer-id is set).` : ".")
+      : lastError,
+  );
 }
 
 export async function getKeywordPlannerStatus(): Promise<{
@@ -334,10 +350,12 @@ export async function getKeywordPlannerStatus(): Promise<{
 
         // Probe Keyword Planner with a tiny request (diagnose 404 vs auth)
         if (customerId) {
+          const mccUsable = !!(loginCustomerId && accessibleCustomers.includes(loginCustomerId));
+          const probeLogin = mccUsable ? loginCustomerId : customerId;
           const probe = await adsFetch(`/customers/${customerId}:generateKeywordIdeas`, {
             accessToken: token,
             developerToken,
-            loginCustomerId: loginCustomerId || customerId,
+            loginCustomerId: probeLogin,
             method: "POST",
             body: {
               language: "languageConstants/1000",
@@ -352,10 +370,15 @@ export async function getKeywordPlannerStatus(): Promise<{
           if (!probe.ok && (probe.status === 404 || /<html/i.test(probe.text))) {
             hint =
               "Use LOGIN=2510208286 (MyFNG MCC) + CUSTOMER=8343316060 (MYFNG). " +
-              "If still 404: API Center → enable permissible use “Researching keywords and recommendations”, " +
-              "and reconnect Google OAuth with Ads scope using a user that can access both accounts.";
+              "If still 404: API Center → enable permissible use “Researching keywords and recommendations”.";
           } else if (!probe.ok) {
             hint = extractAdsError(probe.status, probe.text, probe.json);
+          }
+
+          if (loginCustomerId && !mccUsable) {
+            hint =
+              `OAuth user can access ${accessibleCustomers.join(", ") || "(none)"} but NOT MyFNG MCC ${loginCustomerId}. ` +
+              `Add this Google account under MyFNG MCC → Admin → Access and security, then reconnect Google.`;
           }
         }
 
