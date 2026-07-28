@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mail, Lock, Eye, EyeOff, Loader2, Star, PenTool, Target, Sparkles, User, Phone, MapPin, Shield, CheckCircle2, ArrowRight } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, Star, PenTool, Target, Sparkles, User, Phone, MapPin, Shield, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+import { createClient } from "@/lib/supabase/client";
 
 const BRAND = {
   primary: "#0047AB",
@@ -41,12 +41,26 @@ export function LoginScreen() {
   // Register form
   const [regForm, setRegForm] = useState({ name: "", email: "", mobile: "", branch: "", role: "viewer", password: "", confirm: "", agree: false });
 
+  async function loginWithPassword(loginEmail: string, loginPassword: string) {
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({
+      email: loginEmail.trim().toLowerCase(),
+      password: loginPassword,
+    });
+    if (error) {
+      toast.error(error.message || "Invalid credentials.");
+      return false;
+    }
+    await fetch("/api/session", { method: "POST" }).catch(() => null);
+    return true;
+  }
+
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const res = await signIn("credentials", { email, password, redirect: false });
+    const ok = await loginWithPassword(email, password);
     setLoading(false);
-    if (res?.error) { toast.error("Invalid credentials."); return; }
+    if (!ok) return;
     toast.success("Welcome to MyFNG Local AI Manager");
     router.refresh();
   }
@@ -55,9 +69,9 @@ export function LoginScreen() {
     setEmail(ADMIN_DEMO.email);
     setPassword(ADMIN_DEMO.password);
     setLoading(true);
-    const res = await signIn("credentials", { email: ADMIN_DEMO.email, password: ADMIN_DEMO.password, redirect: false });
+    const ok = await loginWithPassword(ADMIN_DEMO.email, ADMIN_DEMO.password);
     setLoading(false);
-    if (res?.error) { toast.error("Login failed"); return; }
+    if (!ok) { toast.error("Login failed — bootstrap Supabase Auth users first"); return; }
     toast.success("Signed in as Super Admin");
     router.refresh();
   }

@@ -17,6 +17,11 @@ import { getRequestOrigin, normalizeMediaFileUrl } from "@/lib/media-url";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
+import {
+  isSupabaseStorageConfigured,
+  uploadMediaFile,
+  MEDIA_BUCKET,
+} from "@/lib/supabase/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -93,14 +98,14 @@ function extForMime(mime: string): string {
 //   publishToGoogle — optional ("true"/"false"), default false
 //
 // Flow:
-//   1. Persist file to /public/uploads/media/<uuid>.<ext>
+//   1. Persist file to Supabase Storage (business-photos) or local /public/uploads/media
 //   2. Create a MediaLibrary record (always)
 //   3. If publishToGoogle && linked GBP found:
 //      a. requireClientAuth(locationId, "media.upload")
 //      b. Get valid access token
 //      c. Call uploadGooglePhoto() with the public sourceUrl
 //      d. On success: create a BusinessPhoto row with the returned googlePhotoId
-//      e. On failure: log audit, keep local upload (best-effort)
+//      e. On failure: log audit, keep upload (best-effort)
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
@@ -132,28 +137,45 @@ export async function POST(req: NextRequest) {
   const category = normalizePhotoCategory(rawCategory);
   const publishToGoogle = String(formData.get("publishToGoogle") || "false").toLowerCase() === "true";
 
-  // ─── 1. Persist file to local storage ─────────────────────────────────
+  // ─── 1. Persist file (Supabase Storage preferred) ─────────────────────
   const fileUuid = randomUUID();
   const ext = extForMime(file.type);
   const fileName = `${fileUuid}.${ext}`;
-  const absPath = join(UPLOAD_DIR, fileName);
-  try {
-    await mkdir(UPLOAD_DIR, { recursive: true });
-    const bytes = Buffer.from(await file.arrayBuffer());
-    await writeFile(absPath, bytes);
-  } catch (e: any) {
-    return fail(`Failed to save file locally: ${e.message}`, 500);
-  }
+  const bytes = Buffer.from(await file.arrayBuffer());
+  let fileUrl: string;
+  let storageBucket = MEDIA_BUCKET;
 
-  // Public URL — Google must be able to fetch this when publishToGoogle=true.
-  const fileUrl = `${publicBaseFromRequest(req)}/uploads/media/${fileName}`;
+  if (isSupabaseStorageConfigured()) {
+    try {
+      const storagePath = `${locationId}/${fileName}`;
+      const uploaded = await uploadMediaFile({
+        path: storagePath,
+        bytes,
+        contentType: file.type,
+        bucket: MEDIA_BUCKET,
+      });
+      fileUrl = uploaded.publicUrl;
+    } catch (e: any) {
+      return fail(`Failed to upload to Supabase Storage: ${e.message}`, 500);
+    }
+  } else {
+    const absPath = join(UPLOAD_DIR, fileName);
+    try {
+      await mkdir(UPLOAD_DIR, { recursive: true });
+      await writeFile(absPath, bytes);
+    } catch (e: any) {
+      return fail(`Failed to save file locally: ${e.message}`, 500);
+    }
+    fileUrl = `${publicBaseFromRequest(req)}/uploads/media/${fileName}`;
+    storageBucket = "local";
+  }
 
   // ─── 2. Create MediaLibrary record (always) ──────────────────────────
   const media = await db.mediaLibrary.create({
     data: {
       locationId,
       fileName: file.name || fileName,
-      bucket: "business-photos",
+      bucket: storageBucket,
       fileUrl,
       mimeType: file.type,
       fileSize: file.size,
@@ -170,13 +192,13 @@ export async function POST(req: NextRequest) {
 
   if (publishToGoogle) {
     if (!googleServiceStatus.isConfigured) {
-      googleError = "Google integration is not configured — photo saved locally only.";
+      googleError = "Google integration is not configured — photo saved to storage only.";
     } else {
       // End-client authorization gate — must hold "media.upload" scope before
       // we publish anything to the client's Google Business Profile.
       const authCheck = await requireClientAuth(locationId, "media.upload");
       if (!authCheck.ok) {
-        googleError = "Client authorization required for Google publish — photo saved locally only.";
+        googleError = "Client authorization required for Google publish — photo saved to storage only.";
         await logAudit({
           userId: user.id, userName: user.name,
           action: "media.upload.google_blocked",
@@ -187,11 +209,11 @@ export async function POST(req: NextRequest) {
       } else {
       const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
       if (!gbp) {
-        googleError = "No Google Business Profile linked to this location — photo saved locally only.";
+        googleError = "No Google Business Profile linked to this location — photo saved to storage only.";
       } else {
         const accessToken = await getValidAccessToken();
         if (!accessToken) {
-          googleError = "Google access token unavailable — photo saved locally only. Please reconnect Google OAuth.";
+          googleError = "Google access token unavailable — photo saved to storage only. Please reconnect Google OAuth.";
         } else {
           try {
             const v4LocationName = await resolveV4LocationName(accessToken, gbp.googleLocationId);
@@ -246,7 +268,7 @@ export async function POST(req: NextRequest) {
   const message = googleSynced
     ? "Photo uploaded and published to Google Business Profile."
     : googleError
-      ? `Photo saved locally. Google publish skipped: ${googleError}`
+      ? `Photo saved to storage. Google publish skipped: ${googleError}`
       : "Photo uploaded.";
 
   return ok({

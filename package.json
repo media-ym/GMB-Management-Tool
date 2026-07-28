@@ -20,7 +20,8 @@
     "tunnel:start": "node scripts/tunnel-start.mjs",
     "gmb:chrome-login": "node scripts/setup-gmb-chrome-login.mjs",
     "cron:sync": "node scripts/run-sync-all.mjs",
-    "cron:sync:loop": "node scripts/cron-sync-loop.mjs"
+    "cron:sync:loop": "node scripts/cron-sync-loop.mjs",
+    "supabase:bootstrap-users": "node scripts/supabase-bootstrap-users.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -58,6 +59,8 @@
     "@radix-ui/react-toggle-group": "^1.1.10",
     "@radix-ui/react-tooltip": "^1.2.7",
     "@reactuses/core": "^6.0.5",
+    "@supabase/ssr": "^0.12.3",
+    "@supabase/supabase-js": "^2.110.9",
     "@tanstack/react-query": "^5.82.0",
     "@tanstack/react-table": "^8.21.3",
     "archiver": "^8.0.0",

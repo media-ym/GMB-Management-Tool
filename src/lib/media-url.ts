@@ -10,7 +10,11 @@ export function getRequestOrigin(req: NextRequest): string {
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
   const proto = req.headers.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
   if (host) return `${proto}://${host}`.replace(/\/$/, "");
-  return (process.env.NEXTAUTH_URL || "http://localhost:3000").replace(/\/$/, "");
+  return (
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.NEXTAUTH_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
 }
 
 /** Rewrites stale ngrok/localhost URLs to the current app origin when file is local. */

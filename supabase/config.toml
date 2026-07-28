@@ -1,0 +1,12 @@
+# Minimal config for linking the app SQL migrations to a self-hosted Supabase.
+# Point the CLI at your instance, or paste SQL from supabase/migrations/* into the SQL editor.
+
+[project]
+id = "myfng-local-ai"
+
+[db]
+port = 5432
+major_version = 15
+
+[api]
+enabled = true

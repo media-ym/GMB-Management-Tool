@@ -1,19 +1,27 @@
-// MyFNG Local AI Manager — Prisma Schema (Production-Ready)
-// Supports BOTH SQLite (development) and PostgreSQL (production on Hostinger).
-// For production: change provider to "postgresql" and set DATABASE_URL to your PostgreSQL connection string.
-// For development: keep provider as "sqlite" and use file: path in DATABASE_URL.
-// SQLite limitations: enums→String, JSONB→String(JSON), DECIMAL→Float, TIME→String.
+// ═══════════════════════════════════════════════════════════════════════════
+// MyFNG Local AI Manager — Prisma Schema for PostgreSQL (Production)
+// ────────────────────────────────────────────────────────────────────────────
+// Copy this file over `prisma/schema.prisma` when deploying to Hostinger with
+// PostgreSQL:
+//
+//     cp prisma/schema.postgresql.prisma prisma/schema.prisma
+//     bun run db:generate
+//     bun run db:push
+//     bunx tsx prisma/seed.ts
+//
+// This schema is a complete, byte-identical copy of the SQLite schema
+// (prisma/schema.prisma) with only the datasource provider changed from
+// "sqlite" to "postgresql". All model definitions, relations, indexes and
+// default values are preserved. String?-typed JSON fields and Float-typed
+// decimal fields are kept as-is — PostgreSQL handles both natively.
+// ═══════════════════════════════════════════════════════════════════════════
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  // For production on Hostinger with PostgreSQL, change to:
-  //   provider = "postgresql"
-  //   url      = env("DATABASE_URL")
-  // And set DATABASE_URL=postgresql://user:pass@host:5432/dbname
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -25,7 +33,9 @@ model User {
   id                  String    @id @default(cuid())
   email               String    @unique
   name                String
-  password            String? // scrypt hashed; nullable for invited users who haven't set password yet
+  /// Supabase Auth user id (auth.users.id). Password lives in Supabase Auth.
+  authId              String?   @unique
+  password            String? // legacy local hash; unused when Supabase Auth is configured
   role                String    @default("viewer") // super_admin | marketing_manager | branch_manager | customer_support | viewer
   roleId              String? // FK to Role (normalized; role string kept for backward compat)
   roleRef             Role?    @relation(fields: [roleId], references: [id], onDelete: SetNull)
@@ -122,7 +132,6 @@ model Location {
   updatedAt        DateTime  @updatedAt
 
   reviews          Review[]
-  reviewChanges    ReviewChange[]
   posts            Post[]
   analytics        AnalyticDaily[]
   analyticsMonthly AnalyticsMonthly[]
@@ -294,7 +303,6 @@ model BusinessPhoto {
   googlePhotoId String?
   imageUrl      String
   thumbnailUrl  String?
-  category      String?  // COVER | PROFILE | INTERIOR | EXTERIOR | …
   uploadedBy    String?
   source        String   @default("manual") // manual | google | ai
   status        String   @default("active")
@@ -310,23 +318,18 @@ model BusinessPhoto {
 // ────────────────────────────────────────────────────────────────────────────
 
 model Product {
-  id            String   @id @default(cuid())
-  locationId    String
-  name          String
-  description   String?
-  category      String?
-  price         Float?
-  currency      String   @default("INR")
-  imageUrl      String?
-  landingUrl    String?
-  googleItemId  String?
-  googleEditId  String?
-  source        String   @default("manual") // "manual" or "google"
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt @default(now())
+  id          String   @id @default(cuid())
+  locationId  String
+  productName String
+  description String?
+  category    String?
+  price       Float?
+  currency    String   @default("INR")
+  imageUrl    String?
+  status      String   @default("active")
+  createdAt   DateTime @default(now())
 
-  location      Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  location    Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@index([locationId])
 }
@@ -405,8 +408,7 @@ model Review {
   replySource    String? // manual | ai | template
   replyStatus    String    @default("pending") // pending | replied | ignored
   repliedAt      DateTime?
-  syncStatus     String    @default("synced") // synced | deleted
-  deletedAt      DateTime?
+  syncStatus     String    @default("synced")
   createdAt      DateTime
   updatedAt      DateTime  @updatedAt
 
@@ -415,36 +417,11 @@ model Review {
   user           User?     @relation("ReviewRepliedBy", fields: [replyBy], references: [id])
   replies        ReviewReply[]
   labels         ReviewLabel[]
-  changes        ReviewChange[]
 
   @@index([locationId])
   @@index([replyStatus])
   @@index([rating])
   @@index([sentiment])
-  @@index([syncStatus])
-}
-
-model ReviewChange {
-  id             String   @id @default(cuid())
-  reviewId       String?
-  locationId     String
-  googleReviewId String
-  changeType     String   // deleted | edited
-  authorName     String
-  authorPhoto    String?
-  previousRating Int?
-  previousText   String?
-  newRating      Int?
-  newText        String?
-  detectedAt     DateTime @default(now())
-
-  review         Review?   @relation(fields: [reviewId], references: [id], onDelete: SetNull)
-  location       Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
-
-  @@index([locationId])
-  @@index([changeType])
-  @@index([detectedAt])
-  @@index([googleReviewId])
 }
 
 model ReviewReply {
@@ -505,19 +482,14 @@ model Post {
   ctaUrl       String?
   imageUrl     String?
   startDate    DateTime?
-  startTime    String?
   endDate      DateTime?
-  endTime      String?
-  couponCode   String?
-  redeemUrl    String?
-  offerTerms   String?
   status       String    @default("draft") // draft | scheduled | published | failed
   source       String    @default("manual") // manual | ai
   googlePostId String?
   scheduledAt  DateTime?
-  recurrenceType String? // once | weekly — weekly posts re-publish on recurrenceDayOfWeek + recurrenceTime
-  recurrenceDayOfWeek Int? // 0=Sun … 6=Sat
-  recurrenceTime String? // HH:mm
+  recurrenceType String?
+  recurrenceDayOfWeek Int?
+  recurrenceTime String?
   publishedAt  DateTime?
   authorId     String?
   createdAt    DateTime  @default(now())
@@ -671,19 +643,8 @@ model Competitor {
   address       String?
   latitude      Float?
   longitude     Float?
-  rating        Float?
-  reviewCount   Int?
-  photoCount    Int?
-  serviceCount  Int?
-  productCount  Int?
-  qnaCount      Int?
-  categoryCount Int?
-  distance      Float?   // km from your location
-  phone         String?
-  website       String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt @default(now())
 
   location      Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
   rankings      CompetitorRanking[]

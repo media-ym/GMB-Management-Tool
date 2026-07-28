@@ -4,8 +4,8 @@ import { useSyncExternalStore, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
 import { api } from "@/lib/api-client";
+import { createClient } from "@/lib/supabase/client";
 import { useAppStore, roleLabel } from "@/lib/store";
 import { canAccessView } from "@/lib/permissions";
 import { viewToPath } from "@/lib/routes";
@@ -297,7 +297,14 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
                   <ScrollText className="size-4 mr-2" /> My activity
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => signOut({ callbackUrl: "/" })} className="text-rose-600 focus:text-rose-600">
+                <DropdownMenuItem
+                  onClick={async () => {
+                    const supabase = createClient();
+                    await supabase.auth.signOut();
+                    window.location.href = "/";
+                  }}
+                  className="text-rose-600 focus:text-rose-600"
+                >
                   <LogOut className="size-4 mr-2" /> Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -385,7 +392,13 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
             <CommandItem onSelect={() => { handleSync(); setCommandOpen(false); }}>
               <RefreshCw className="size-4 mr-2" /> Trigger Google sync
             </CommandItem>
-            <CommandItem onSelect={() => signOut({ callbackUrl: "/" })}>
+            <CommandItem
+              onSelect={async () => {
+                const supabase = createClient();
+                await supabase.auth.signOut();
+                window.location.href = "/";
+              }}
+            >
               <LogOut className="size-4 mr-2" /> Sign out
             </CommandItem>
           </CommandGroup>
