@@ -115,9 +115,10 @@ function extractAdsError(status: number, text: string, json: any): string {
 
   if (status === 404 || /<html|That’s an error|Not Found/i.test(text)) {
     return (
-      "Keyword Planner API 404 — developer token likely has Test/Explorer access without Keyword Planner. " +
-      "In Google Ads (Yunick Media MCC) → Tools → API Center: apply for Basic access and enable permissible use " +
-      "“Researching keywords and recommendations”. Test tokens cannot call KeywordPlanIdeaService on production accounts."
+      "Keyword Planner API 404 — token/account hierarchy mismatch or Keyword Planner use-case not enabled. " +
+      "Expected: GOOGLE_ADS_LOGIN_CUSTOMER_ID=2510208286 (MyFNG MCC) and GOOGLE_ADS_CUSTOMER_ID=8343316060 (MYFNG). " +
+      "In Google Ads MyFNG MCC → Tools → API Center: Basic access + permissible use “Researching keywords and recommendations”. " +
+      "OAuth user must have access to both MCC and the MYFNG client account."
     );
   }
   return `Google Ads API error (${status})`;
@@ -288,7 +289,7 @@ export async function generateKeywordIdeas(opts: {
           `${lastError} — OAuth user must have access to Ads customer ${customerId}. ` +
             (loginCustomerId
               ? ""
-              : "If developer token is from an MCC (yunickmedia), set GOOGLE_ADS_LOGIN_CUSTOMER_ID to that manager ID."),
+              : "If developer token is from an MCC, set GOOGLE_ADS_LOGIN_CUSTOMER_ID to that manager ID (My FNG: 2510208286)."),
         );
       }
     }
@@ -350,7 +351,9 @@ export async function getKeywordPlannerStatus(): Promise<{
           keywordPlannerReachable = probe.ok;
           if (!probe.ok && (probe.status === 404 || /<html/i.test(probe.text))) {
             hint =
-              "MCC ID is set, but Keyword Planner still 404s → open Yunick Media API Center and upgrade developer token to Basic + “Researching keywords and recommendations”.";
+              "Use LOGIN=2510208286 (MyFNG MCC) + CUSTOMER=8343316060 (MYFNG). " +
+              "If still 404: API Center → enable permissible use “Researching keywords and recommendations”, " +
+              "and reconnect Google OAuth with Ads scope using a user that can access both accounts.";
           } else if (!probe.ok) {
             hint = extractAdsError(probe.status, probe.text, probe.json);
           }
@@ -360,7 +363,7 @@ export async function getKeywordPlannerStatus(): Promise<{
           hint = `Customer ${customerId} not in accessible list. Try one of: ${accessibleCustomers.join(", ")}`;
         } else if (!loginCustomerId && accessibleCustomers.length > 1) {
           hint =
-            "Multiple Ads accounts found. Set GOOGLE_ADS_LOGIN_CUSTOMER_ID to your MCC/manager ID (Yunick Media).";
+            "Multiple Ads accounts found. Set GOOGLE_ADS_LOGIN_CUSTOMER_ID to your MCC/manager ID (My FNG: 2510208286).";
         }
       }
     } catch {
