@@ -17,6 +17,8 @@ import { PostStatusBadge } from "@/components/shared/badges";
 import { appendLocationIdsToParams } from "@/lib/location-filter";
 import {
   DurationFilter,
+  getDurationLabel,
+  durationToBounds,
   type DurationValue,
   type DurationCustomRange,
 } from "@/components/shared/duration-filter";
@@ -208,6 +210,36 @@ function applyPostClientFilters(
   return result;
 }
 
+/** Prefer publish/schedule date when present so date filter matches what users see on cards. */
+function postActivityDate(p: PostWithLocation): Date {
+  const raw = p.publishedAt || p.scheduledAt || p.createdAt;
+  return new Date(raw);
+}
+
+function filterPostsByDuration(
+  list: PostWithLocation[],
+  timeFilter: DurationValue,
+  customRange: DurationCustomRange | null,
+): PostWithLocation[] {
+  const bounds = durationToBounds(timeFilter, customRange);
+  if (!bounds) return list;
+  const { from, to } = bounds;
+  return list.filter((p) => {
+    const d = postActivityDate(p);
+    if (Number.isNaN(d.getTime())) return false;
+    if (d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  });
+}
+
+function formatBoundParam(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function sortPosts(list: PostWithLocation[], sort: PostSort): PostWithLocation[] {
   return [...list].sort((a, b) => {
     switch (sort) {
@@ -239,6 +271,8 @@ export function PostsView() {
   const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
   const [search, setSearch] = React.useState("");
   const [sort, setSort] = React.useState<PostSort>("newest");
+  const [timeFilter, setTimeFilter] = React.useState<DurationValue>("all");
+  const [customRange, setCustomRange] = React.useState<DurationCustomRange | null>(null);
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editingPost, setEditingPost] = React.useState<PostWithLocation | null>(null);
   const [deletingPost, setDeletingPost] = React.useState<PostWithLocation | null>(null);
@@ -266,11 +300,23 @@ export function PostsView() {
 
   const allPosts = posts ?? [];
 
-  const statsParams = new URLSearchParams();
-  appendLocationIdsToParams(statsParams, selectedLocationIds);
+  const dateBounds = React.useMemo(
+    () => durationToBounds(timeFilter, customRange),
+    [timeFilter, customRange],
+  );
+  const periodLabel = getDurationLabel(timeFilter, customRange);
+
   const { data: postsStats, isLoading: statsLoading } = useQuery<PostsStats>({
-    queryKey: ["posts-stats", selectedLocationIds],
-    queryFn: () => api<PostsStats>(`/api/posts/stats?${statsParams.toString()}`),
+    queryKey: ["posts-stats", selectedLocationIds, timeFilter, customRange],
+    queryFn: () => {
+      const p = new URLSearchParams();
+      appendLocationIdsToParams(p, selectedLocationIds);
+      if (dateBounds) {
+        p.set("from", formatBoundParam(dateBounds.from));
+        if (dateBounds.to) p.set("to", formatBoundParam(dateBounds.to));
+      }
+      return api<PostsStats>(`/api/posts/stats?${p.toString()}`);
+    },
   });
 
   // Local computed stats fallback (used by filter tab count)
@@ -285,22 +331,28 @@ export function PostsView() {
   });
   const statsSource = allPostsData ?? allPosts;
 
+  const dateScopedSource = React.useMemo(
+    () => filterPostsByDuration(statsSource, timeFilter, customRange),
+    [statsSource, timeFilter, customRange],
+  );
+
   const localStats = React.useMemo(() => {
-    const published = statsSource.filter((p) => p.status === "published").length;
-    const scheduled = statsSource.filter((p) => p.status === "scheduled").length;
-    const drafts = statsSource.filter((p) => p.status === "draft").length;
-    const aiGenerated = statsSource.filter((p) => p.source === "ai").length;
+    const published = dateScopedSource.filter((p) => p.status === "published").length;
+    const scheduled = dateScopedSource.filter((p) => p.status === "scheduled").length;
+    const drafts = dateScopedSource.filter((p) => p.status === "draft").length;
+    const aiGenerated = dateScopedSource.filter((p) => p.source === "ai").length;
     return { published, scheduled, drafts, aiGenerated };
-  }, [statsSource]);
+  }, [dateScopedSource]);
 
   const filtered = React.useMemo(() => {
-    const list = applyPostClientFilters(allPosts, typeFilter, search);
+    let list = applyPostClientFilters(allPosts, typeFilter, search);
+    list = filterPostsByDuration(list, timeFilter, customRange);
     return sortPosts(list, sort);
-  }, [allPosts, typeFilter, search, sort]);
+  }, [allPosts, typeFilter, search, sort, timeFilter, customRange]);
 
   React.useEffect(() => {
     setPage(0);
-  }, [statusFilter, typeFilter, selectedLocationIds, displayLayout, search, sort]);
+  }, [statusFilter, typeFilter, selectedLocationIds, displayLayout, search, sort, timeFilter, customRange]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / POSTS_PER_PAGE));
   const currentPage = Math.min(page, totalPages - 1);
@@ -320,8 +372,9 @@ export function PostsView() {
       (p) => p.status === "scheduled" || p.status === "published",
     );
     list = applyPostClientFilters(list, typeFilter, search);
+    list = filterPostsByDuration(list, timeFilter, customRange);
     return sortPosts(list, sort);
-  }, [allPostsData, typeFilter, search, sort]);
+  }, [allPostsData, typeFilter, search, sort, timeFilter, customRange]);
 
   // Posts for queue view (scheduled + failed)
   const queuePosts = React.useMemo(() => {
@@ -329,14 +382,16 @@ export function PostsView() {
       (p) => p.status === "scheduled" || p.status === "failed",
     );
     list = applyPostClientFilters(list, typeFilter, search);
+    list = filterPostsByDuration(list, timeFilter, customRange);
     return sortPosts(list, sort);
-  }, [allPostsData, typeFilter, search, sort]);
+  }, [allPostsData, typeFilter, search, sort, timeFilter, customRange]);
 
   const historyPosts = React.useMemo(() => {
     let list = (allPostsData ?? allPosts).filter((p) => p.status === "published");
     list = applyPostClientFilters(list, typeFilter, search);
+    list = filterPostsByDuration(list, timeFilter, customRange);
     return sortPosts(list, sort);
-  }, [allPostsData, allPosts, typeFilter, search, sort]);
+  }, [allPostsData, allPosts, typeFilter, search, sort, timeFilter, customRange]);
 
   // Stable per-location color dots (used when "All locations" is selected)
   const locationColorMap = React.useMemo(() => {
@@ -563,6 +618,13 @@ export function PostsView() {
         icon={FileText}
         actions={
           <>
+            <DurationFilter
+              value={timeFilter}
+              onChange={setTimeFilter}
+              customRange={customRange}
+              onCustomRangeChange={setCustomRange}
+              className="w-[150px] sm:w-[170px]"
+            />
             <Button
               size="sm"
               variant={showAnalytics ? "default" : "outline"}
@@ -582,7 +644,12 @@ export function PostsView() {
 
       {/* Analytics Dashboard (toggleable) */}
       {showAnalytics && (
-        <AnalyticsDashboard stats={postsStats} isLoading={statsLoading} />
+        <AnalyticsDashboard
+          stats={postsStats}
+          isLoading={statsLoading}
+          periodLabel={periodLabel}
+          timeFilter={timeFilter}
+        />
       )}
 
       {/* Compact stat row (always visible) */}
@@ -656,9 +723,9 @@ export function PostsView() {
                 <TabsList className="w-full lg:w-auto">
                   <TabsTrigger value="all">
                     All
-                    {statsSource.length > 0 && (
+                    {dateScopedSource.length > 0 && (
                       <span className="ml-1 text-[10px] text-muted-foreground tabular-nums">
-                        {statsSource.length}
+                        {dateScopedSource.length}
                       </span>
                     )}
                   </TabsTrigger>
@@ -731,7 +798,7 @@ export function PostsView() {
               )}
             </span>
           </div>
-          {(search || typeFilter !== "all" || statusFilter !== "all" || selectedLocationIds.length > 0) && (
+          {(search || typeFilter !== "all" || statusFilter !== "all" || selectedLocationIds.length > 0 || timeFilter !== "all") && (
             <Button
               variant="ghost"
               size="sm"
@@ -742,6 +809,8 @@ export function PostsView() {
                 setStatusFilter("all");
                 setSelectedLocationIds([]);
                 setSort("newest");
+                setTimeFilter("all");
+                setCustomRange(null);
               }}
             >
               Clear filters
@@ -774,13 +843,15 @@ export function PostsView() {
             <EmptyState
               canManage={canManage}
               onCreate={openCreate}
-              hasFilters={Boolean(search || typeFilter !== "all" || statusFilter !== "all" || selectedLocationIds.length > 0)}
+              hasFilters={Boolean(search || typeFilter !== "all" || statusFilter !== "all" || selectedLocationIds.length > 0 || timeFilter !== "all")}
               onClearFilters={() => {
                 setSearch("");
                 setTypeFilter("all");
                 setStatusFilter("all");
                 setSelectedLocationIds([]);
                 setSort("newest");
+                setTimeFilter("all");
+                setCustomRange(null);
               }}
             />
           ) : (
@@ -954,7 +1025,17 @@ export function PostsView() {
 
 /* ---------- Analytics Dashboard ---------- */
 
-function AnalyticsDashboard({ stats, isLoading }: { stats?: PostsStats; isLoading: boolean }) {
+function AnalyticsDashboard({
+  stats,
+  isLoading,
+  periodLabel,
+  timeFilter,
+}: {
+  stats?: PostsStats;
+  isLoading: boolean;
+  periodLabel: string;
+  timeFilter: DurationValue;
+}) {
   if (isLoading || !stats) {
     return (
       <div className="space-y-4">
@@ -982,18 +1063,25 @@ function AnalyticsDashboard({ stats, isLoading }: { stats?: PostsStats; isLoadin
     count: l.count,
   }));
   const maxLoc = Math.max(1, ...byLocationData.map((d) => d.count));
+  const scoped = timeFilter !== "all";
+  const publishedInPeriodLabel =
+    timeFilter === "today" || timeFilter === "all" ? "Published Today" : "Published in period";
+  const publishedInPeriodValue =
+    timeFilter === "today" || timeFilter === "all" ? stats.todayPublished : stats.published;
+  const publishedInPeriodHint =
+    timeFilter === "today" || timeFilter === "all" ? "Went live today" : periodLabel;
 
   return (
     <div className="space-y-4">
       {/* Stat row: 8 cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-        <StatCard label="Total Posts"      value={stats.total}          icon={FileText}        accent="emerald" hint="All posts" />
-        <StatCard label="Drafts"           value={stats.drafts}         icon={FileText}        accent="slate"   hint="Not yet published" />
-        <StatCard label="Scheduled"        value={stats.scheduled}      icon={CalendarClock}   accent="amber"   hint="Queued for later" />
-        <StatCard label="Published Today"  value={stats.todayPublished} icon={CalendarCheck}   accent="emerald" hint="Went live today" />
-        <StatCard label="Published"        value={stats.published}      icon={CheckCircle2}    accent="emerald" hint="Live on Google" />
-        <StatCard label="Failed"           value={stats.failed}         icon={AlertTriangle}   accent="rose"    hint="Publish failures" />
-        <StatCard label="AI Drafts"        value={stats.aiDrafts}       icon={Sparkles}        accent="amber"   hint="Pending AI drafts" />
+        <StatCard label="Total Posts"      value={stats.total}          icon={FileText}        accent="emerald" hint={scoped ? periodLabel : "All posts"} />
+        <StatCard label="Drafts"           value={stats.drafts}         icon={FileText}        accent="slate"   hint={scoped ? periodLabel : "Not yet published"} />
+        <StatCard label="Scheduled"        value={stats.scheduled}      icon={CalendarClock}   accent="amber"   hint={scoped ? periodLabel : "Queued for later"} />
+        <StatCard label={publishedInPeriodLabel} value={publishedInPeriodValue} icon={CalendarCheck} accent="emerald" hint={publishedInPeriodHint} />
+        <StatCard label="Published"        value={stats.published}      icon={CheckCircle2}    accent="emerald" hint={scoped ? periodLabel : "Live on Google"} />
+        <StatCard label="Failed"           value={stats.failed}         icon={AlertTriangle}   accent="rose"    hint={scoped ? periodLabel : "Publish failures"} />
+        <StatCard label="AI Drafts"        value={stats.aiDrafts}       icon={Sparkles}        accent="amber"   hint={scoped ? periodLabel : "Pending AI drafts"} />
         <StatCard label="Success Rate"     value={`${stats.successRate}%`} icon={TrendingUp}    accent="teal"    hint="Publish success" />
       </div>
 
@@ -2932,52 +3020,14 @@ function PastHistoryTable({
   onEdit: (p: PostWithLocation) => void;
 }) {
   const [page, setPage] = React.useState(0);
-  const [timeFilter, setTimeFilter] = React.useState<DurationValue>("30");
-  const [customRange, setCustomRange] = React.useState<DurationCustomRange | null>(null);
   const perPage = 15;
 
-  const filtered = React.useMemo(() => {
-    if (timeFilter === "all") return posts;
+  React.useEffect(() => {
+    setPage(0);
+  }, [posts]);
 
-    let from: Date | null = null;
-    let to: Date | null = null;
-    const now = new Date();
-
-    if (timeFilter === "custom" && customRange?.from) {
-      from = new Date(customRange.from);
-      from.setHours(0, 0, 0, 0);
-      if (customRange.to) {
-        to = new Date(customRange.to);
-        to.setHours(23, 59, 59, 999);
-      }
-    } else if (timeFilter === "today") {
-      from = new Date(now);
-      from.setHours(0, 0, 0, 0);
-    } else if (timeFilter === "yesterday") {
-      from = new Date(now);
-      from.setDate(from.getDate() - 1);
-      from.setHours(0, 0, 0, 0);
-      to = new Date(from);
-      to.setHours(23, 59, 59, 999);
-    } else {
-      const days = parseInt(timeFilter, 10);
-      if (Number.isFinite(days)) {
-        from = new Date(now);
-        from.setDate(from.getDate() - days);
-      }
-    }
-
-    return posts.filter((p) => {
-      const d = p.publishedAt ? new Date(p.publishedAt) : null;
-      if (!d) return false;
-      if (from && d < from) return false;
-      if (to && d > to) return false;
-      return true;
-    });
-  }, [posts, timeFilter, customRange]);
-
-  const totalPages = Math.ceil(filtered.length / perPage);
-  const paged = filtered.slice(page * perPage, (page + 1) * perPage);
+  const totalPages = Math.ceil(posts.length / perPage);
+  const paged = posts.slice(page * perPage, (page + 1) * perPage);
 
   if (isLoading) {
     return (
@@ -2995,21 +3045,8 @@ function PastHistoryTable({
         <div className="flex items-center gap-2">
           <Clock className="size-4 text-muted-foreground" />
           <span className="text-sm font-semibold">Previous Posts</span>
-          <Badge variant="outline" className="text-xs">{filtered.length} posts</Badge>
+          <Badge variant="outline" className="text-xs">{posts.length} posts</Badge>
         </div>
-        <DurationFilter
-          value={timeFilter}
-          onChange={(v) => {
-            setTimeFilter(v);
-            setPage(0);
-          }}
-          customRange={customRange}
-          onCustomRangeChange={(r) => {
-            setCustomRange(r);
-            setPage(0);
-          }}
-          className="w-[150px]"
-        />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -3065,7 +3102,7 @@ function PastHistoryTable({
         <NumberedPagination
           page={page}
           totalPages={Math.max(1, totalPages)}
-          totalItems={filtered.length}
+          totalItems={posts.length}
           perPage={perPage}
           onPageChange={setPage}
           itemLabel="posts"

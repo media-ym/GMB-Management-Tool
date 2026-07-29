@@ -34,13 +34,26 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
   Search, TrendingUp, TrendingDown, Target, BarChart3, Eye, Plus, Download,
   Hash, Activity, ArrowUpRight, ArrowDownRight, ChevronRight, X, Loader2,
   Filter, Globe, MapPin, Crosshair, Sparkles, LineChart as LineChartIcon, Trophy,
+  Lightbulb, Link2, Calendar, ChevronDown, Languages,
 } from "lucide-react";
+import {
+  CITY_GEO,
+  DATE_PRESET_OPTIONS,
+  GEO_INDIA,
+  INDIA_GEO_OPTIONS,
+  geoLabelForConstant,
+  plannerYearMonthRange,
+  type PlannerDatePreset,
+} from "@/lib/google-ads-keyword-geo";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   Tooltip as RTooltip, CartesianGrid, LineChart, Line, Legend,
@@ -1122,6 +1135,7 @@ type KeywordIdeaRow = {
   competitionIndex: number | null;
   lowBidInr: number | null;
   highBidInr: number | null;
+  monthlySearches?: number[];
 };
 
 type KeywordIdeasResponse = {
@@ -1129,7 +1143,10 @@ type KeywordIdeasResponse = {
   seed: string[];
   pageUrl?: string | null;
   geoLabel: string;
+  geoTargetConstant?: string;
   languageId: string;
+  datePreset?: PlannerDatePreset;
+  dateLabel?: string;
   source: string;
 };
 
@@ -1148,6 +1165,7 @@ type KeywordPlannerStatus = {
 };
 
 type PlannerSort = "volume" | "competition" | "bid" | "alpha";
+type PlannerScreen = "home" | "discover" | "results";
 
 function competitionBadge(level: string) {
   const v = (level || "").toUpperCase();
@@ -1177,19 +1195,49 @@ function formatBid(low: number | null, high: number | null) {
   return `~₹${(high as number).toLocaleString("en-IN")}`;
 }
 
+function csvEscape(v: string | number | null | undefined) {
+  const s = v == null ? "" : String(v);
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function VolumeSparkline({ values }: { values?: number[] }) {
+  if (!values?.length) return null;
+  const max = Math.max(...values, 1);
+  const w = 56;
+  const h = 18;
+  const pts = values
+    .map((v, i) => {
+      const x = values.length === 1 ? w / 2 : (i / (values.length - 1)) * w;
+      const y = h - (v / max) * (h - 2) - 1;
+      return `${x},${y}`;
+    })
+    .join(" ");
+  return (
+    <svg width={w} height={h} className="shrink-0 text-[#1a73e8]" aria-hidden>
+      <polyline fill="none" stroke="currentColor" strokeWidth="1.5" points={pts} />
+    </svg>
+  );
+}
+
 function KeywordResearcher({ locations, activeLocationId }: { locations: { id: string; name: string; city: string }[]; activeLocationId: string | "all" }) {
+  const [screen, setScreen] = useState<PlannerScreen>("home");
   const [mode, setMode] = useState<"keywords" | "website">("keywords");
   const [query, setQuery] = useState("car service\ngarage near me\ncar repair");
   const [pageUrl, setPageUrl] = useState("https://myfng.in");
-  const [selectedLocation, setSelectedLocation] = useState(
-    activeLocationId !== "all" ? activeLocationId : "all",
-  );
+  const [geoTargetConstant, setGeoTargetConstant] = useState(GEO_INDIA);
   const [languageId, setLanguageId] = useState("1000");
+  const [datePreset, setDatePreset] = useState<PlannerDatePreset>("1");
+  const [citySearch, setCitySearch] = useState("");
+  const [locOpen, setLocOpen] = useState(false);
+  const [dateOpen, setDateOpen] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
   const [requestKey, setRequestKey] = useState<{
     seeds: string;
     pageUrl: string;
-    locationId: string;
+    geoTargetConstant: string;
     languageId: string;
+    datePreset: PlannerDatePreset;
   } | null>(null);
   const [filter, setFilter] = useState("");
   const [sortBy, setSortBy] = useState<PlannerSort>("volume");
@@ -1198,9 +1246,46 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const qc = useQueryClient();
 
+  const dateMeta = useMemo(() => plannerYearMonthRange(datePreset), [datePreset]);
+  const geoLabel = geoLabelForConstant(geoTargetConstant);
+  const languageLabel = languageId === "1001" ? "Hindi" : "English";
+
   useEffect(() => {
-    if (activeLocationId !== "all") setSelectedLocation(activeLocationId);
-  }, [activeLocationId]);
+    if (activeLocationId === "all") return;
+    const loc = locations.find((l) => l.id === activeLocationId);
+    if (!loc?.city) return;
+    const geo = CITY_GEO[loc.city.toLowerCase().trim()];
+    if (geo) setGeoTargetConstant(geo);
+  }, [activeLocationId, locations]);
+
+  const portfolioCities = useMemo(() => {
+    const seen = new Set<string>();
+    const rows: { id: string; label: string; region: string }[] = [];
+    for (const loc of locations) {
+      const key = (loc.city || "").toLowerCase().trim();
+      if (!key || seen.has(key)) continue;
+      const geo = CITY_GEO[key];
+      if (!geo || seen.has(geo)) continue;
+      seen.add(key);
+      seen.add(geo);
+      rows.push({ id: geo, label: loc.city, region: "Your locations" });
+    }
+    return rows;
+  }, [locations]);
+
+  const cityOptions = useMemo(() => {
+    const q = citySearch.trim().toLowerCase();
+    const merged = [
+      ...portfolioCities,
+      ...INDIA_GEO_OPTIONS.filter((g) => !portfolioCities.some((p) => p.id === g.id)),
+    ];
+    if (!q) return merged;
+    return merged.filter(
+      (g) =>
+        g.label.toLowerCase().includes(q) ||
+        (g.region || "").toLowerCase().includes(q),
+    );
+  }, [citySearch, portfolioCities]);
 
   const { data: plannerStatus } = useQuery<KeywordPlannerStatus>({
     queryKey: ["keyword-planner-status"],
@@ -1221,13 +1306,18 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
         body: JSON.stringify({
           seed: requestKey!.seeds,
           pageUrl: requestKey!.pageUrl || undefined,
-          locationId: requestKey!.locationId !== "all" ? requestKey!.locationId : null,
+          geoTargetConstant: requestKey!.geoTargetConstant,
           languageId: requestKey!.languageId,
+          datePreset: requestKey!.datePreset,
         }),
       }),
     enabled: !!requestKey,
     retry: false,
   });
+
+  useEffect(() => {
+    if (requestKey && !researching) setScreen("results");
+  }, [requestKey, researching, ideasData]);
 
   function runResearch() {
     const seeds =
@@ -1238,7 +1328,7 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
             .filter(Boolean)
             .join("\n")
         : "";
-    const url = mode === "website" || mode === "keywords" ? pageUrl.trim() : "";
+    const url = pageUrl.trim();
 
     if (mode === "keywords" && seeds.length < 2 && !url) {
       toast.error("Enter at least one seed keyword");
@@ -1252,33 +1342,38 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
     const next = {
       seeds: mode === "website" ? "" : seeds,
       pageUrl: url,
-      locationId: selectedLocation,
+      geoTargetConstant,
       languageId,
+      datePreset,
     };
     if (
       requestKey &&
       requestKey.seeds === next.seeds &&
       requestKey.pageUrl === next.pageUrl &&
-      requestKey.locationId === next.locationId &&
-      requestKey.languageId === next.languageId
+      requestKey.geoTargetConstant === next.geoTargetConstant &&
+      requestKey.languageId === next.languageId &&
+      requestKey.datePreset === next.datePreset
     ) {
       void refetch();
     } else {
       setRequestKey(next);
       setSelected(new Set());
     }
+    setScreen("results");
   }
 
   async function addKeyword(keyword: string) {
     try {
       setAddingKeyword(keyword);
-      const locId = selectedLocation !== "all" ? selectedLocation : null;
+      const matchLoc = locations.find(
+        (l) => CITY_GEO[(l.city || "").toLowerCase().trim()] === geoTargetConstant,
+      );
       await api("/api/seo/keywords", {
         method: "POST",
         body: JSON.stringify({
           keyword,
-          locationId: locId,
-          city: locations.find((l) => l.id === locId)?.city || null,
+          locationId: matchLoc?.id || null,
+          city: geoLabel !== "India" ? geoLabel : matchLoc?.city || null,
         }),
       });
       toast.success(`"${keyword}" added to tracking`);
@@ -1298,6 +1393,45 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
       await addKeyword(kw);
     }
     setSelected(new Set());
+  }
+
+  function downloadIdeasCsv() {
+    if (!ideas.length) {
+      toast.error("No keywords to download");
+      return;
+    }
+    const headers = [
+      "Keyword",
+      "Avg monthly searches",
+      "Competition",
+      "Competition index",
+      "Top of page bid low (INR)",
+      "Top of page bid high (INR)",
+      "Location",
+      "Language",
+      "Date range",
+    ];
+    const period = ideasData?.dateLabel || dateMeta.label;
+    const rows = ideas.map((i) => [
+      csvEscape(i.keyword),
+      csvEscape(i.avgMonthlySearches),
+      csvEscape(i.competition),
+      csvEscape(i.competitionIndex),
+      csvEscape(i.lowBidInr),
+      csvEscape(i.highBidInr),
+      csvEscape(ideasData?.geoLabel || geoLabel),
+      csvEscape(languageLabel),
+      csvEscape(period),
+    ].join(","));
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `keyword-ideas-${geoLabel.toLowerCase().replace(/\s+/g, "-")}-${datePreset}m.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Downloaded ${ideas.length} keyword ideas`);
   }
 
   const ideas = useMemo(() => {
@@ -1322,20 +1456,342 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
     plannerStatus && (!plannerStatus.connected || !plannerStatus.hasAdwordsScope);
   const needsConfig = plannerStatus && !plannerStatus.configured;
   const maxVolume = Math.max(...ideas.map((i) => i.avgMonthlySearches ?? 0), 1);
+  const canGetResults =
+    mode === "website"
+      ? pageUrl.trim().length > 0
+      : query.trim().length > 0 || pageUrl.trim().length > 0;
+
+  const filterChips = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Popover open={locOpen} onOpenChange={setLocOpen}>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm" className="h-9 gap-1.5 font-normal">
+            <MapPin className="size-3.5 opacity-70" />
+            <span className="max-w-[140px] truncate">{geoLabel}</span>
+            <ChevronDown className="size-3 opacity-60" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-80 p-0">
+          <div className="p-3 border-b space-y-2">
+            <p className="text-xs font-semibold">Locations</p>
+            <p className="text-[11px] text-muted-foreground">
+              India select karo, ya city-wise target choose karo
+            </p>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+              <Input
+                value={citySearch}
+                onChange={(e) => setCitySearch(e.target.value)}
+                placeholder="Search cities…"
+                className="pl-8 h-8 text-xs"
+              />
+            </div>
+          </div>
+          <div className="max-h-64 overflow-y-auto p-1">
+            {cityOptions.map((g) => (
+              <button
+                key={`${g.region}-${g.id}`}
+                type="button"
+                className={cn(
+                  "w-full text-left px-2.5 py-2 rounded-md text-sm hover:bg-accent flex items-center justify-between gap-2",
+                  geoTargetConstant === g.id && "bg-accent font-medium ring-1 ring-primary/20",
+                )}
+                onClick={() => {
+                  setGeoTargetConstant(g.id);
+                  setLocOpen(false);
+                  setCitySearch("");
+                }}
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <MapPin className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{g.label}</span>
+                </span>
+                {g.region && (
+                  <span className="text-[10px] text-muted-foreground shrink-0">{g.region}</span>
+                )}
+              </button>
+            ))}
+            {cityOptions.length === 0 && (
+              <p className="px-3 py-6 text-center text-xs text-muted-foreground">No cities match</p>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <Popover open={langOpen} onOpenChange={setLangOpen}>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm" className="h-9 gap-1.5 font-normal">
+            <Languages className="size-3.5 opacity-70" />
+            {languageLabel}
+            <ChevronDown className="size-3 opacity-60" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-44 p-1">
+          {[
+            { id: "1000", label: "English" },
+            { id: "1001", label: "Hindi" },
+          ].map((l) => (
+            <button
+              key={l.id}
+              type="button"
+              className={cn(
+                "w-full text-left px-2.5 py-2 rounded-md text-sm hover:bg-accent",
+                languageId === l.id && "bg-accent font-medium",
+              )}
+              onClick={() => {
+                setLanguageId(l.id);
+                setLangOpen(false);
+              }}
+            >
+              {l.label}
+            </button>
+          ))}
+        </PopoverContent>
+      </Popover>
+
+      <Popover open={dateOpen} onOpenChange={setDateOpen}>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm" className="h-9 gap-1.5 font-normal">
+            <Calendar className="size-3.5 opacity-70" />
+            <span className="max-w-[180px] truncate">{dateMeta.label}</span>
+            <ChevronDown className="size-3 opacity-60" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-56 p-1">
+          <p className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Date range
+          </p>
+          {DATE_PRESET_OPTIONS.map((opt) => {
+            const meta = plannerYearMonthRange(opt.value);
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                className={cn(
+                  "w-full text-left px-2.5 py-2 rounded-md text-sm hover:bg-accent",
+                  datePreset === opt.value && "bg-accent font-medium ring-1 ring-primary/20",
+                )}
+                onClick={() => {
+                  setDatePreset(opt.value);
+                  setDateOpen(false);
+                }}
+              >
+                <div>{opt.label}</div>
+                <div className="text-[10px] text-muted-foreground">{meta.label}</div>
+              </button>
+            );
+          })}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+
+  if (screen === "home") {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">Keyword Planner</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Google Ads Keyword Planner jaisa — search volume, competition & bids
+          </p>
+        </div>
+
+        {(needsConfig || needsReconnect) && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/80 dark:bg-amber-950/20 p-3 text-sm">
+            {needsConfig ? (
+              <p>Google Ads env missing. Add developer token + customer ID in <code>.env</code>.</p>
+            ) : (
+              <p>
+                Ads scope missing —{" "}
+                <a href="/google" className="font-medium text-primary underline underline-offset-2">
+                  Reconnect for Ads
+                </a>
+                .
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="grid md:grid-cols-2 gap-4 max-w-3xl">
+          <button
+            type="button"
+            onClick={() => {
+              setMode("keywords");
+              setScreen("discover");
+            }}
+            className="group text-left rounded-2xl border bg-card p-6 shadow-sm hover:border-primary/40 hover:shadow-md transition"
+          >
+            <div className="size-14 rounded-xl bg-amber-400/15 flex items-center justify-center mb-4">
+              <Lightbulb className="size-7 text-amber-500" />
+            </div>
+            <h3 className="text-base font-semibold group-hover:text-primary transition-colors">
+              Discover new keywords
+            </h3>
+            <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+              Get keyword ideas that can help you reach people interested in your product or service.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setMode("website");
+              setScreen("discover");
+            }}
+            className="group text-left rounded-2xl border bg-card p-6 shadow-sm hover:border-primary/40 hover:shadow-md transition"
+          >
+            <div className="size-14 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4">
+              <LineChartIcon className="size-7 text-sky-600" />
+            </div>
+            <h3 className="text-base font-semibold group-hover:text-primary transition-colors">
+              Get search volume and forecasts
+            </h3>
+            <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+              Get search volume and other historical metrics for keywords — default last 1 month.
+            </p>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <Card className="overflow-hidden">
-        <CardHeader className="bg-gradient-to-r from-[#0047AB]/[0.06] to-[#0096FF]/[0.04] border-b">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Target className="size-5 text-[#0047AB]" />
-            Keyword Planner
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Same Google Ads Keyword Planner data — average monthly searches, competition & top-of-page bid
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-5 pt-5">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <button
+            type="button"
+            className="text-xs text-primary hover:underline inline-flex items-center gap-0.5 mb-1"
+            onClick={() => {
+              setScreen("home");
+              setRequestKey(null);
+            }}
+          >
+            Keyword Planner <ChevronRight className="size-3" />
+          </button>
+          <h2 className="text-lg font-semibold tracking-tight">
+            {screen === "results" && requestKey
+              ? `Plan · ${ideasData?.dateLabel || dateMeta.label}`
+              : "Discover new keywords"}
+          </h2>
+        </div>
+        {screen === "results" && ideas.length > 0 && (
+          <Button size="sm" variant="outline" onClick={downloadIdeasCsv}>
+            <Download className="size-3.5 mr-1.5" />
+            Download keyword ideas
+          </Button>
+        )}
+      </div>
+
+      {screen === "discover" && (
+        <Card className="overflow-hidden max-w-4xl">
+          <CardContent className="p-0">
+            <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b">
+              <Tabs value={mode} onValueChange={(v) => setMode(v as "keywords" | "website")}>
+                <TabsList className="bg-transparent h-auto p-0 gap-4 rounded-none">
+                  <TabsTrigger
+                    value="keywords"
+                    className="rounded-none px-0 pb-2 border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent"
+                  >
+                    Start with keywords
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="website"
+                    className="rounded-none px-0 pb-2 border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent"
+                  >
+                    Start with a website
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Button variant="ghost" size="icon" className="size-8" onClick={() => setScreen("home")}>
+                <X className="size-4" />
+              </Button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {mode === "keywords" ? (
+                <div className="grid lg:grid-cols-[1fr_220px] gap-4">
+                  <div className="space-y-3">
+                    <Label className="text-sm">Enter products or services closely related to your business</Label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-3 size-4 text-muted-foreground" />
+                      <textarea
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        rows={4}
+                        className="w-full rounded-md border bg-background pl-10 pr-3 py-2.5 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        placeholder={'Try "car service" or "garage near me"'}
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">{filterChips}</div>
+                    <div className="space-y-1.5 pt-1">
+                      <Label className="text-xs text-muted-foreground">Enter a site to filter unrelated keywords</Label>
+                      <div className="relative">
+                        <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                        <Input
+                          value={pageUrl}
+                          onChange={(e) => setPageUrl(e.target.value)}
+                          placeholder="https://"
+                          className="pl-9"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed lg:pt-7">
+                    Try not to be too specific or general. For example, &quot;car service&quot; is better than
+                    &quot;cars&quot; for a garage business.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid lg:grid-cols-[1fr_220px] gap-4">
+                  <div className="space-y-3">
+                    <Label className="text-sm">Enter a website or a page to find keywords that match your site</Label>
+                    <div className="relative">
+                      <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                      <Input
+                        value={pageUrl}
+                        onChange={(e) => setPageUrl(e.target.value)}
+                        placeholder="https://"
+                        className="pl-9 h-11"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">{filterChips}</div>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed lg:pt-7">
+                    Use a website as a source of keywords. Default date range is last 1 month.
+                  </p>
+                </div>
+              )}
+
+              <Button onClick={runResearch} disabled={researching || !canGetResults}>
+                {researching ? <Loader2 className="size-4 mr-1.5 animate-spin" /> : null}
+                Get results
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {screen === "results" && (
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="p-3 flex flex-col lg:flex-row lg:items-center gap-3">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                <Input
+                  value={mode === "website" ? pageUrl : query.split("\n")[0] || ""}
+                  readOnly
+                  className="pl-8 h-9 bg-muted/30"
+                  aria-label="Seed summary"
+                />
+              </div>
+              {filterChips}
+              <Button size="sm" onClick={runResearch} disabled={researching}>
+                {researching ? <Loader2 className="size-3.5 animate-spin" /> : "Refresh"}
+              </Button>
+            </CardContent>
+          </Card>
+
           {(needsConfig || needsReconnect) && (
             <div className="rounded-lg border border-amber-200 bg-amber-50/80 dark:bg-amber-950/20 p-3 text-sm">
               {needsConfig ? (
@@ -1352,178 +1808,74 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
             </div>
           )}
 
-          {plannerStatus && (plannerStatus.hint || plannerStatus.loginCustomerIdSet) && (
-            <div className="rounded-lg border border-sky-200 bg-sky-50/80 dark:bg-sky-950/20 p-3 text-sm text-sky-900 dark:text-sky-100 space-y-1">
-              {plannerStatus.hint && <p>{plannerStatus.hint}</p>}
-              <div className="text-xs font-mono opacity-80 flex flex-wrap gap-x-3 gap-y-1">
-                {plannerStatus.customerIdMasked && <span>Customer: {plannerStatus.customerIdMasked}</span>}
-                {plannerStatus.loginCustomerIdMasked && (
-                  <span>MCC login: {plannerStatus.loginCustomerIdMasked}</span>
-                )}
-                {plannerStatus.adsApiReachable != null && (
-                  <span>Ads API: {plannerStatus.adsApiReachable ? "OK" : "no"}</span>
-                )}
-                {plannerStatus.keywordPlannerReachable != null && (
-                  <span>
-                    Keyword Planner: {plannerStatus.keywordPlannerReachable ? "OK" : "blocked (404/denied)"}
-                  </span>
-                )}
-              </div>
-              {plannerStatus.accessibleCustomers?.length ? (
-                <div className="text-xs font-mono opacity-80">
-                  Accessible: {plannerStatus.accessibleCustomers.join(", ")}
-                </div>
-              ) : null}
-            </div>
-          )}
-
-          {/* Seed mode — like Google Keyword Planner */}
-          <Tabs value={mode} onValueChange={(v) => setMode(v as "keywords" | "website")}>
-            <TabsList>
-              <TabsTrigger value="keywords">Start with keywords</TabsTrigger>
-              <TabsTrigger value="website">Start with a website</TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          {mode === "keywords" ? (
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Enter keywords (one per line)</Label>
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                rows={4}
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                placeholder={"car service\ngarage near me\ncar repair thane"}
-              />
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Your website (optional — improves ideas)</Label>
-                <Input
-                  value={pageUrl}
-                  onChange={(e) => setPageUrl(e.target.value)}
-                  placeholder="https://myfng.in"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Website / page URL</Label>
-              <Input
-                value={pageUrl}
-                onChange={(e) => setPageUrl(e.target.value)}
-                placeholder="https://myfng.in"
-              />
-            </div>
-          )}
-
-          <div className="grid sm:grid-cols-3 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Locations</Label>
-              <Select value={selectedLocation} onValueChange={setSelectedLocation}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">India</SelectItem>
-                  {locations.map((loc) => (
-                    <SelectItem key={loc.id} value={loc.id}>
-                      {loc.city}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Language</Label>
-              <Select value={languageId} onValueChange={setLanguageId}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1000">English</SelectItem>
-                  <SelectItem value="1001">Hindi</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-end">
-              <Button className="w-full" onClick={runResearch} disabled={researching}>
-                {researching ? <Loader2 className="size-4 mr-1.5 animate-spin" /> : <Search className="size-4 mr-1.5" />}
-                Get results
-              </Button>
-            </div>
-          </div>
-
           {researchError && (
             <div className="rounded-lg border border-rose-200 bg-rose-50/80 dark:bg-rose-950/20 p-3 text-sm text-rose-700 dark:text-rose-300 whitespace-pre-wrap">
               {(researchError as Error).message}
-              {!plannerStatus?.loginCustomerIdSet && (
-                <p className="mt-2 text-xs opacity-90">
-                  Tip: MyFNG MCC ke liye <code>.env</code> mein{" "}
-                  <code>GOOGLE_ADS_LOGIN_CUSTOMER_ID=2510208286</code> set karo
-                  (client: <code>GOOGLE_ADS_CUSTOMER_ID=8343316060</code>).
-                </p>
-              )}
             </div>
           )}
 
-          {requestKey && !researching && !researchError && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant="secondary">{ideas.length} keywords</Badge>
-              <Badge variant="outline">Σ {formatVolume(totalVolume)} / mo</Badge>
-              {ideasData?.geoLabel && (
-                <span className="inline-flex items-center gap-1">
-                  <MapPin className="size-3" /> {ideasData.geoLabel}
-                </span>
+              {!researching && !researchError && requestKey && (
+                <>
+                  <span className="font-medium text-foreground">
+                    {ideas.length.toLocaleString("en-IN")} keyword ideas available
+                  </span>
+                  <Badge variant="outline">Σ {formatVolume(totalVolume)} / mo</Badge>
+                  <span>· {ideasData?.geoLabel || geoLabel}</span>
+                  <span>· {ideasData?.dateLabel || dateMeta.label}</span>
+                </>
               )}
-              <span>· Google Search network</span>
             </div>
-          )}
-
-          {ideas.length > 0 && (
-            <div className="flex flex-col sm:flex-row gap-2 sm:items-center justify-between">
-              <div className="relative flex-1 max-w-sm">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-                <Input
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  placeholder="Filter keywords…"
-                  className="pl-8 h-9"
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Select value={compFilter} onValueChange={(v) => setCompFilter(v as typeof compFilter)}>
-                  <SelectTrigger className="w-[140px] h-9">
-                    <SelectValue placeholder="Competition" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All competition</SelectItem>
-                    <SelectItem value="LOW">Low</SelectItem>
-                    <SelectItem value="MEDIUM">Medium</SelectItem>
-                    <SelectItem value="HIGH">High</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select value={sortBy} onValueChange={(v) => setSortBy(v as PlannerSort)}>
-                  <SelectTrigger className="w-[160px] h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="volume">Sort: monthly searches</SelectItem>
-                    <SelectItem value="competition">Sort: competition</SelectItem>
-                    <SelectItem value="bid">Sort: top page bid</SelectItem>
-                    <SelectItem value="alpha">Sort: A–Z</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!selected.size}
-                  onClick={() => void addSelected()}
-                >
-                  <Plus className="size-3.5 mr-1" />
-                  Add selected ({selected.size})
-                </Button>
-              </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              {ideas.length > 0 && (
+                <>
+                  <div className="relative w-[180px]">
+                    <Filter className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                    <Input
+                      value={filter}
+                      onChange={(e) => setFilter(e.target.value)}
+                      placeholder="Add filter…"
+                      className="pl-8 h-9"
+                    />
+                  </div>
+                  <Select value={compFilter} onValueChange={(v) => setCompFilter(v as typeof compFilter)}>
+                    <SelectTrigger className="w-[140px] h-9">
+                      <SelectValue placeholder="Competition" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All competition</SelectItem>
+                      <SelectItem value="LOW">Low</SelectItem>
+                      <SelectItem value="MEDIUM">Medium</SelectItem>
+                      <SelectItem value="HIGH">High</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={sortBy} onValueChange={(v) => setSortBy(v as PlannerSort)}>
+                    <SelectTrigger className="w-[160px] h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="volume">Sort: monthly searches</SelectItem>
+                      <SelectItem value="competition">Sort: competition</SelectItem>
+                      <SelectItem value="bid">Sort: top page bid</SelectItem>
+                      <SelectItem value="alpha">Sort: A–Z</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button size="sm" variant="outline" disabled={!selected.size} onClick={() => void addSelected()}>
+                    <Plus className="size-3.5 mr-1" />
+                    Add selected ({selected.size})
+                  </Button>
+                  <Button size="sm" variant="ghost" className="text-primary" onClick={downloadIdeasCsv}>
+                    <Download className="size-3.5 mr-1.5" />
+                    Download keyword ideas
+                  </Button>
+                </>
+              )}
+              <Button size="sm" variant="outline" onClick={() => setScreen("discover")}>
+                Edit seeds
+              </Button>
             </div>
-          )}
+          </div>
 
           {researching && (
             <div className="space-y-2">
@@ -1547,7 +1899,7 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
                       />
                     </TableHead>
                     <TableHead>Keyword</TableHead>
-                    <TableHead className="text-right min-w-[140px]">Avg. monthly searches</TableHead>
+                    <TableHead className="text-right min-w-[160px]">Avg. monthly searches</TableHead>
                     <TableHead className="min-w-[120px]">Competition</TableHead>
                     <TableHead className="text-right min-w-[150px]">Top of page bid (low–high)</TableHead>
                     <TableHead className="w-24 text-right">Action</TableHead>
@@ -1573,10 +1925,18 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
                         </TableCell>
                         <TableCell className="font-medium">{idea.keyword}</TableCell>
                         <TableCell className="text-right">
-                          <div className="flex flex-col items-end gap-1">
-                            <span className="tabular-nums text-sm font-medium">{formatVolume(idea.avgMonthlySearches)}</span>
-                            <div className="h-1.5 w-24 rounded-full bg-muted overflow-hidden">
-                              <div className="h-full bg-[#0047AB]/80 rounded-full" style={{ width: `${barPct}%` }} />
+                          <div className="flex items-center justify-end gap-2">
+                            <VolumeSparkline values={idea.monthlySearches} />
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="tabular-nums text-sm font-medium">
+                                {formatVolume(idea.avgMonthlySearches)}
+                              </span>
+                              <div className="h-1.5 w-20 rounded-full bg-muted overflow-hidden">
+                                <div
+                                  className="h-full bg-[#1a73e8]/80 rounded-full"
+                                  style={{ width: `${barPct}%` }}
+                                />
+                              </div>
                             </div>
                           </div>
                         </TableCell>
@@ -1612,23 +1972,13 @@ function KeywordResearcher({ locations, activeLocationId }: { locations: { id: s
             </div>
           )}
 
-          {!requestKey && !researching && (
-            <div className="flex flex-col items-center justify-center py-10 text-center text-muted-foreground border border-dashed rounded-xl">
-              <Globe className="size-10 mb-3 opacity-40" />
-              <p className="font-medium text-foreground">Discover new keywords</p>
-              <p className="text-sm mt-1 max-w-md">
-                Enter products/services you offer (like Google Keyword Planner), choose India or a city, then Get results.
-              </p>
-            </div>
-          )}
-
           {requestKey && !researching && !researchError && ideas.length === 0 && (
-            <div className="text-center py-8 text-sm text-muted-foreground">
+            <div className="text-center py-8 text-sm text-muted-foreground border border-dashed rounded-xl">
               No keyword ideas for this seed. Try broader terms (e.g. car service).
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      )}
     </div>
   );
 }

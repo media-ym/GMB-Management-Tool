@@ -675,19 +675,32 @@ model GeoGridResult {
 }
 
 model Competitor {
-  id            String   @id @default(cuid())
-  locationId    String
-  businessName  String
-  googlePlaceId String?
-  category      String?
-  address       String?
-  latitude      Float?
-  longitude     Float?
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
+  id             String   @id @default(cuid())
+  locationId     String
+  businessName   String
+  googlePlaceId  String?
+  category       String?
+  address        String?
+  latitude       Float?
+  longitude      Float?
+  rating         Float?
+  reviewCount    Int?
+  photoCount     Int?
+  serviceCount   Int?
+  productCount   Int?
+  qnaCount       Int?
+  categoryCount  Int?
+  distance       Float?
+  phone          String?
+  website        String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
 
-  location      Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  rankings      CompetitorRanking[]
+  location       Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  rankings       CompetitorRanking[]
+
+  @@index([locationId])
+  @@index([googlePlaceId])
 }
 
 model CompetitorRanking {

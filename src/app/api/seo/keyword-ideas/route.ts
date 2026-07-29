@@ -6,9 +6,12 @@ import {
   generateKeywordIdeas,
   getKeywordPlannerStatus,
   isGoogleAdsConfigured,
+  type PlannerDatePreset,
 } from "@/lib/google-ads-keyword-planner";
 
 export const dynamic = "force-dynamic";
+
+const DATE_PRESETS = new Set(["1", "3", "6", "12"]);
 
 export async function GET() {
   const user = await getSessionUser();
@@ -51,14 +54,22 @@ export async function POST(req: NextRequest) {
       if (scoped && !scoped.includes(locationId)) return forbidden();
     }
 
+    const geoTargetConstant =
+      typeof body.geoTargetConstant === "string"
+        ? body.geoTargetConstant.replace(/\D/g, "")
+        : undefined;
     const pageUrl = (body.pageUrl as string | undefined) || undefined;
     const languageId = (body.languageId as string | undefined) || undefined;
+    const rawPreset = String(body.datePreset ?? "1");
+    const datePreset = (DATE_PRESETS.has(rawPreset) ? rawPreset : "1") as PlannerDatePreset;
 
     const result = await generateKeywordIdeas({
       seeds,
       locationId,
+      geoTargetConstant,
       pageUrl,
       languageId,
+      datePreset,
       pageSize: body.pageSize ? Number(body.pageSize) : 50,
     });
 

@@ -1,38 +1,30 @@
 import { getValidAccessToken, getGoogleOAuthScopeStatus } from "@/lib/google-service";
 import { db } from "@/lib/db";
+import {
+  CITY_GEO,
+  GEO_INDIA,
+  LANGUAGE_ENGLISH,
+  geoLabelForConstant,
+  plannerYearMonthRange,
+  type PlannerDatePreset,
+  type YearMonth,
+} from "@/lib/google-ads-keyword-geo";
+
+export {
+  LANGUAGE_ENGLISH,
+  LANGUAGE_HINDI,
+  GEO_INDIA,
+  INDIA_GEO_OPTIONS,
+  CITY_GEO,
+  DATE_PRESET_OPTIONS,
+  geoLabelForConstant,
+  plannerYearMonthRange,
+  type PlannerDatePreset,
+  type YearMonth,
+} from "@/lib/google-ads-keyword-geo";
 
 /** Prefer newest supported; v20+ older majors are sunset */
 const ADS_API_VERSIONS = ["v25", "v24", "v23", "v22"] as const;
-
-/** Language: English */
-export const LANGUAGE_ENGLISH = "1000";
-/** Language: Hindi */
-export const LANGUAGE_HINDI = "1001";
-
-/** Geo: India */
-export const GEO_INDIA = "2356";
-
-const CITY_GEO: Record<string, string> = {
-  mumbai: "1007785",
-  "thane west": "1007785",
-  thane: "1007785",
-  "navi mumbai": "1007785",
-  "mira road east": "1007785",
-  "vile parle west": "1007785",
-  kalyan: "1007785",
-  "kalyan west": "1007785",
-  "kalyan east": "1007785",
-  dombivli: "1007785",
-  pune: "1007788",
-  delhi: "1007751",
-  "new delhi": "1007751",
-  bangalore: "1007745",
-  bengaluru: "1007745",
-  hyderabad: "1007765",
-  chennai: "1007747",
-  kolkata: "1007772",
-  ahmedabad: "1007740",
-};
 
 export type KeywordIdea = {
   keyword: string;
@@ -41,6 +33,7 @@ export type KeywordIdea = {
   competitionIndex: number | null;
   lowBidInr: number | null;
   highBidInr: number | null;
+  monthlySearches?: number[];
 };
 
 export type KeywordIdeasResult = {
@@ -50,6 +43,9 @@ export type KeywordIdeasResult = {
   geoLabel: string;
   geoTargetConstant: string;
   languageId: string;
+  datePreset: PlannerDatePreset;
+  dateLabel: string;
+  yearMonthRange: { start: YearMonth; end: YearMonth };
   customerIdUsed: string;
   source: "google_ads";
 };
@@ -83,9 +79,20 @@ export async function resolveGeoForLocation(locationId?: string | null): Promise
   const cityKey = (loc.city || "").toLowerCase().trim();
   const geo = CITY_GEO[cityKey];
   if (geo) {
-    return { geoTargetConstant: geo, geoLabel: loc.city || "Mumbai metro" };
+    return { geoTargetConstant: geo, geoLabel: loc.city || geoLabelForConstant(geo) };
   }
   return { geoTargetConstant: GEO_INDIA, geoLabel: loc.city ? `${loc.city}, India` : "India" };
+}
+
+export async function resolveGeoTarget(opts: {
+  geoTargetConstant?: string | null;
+  locationId?: string | null;
+}): Promise<{ geoTargetConstant: string; geoLabel: string }> {
+  const geo = opts.geoTargetConstant?.replace(/\D/g, "").trim();
+  if (geo) {
+    return { geoTargetConstant: geo, geoLabel: geoLabelForConstant(geo) };
+  }
+  return resolveGeoForLocation(opts.locationId);
 }
 
 function microsToInr(micros: number | string | null | undefined): number | null {
@@ -180,6 +187,12 @@ function mapIdeaResults(results: any[]): KeywordIdea[] {
         m.avgMonthlySearches != null ? parseInt(String(m.avgMonthlySearches), 10) : null;
       const idx =
         m.competitionIndex != null ? parseInt(String(m.competitionIndex), 10) : null;
+      const monthly = Array.isArray(m.monthlySearchVolumes)
+        ? m.monthlySearchVolumes.map((v: any) => {
+            const n = parseInt(String(v.monthlySearches ?? 0), 10);
+            return Number.isFinite(n) ? n : 0;
+          })
+        : undefined;
       return {
         keyword: (r.text || "").trim(),
         avgMonthlySearches: Number.isFinite(avg as number) ? (avg as number) : null,
@@ -187,6 +200,7 @@ function mapIdeaResults(results: any[]): KeywordIdea[] {
         competitionIndex: Number.isFinite(idx as number) ? (idx as number) : null,
         lowBidInr: microsToInr(m.lowTopOfPageBidMicros),
         highBidInr: microsToInr(m.highTopOfPageBidMicros),
+        monthlySearches: monthly,
       };
     })
     .filter((i) => i.keyword)
@@ -196,8 +210,11 @@ function mapIdeaResults(results: any[]): KeywordIdea[] {
 export async function generateKeywordIdeas(opts: {
   seeds: string[];
   locationId?: string | null;
+  geoTargetConstant?: string | null;
   pageUrl?: string | null;
   languageId?: string;
+  /** Historical window; default last 1 complete month */
+  datePreset?: PlannerDatePreset;
   pageSize?: number;
 }): Promise<KeywordIdeasResult> {
   const { developerToken, customerId, loginCustomerId } = adsConfig();
@@ -228,14 +245,25 @@ export async function generateKeywordIdeas(opts: {
     throw new Error("Provide at least one seed keyword or a website URL");
   }
 
-  const { geoTargetConstant, geoLabel } = await resolveGeoForLocation(opts.locationId);
+  const { geoTargetConstant, geoLabel } = await resolveGeoTarget({
+    geoTargetConstant: opts.geoTargetConstant,
+    locationId: opts.locationId,
+  });
   const languageId = opts.languageId || LANGUAGE_ENGLISH;
+  const datePreset = (opts.datePreset || "1") as PlannerDatePreset;
+  const { start, end, label: dateLabel } = plannerYearMonthRange(datePreset);
 
   const body: Record<string, unknown> = {
     language: `languageConstants/${languageId}`,
     geoTargetConstants: [`geoTargetConstants/${geoTargetConstant}`],
     includeAdultKeywords: false,
     keywordPlanNetwork: "GOOGLE_SEARCH_AND_PARTNERS",
+    historicalMetricsOptions: {
+      yearMonthRange: {
+        start: { year: start.year, month: start.month },
+        end: { year: end.year, month: end.month },
+      },
+    },
   };
 
   if (seeds.length && pageUrl) {
@@ -246,17 +274,13 @@ export async function generateKeywordIdeas(opts: {
     body.keywordSeed = { keywords: seeds };
   }
 
-  // Login-customer-id candidates. Only use MCC if the OAuth user can actually access it.
   const accessible = await listAccessibleCustomerIds(accessToken, developerToken);
   const mccUsable = !!(loginCustomerId && accessible.includes(loginCustomerId));
   const loginCandidates: (string | null)[] = Array.from(
     new Set<(string | null)>([
-      // Prefer MCC when OAuth user is on that manager
       ...(mccUsable ? [loginCustomerId] : []),
-      // Direct access to the client (your case: 8343316060 is accessible, MCC is not)
       customerId,
       ...accessible,
-      // Some setups work with no login-customer-id header
       null,
     ]),
   );
@@ -284,6 +308,9 @@ export async function generateKeywordIdeas(opts: {
           geoLabel,
           geoTargetConstant,
           languageId,
+          datePreset,
+          dateLabel,
+          yearMonthRange: { start, end },
           customerIdUsed: customerId,
           source: "google_ads",
         };
@@ -292,7 +319,6 @@ export async function generateKeywordIdeas(opts: {
       lastError = extractAdsError(res.status, res.text, res.json);
       if (res.status === 401 || res.status === 403) {
         sawPermissionDenied = true;
-        // Try next login-customer-id / version — do not hard-fail on the first 403
         continue;
       }
     }
@@ -348,7 +374,6 @@ export async function getKeywordPlannerStatus(): Promise<{
         accessibleCustomers = await listAccessibleCustomerIds(token, developerToken);
         adsApiReachable = accessibleCustomers.length > 0;
 
-        // Probe Keyword Planner with a tiny request (diagnose 404 vs auth)
         if (customerId) {
           const mccUsable = !!(loginCustomerId && accessibleCustomers.includes(loginCustomerId));
           const probeLogin = mccUsable ? loginCustomerId : customerId;

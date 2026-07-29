@@ -61,6 +61,48 @@ export function getDurationLabel(
   return PRESET_OPTIONS.find((o) => o.value === value)?.label ?? "All Time";
 }
 
+/** Inclusive calendar bounds for a duration preset, or null for All Time. */
+export function durationToBounds(
+  value: DurationValue,
+  customRange?: DurationCustomRange | null,
+): { from: Date; to: Date | null } | null {
+  if (value === "all") return null;
+
+  let from: Date | null = null;
+  let to: Date | null = null;
+  const now = new Date();
+
+  if (value === "custom" && customRange?.from) {
+    from = new Date(customRange.from);
+    from.setHours(0, 0, 0, 0);
+    if (customRange.to) {
+      to = new Date(customRange.to);
+      to.setHours(23, 59, 59, 999);
+    }
+  } else if (value === "today") {
+    from = new Date(now);
+    from.setHours(0, 0, 0, 0);
+  } else if (value === "yesterday") {
+    from = new Date(now);
+    from.setDate(from.getDate() - 1);
+    from.setHours(0, 0, 0, 0);
+    to = new Date(from);
+    to.setHours(23, 59, 59, 999);
+  } else if (value === "6m") {
+    from = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    from.setHours(0, 0, 0, 0);
+  } else {
+    const days = parseInt(value, 10);
+    if (Number.isFinite(days)) {
+      from = new Date(now);
+      from.setDate(from.getDate() - days);
+    }
+  }
+
+  if (!from) return null;
+  return { from, to };
+}
+
 interface DurationFilterProps {
   value: DurationValue;
   onChange: (value: DurationValue) => void;
