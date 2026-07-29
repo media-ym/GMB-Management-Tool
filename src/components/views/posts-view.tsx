@@ -1864,22 +1864,44 @@ function editorStateFromPost(
   };
 }
 
+type EditorLocation = {
+  id: string;
+  name: string;
+  city: string;
+  status?: string;
+  phone?: string | null;
+  verificationState?: string | null;
+};
+
+function isLocationVerified(l: EditorLocation) {
+  return (l.verificationState ?? "verified") === "verified";
+}
+
 function PostEditorDialog({
   open, onOpenChange, post, locations, defaultLocationId, defaultScheduledAt, defaultType, onSaved,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   post: PostWithLocation | null;
-  locations: { id: string; name: string; city: string; status?: string; phone?: string | null }[];
+  locations: EditorLocation[];
   defaultLocationId?: string;
   defaultScheduledAt?: Date | null;
   defaultType?: string;
   onSaved: () => void;
 }) {
   const isEdit = !!post;
-  const activeLocations = React.useMemo(() => locations, [locations]);
+  /** GBP posts only work on verified listings — unverified are excluded from publish targets. */
+  const publishableLocations = React.useMemo(
+    () => locations.filter((l) => l.status !== "paused" && isLocationVerified(l)),
+    [locations],
+  );
+  const activeLocations = publishableLocations;
   const allActiveIds = React.useMemo(
-    () => locations.filter((l) => l.status !== "paused").map((l) => l.id),
+    () => publishableLocations.map((l) => l.id),
+    [publishableLocations],
+  );
+  const unverifiedActiveCount = React.useMemo(
+    () => locations.filter((l) => l.status !== "paused" && !isLocationVerified(l)).length,
     [locations],
   );
 
@@ -1920,8 +1942,11 @@ function PostEditorDialog({
 
   // Resolve final list of location IDs based on publish mode (for multi-publish)
   function resolveMultiLocationIds(): string[] {
+    const publishable = new Set(allActiveIds);
     if (state.publishMode === "all") return allActiveIds;
-    if (state.publishMode === "multiple") return state.selectedLocationIds;
+    if (state.publishMode === "multiple") {
+      return state.selectedLocationIds.filter((id) => publishable.has(id));
+    }
     return [];
   }
 
@@ -2233,7 +2258,11 @@ function PostEditorDialog({
                     <Megaphone className="size-4 text-primary" />
                     <span className="text-sm font-semibold">Publish to</span>
                     <Badge variant="outline" className="ml-auto text-[10px] py-0 px-1.5">
-                      {state.publishMode === "single" ? "1 location" : state.publishMode === "multiple" ? `${state.selectedLocationIds.length} locations` : `${allActiveIds.length} active`}
+                      {state.publishMode === "single"
+                        ? "1 location"
+                        : state.publishMode === "multiple"
+                          ? `${state.selectedLocationIds.length} verified`
+                          : `${allActiveIds.length} verified`}
                     </Badge>
                   </div>
                   <div className="grid grid-cols-3 gap-1.5">
@@ -2263,7 +2292,16 @@ function PostEditorDialog({
                   {state.publishMode === "single" && (
                     <div className="space-y-1.5">
                       <Label className="text-xs">Location <span className="text-rose-500">*</span></Label>
-                      <Select value={state.locationId} onValueChange={(v) => update("locationId", v)}>
+                      <Select
+                        value={state.locationId}
+                        onValueChange={(v) => {
+                          update("locationId", v);
+                          if (state.ctaType === "call") {
+                            const loc = locations.find((l) => l.id === v);
+                            update("ctaUrl", loc?.phone || "");
+                          }
+                        }}
+                      >
                         <SelectTrigger className="w-full">
                           <MapPin className="size-3.5 mr-1 text-muted-foreground" />
                           <SelectValue placeholder="Select location" />
@@ -2324,9 +2362,19 @@ function PostEditorDialog({
                     <div className="rounded-md bg-emerald-500/5 border border-emerald-500/20 p-2 text-xs text-emerald-700 dark:text-emerald-400 flex items-start gap-2">
                       <CheckCheck className="size-3.5 mt-0.5 shrink-0" />
                       <span>
-                        This will create one post for each of <strong>{allActiveIds.length}</strong> active locations.
+                        This will create one post for each of <strong>{allActiveIds.length}</strong> verified active locations.
+                        {unverifiedActiveCount > 0 && (
+                          <>{" "}({unverifiedActiveCount} unverified skipped — Google blocks posts there.)</>
+                        )}
                       </span>
                     </div>
+                  )}
+
+                  {unverifiedActiveCount > 0 && state.publishMode !== "all" && (
+                    <p className="text-[10px] text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+                      <AlertTriangle className="size-3 mt-0.5 shrink-0" />
+                      {unverifiedActiveCount} unverified listing{unverifiedActiveCount === 1 ? "" : "s"} hidden — Google does not allow posts on unverified profiles.
+                    </p>
                   )}
                 </div>
               )}
@@ -2506,8 +2554,13 @@ function PostEditorDialog({
                 <Select value={state.ctaType} onValueChange={(v) => {
                   update("ctaType", v);
                   if (v === "call") {
-                    const loc = locations.find((l) => l.id === state.locationId);
-                    update("ctaUrl", loc?.phone || "");
+                    // Google CALL CTA uses each listing's own GBP phone — no shared URL.
+                    if (state.publishMode === "single") {
+                      const loc = locations.find((l) => l.id === state.locationId);
+                      update("ctaUrl", loc?.phone || "");
+                    } else {
+                      update("ctaUrl", "");
+                    }
                   } else {
                     update("ctaUrl", "");
                   }
@@ -2529,13 +2582,27 @@ function PostEditorDialog({
               )}
               {state.type !== "offer" && state.ctaType === "call" && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Phone number</Label>
-                  <Input
-                    value={state.ctaUrl || locations.find((l) => l.id === state.locationId)?.phone || ""}
-                    readOnly
-                    className="bg-muted"
-                  />
-                  <p className="text-[10px] text-muted-foreground">Customers will call this number</p>
+                  {state.publishMode === "single" ? (
+                    <>
+                      <Label className="text-xs">Phone number</Label>
+                      <Input
+                        value={locations.find((l) => l.id === state.locationId)?.phone || "No phone on this listing"}
+                        readOnly
+                        className="bg-muted"
+                      />
+                      <p className="text-[10px] text-muted-foreground">
+                        Customers call this location&apos;s Google Business Profile number.
+                      </p>
+                    </>
+                  ) : (
+                    <div className="rounded-md border border-sky-500/20 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300 space-y-1">
+                      <p className="font-medium">Call now uses each location&apos;s own number</p>
+                      <p className="text-[11px] opacity-90 leading-relaxed">
+                        Google does not take one shared phone for Call CTA. Har location pe us listing ka GBP phone lagega
+                        (jo Locations mein synced hai) — ek hi number sab pe nahi dikhega.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
               {state.type !== "offer" && state.ctaType !== "none" && state.ctaType !== "call" && (
@@ -2817,10 +2884,20 @@ function PostEditorDialog({
               <Megaphone className="size-4 text-primary" />
               Publish to {multiLocationCount} locations?
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will create <strong className="text-foreground">{multiLocationCount}</strong> {multiLocationCount === 1 ? "post" : "posts"} across <strong className="text-foreground">{multiLocationCount}</strong> {multiLocationCount === 1 ? "location" : "locations"}.
-              {" "}Each location will get its own {state.status === "published" ? "published" : state.status === "scheduled" ? "scheduled" : "draft"} post with the same content &amp; CTA.
-              {" "}Continue?
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>
+                  This will create <strong className="text-foreground">{multiLocationCount}</strong> {multiLocationCount === 1 ? "post" : "posts"} across <strong className="text-foreground">{multiLocationCount}</strong> verified {multiLocationCount === 1 ? "location" : "locations"}.
+                  {" "}Each location will get its own {state.status === "published" ? "published" : state.status === "scheduled" ? "scheduled" : "draft"} post with the same content
+                  {state.ctaType === "call" ? " — Call CTA will use that location's own phone number" : " & CTA"}.
+                </p>
+                {unverifiedActiveCount > 0 && (
+                  <p className="text-amber-700 dark:text-amber-400">
+                    {unverifiedActiveCount} unverified listing{unverifiedActiveCount === 1 ? "" : "s"} skipped (Google does not allow posts there).
+                  </p>
+                )}
+                <p>Continue?</p>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

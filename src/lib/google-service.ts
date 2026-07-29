@@ -871,6 +871,68 @@ export async function createGooglePost(accessToken: string, locationName: string
   return data;
 }
 
+/** Google localPosts media.sourceUrl must be a public HTTPS URL Google can crawl. */
+export function isGoogleFetchablePublicUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    if (host === "localhost" || host.endsWith(".local")) return false;
+    if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return false;
+    // Bare IPv4 hosts (incl. self-hosted Supabase on http IP) are usually rejected
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Google localPosts only accept media.sourceUrl that is publicly crawlable HTTPS.
+ * Self-hosted Supabase on http://IP is rejected — rewrite via an HTTPS image proxy
+ * so Google can fetch the bytes. Prefer putting Storage behind real HTTPS long-term.
+ */
+export function toGoogleFetchableImageUrl(imageUrl: string): string {
+  if (isGoogleFetchablePublicUrl(imageUrl)) return imageUrl;
+  try {
+    const u = new URL(imageUrl);
+    // weserv expects host/path (optional protocol); output=jpg keeps size reasonable
+    const target = `${u.host}${u.pathname}${u.search}`;
+    return `https://images.weserv.nl/?url=${encodeURIComponent(target)}&output=jpg`;
+  } catch {
+    return imageUrl;
+  }
+}
+
+/**
+ * Ensure a post image URL is usable as localPosts media.sourceUrl.
+ */
+export async function resolveLocalPostMediaSourceUrl(
+  _accessToken: string,
+  _v4LocationName: string,
+  imageUrl: string,
+): Promise<string> {
+  const resolved = toGoogleFetchableImageUrl(imageUrl);
+  if (!isGoogleFetchablePublicUrl(resolved) && resolved === imageUrl) {
+    throw new Error(
+      "Post image URL is not public HTTPS. Google cannot fetch http:// IP or private storage links. Put Storage behind HTTPS, then retry.",
+    );
+  }
+  return resolved;
+}
+
+/** Attach media to a localPosts payload, rewriting non-public URLs via Google upload. */
+export async function attachLocalPostMedia(
+  accessToken: string,
+  v4LocationName: string,
+  googlePostData: Record<string, unknown>,
+  imageUrl: string | null | undefined,
+): Promise<void> {
+  if (!imageUrl || imageUrl.includes("localhost") || imageUrl.includes("127.0.0.1")) return;
+  const sourceUrl = await resolveLocalPostMediaSourceUrl(accessToken, v4LocationName, imageUrl);
+  googlePostData.media = [{ mediaFormat: "PHOTO", sourceUrl }];
+}
+
 export async function deleteGooglePost(accessToken: string, postName: string): Promise<boolean> {
   // postName is the full Google post name like "accounts/{aid}/locations/{lid}/localPosts/{pid}"
   await withRetry<any>(() =>
@@ -1323,28 +1385,24 @@ export async function syncLocationAnalytics(locationId: string, daysBack: number
 
     // Only replace after a successful non-empty fetch (never wipe on failure)
     await db.analyticDaily.deleteMany({ where: { locationId } });
-
-    let synced = 0;
-    for (const day of dailyMetrics) {
-      await db.analyticDaily.create({
-        data: {
-          locationId,
-          date: day.date,
-          searchViews: day.searchViews,
-          mapsViews: day.mapsViews,
-          searchDesktop: day.searchDesktop,
-          searchMobile: day.searchMobile,
-          mapsDesktop: day.mapsDesktop,
-          mapsMobile: day.mapsMobile,
-          websiteClicks: day.websiteClicks,
-          phoneCalls: day.phoneCalls,
-          directionRequests: day.directionRequests,
-          conversations: day.conversations,
-          bookings: day.bookings,
-        },
-      });
-      synced++;
-    }
+    await db.analyticDaily.createMany({
+      data: dailyMetrics.map((day) => ({
+        locationId,
+        date: day.date,
+        searchViews: day.searchViews,
+        mapsViews: day.mapsViews,
+        searchDesktop: day.searchDesktop,
+        searchMobile: day.searchMobile,
+        mapsDesktop: day.mapsDesktop,
+        mapsMobile: day.mapsMobile,
+        websiteClicks: day.websiteClicks,
+        phoneCalls: day.phoneCalls,
+        directionRequests: day.directionRequests,
+        conversations: day.conversations,
+        bookings: day.bookings,
+      })),
+    });
+    const synced = dailyMetrics.length;
 
     console.log("[syncLocationAnalytics] Wrote", synced, "days for", locationId);
     return { synced, errors };
@@ -1914,228 +1972,185 @@ export async function syncLocationFull(locationId: string): Promise<{
 
     // ─── 2. Sync Business Hours ─────────────────────────────────────────
     if (profile.regularHours?.periods?.length > 0) {
-      // Clear existing hours
       await db.businessHour.deleteMany({ where: { locationId } });
-      // Map Google's day codes (0=Sun..6=Sat) to our dayOfWeek
       const dayMap: Record<string, number> = { SUNDAY: 0, MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6 };
-      for (const period of profile.regularHours.periods) {
-        const day = dayMap[period.openDay] ?? 0;
-        await db.businessHour.create({
-          data: {
-            locationId,
-            dayOfWeek: day,
-            openTime: `${period.openTime?.hours?.toString().padStart(2, "0") || "10"}:${period.openTime?.minutes?.toString().padStart(2, "0") || "00"}`,
-            closeTime: `${period.closeTime?.hours?.toString().padStart(2, "0") || "20"}:${period.closeTime?.minutes?.toString().padStart(2, "0") || "00"}`,
-            isClosed: false,
-          },
-        });
-        result.hours++;
-      }
+      const hourRows = profile.regularHours.periods.map((period: any) => ({
+        locationId,
+        dayOfWeek: dayMap[period.openDay] ?? 0,
+        openTime: `${period.openTime?.hours?.toString().padStart(2, "0") || "10"}:${period.openTime?.minutes?.toString().padStart(2, "0") || "00"}`,
+        closeTime: `${period.closeTime?.hours?.toString().padStart(2, "0") || "20"}:${period.closeTime?.minutes?.toString().padStart(2, "0") || "00"}`,
+        isClosed: false,
+      }));
+      await db.businessHour.createMany({ data: hourRows });
+      result.hours = hourRows.length;
     }
 
     // ─── 3. Sync Categories ─────────────────────────────────────────────
     if (profile.categories) {
       await db.businessCategory.deleteMany({ where: { locationId } });
+      const catRows: { locationId: string; categoryName: string; isPrimary: boolean }[] = [];
       if (profile.categories.primaryCategory) {
-        await db.businessCategory.create({
-          data: { locationId, categoryName: profile.categories.primaryCategory.displayName || "Auto Repair Shop", isPrimary: true },
+        catRows.push({
+          locationId,
+          categoryName: profile.categories.primaryCategory.displayName || "Auto Repair Shop",
+          isPrimary: true,
         });
-        result.categories++;
       }
       for (const cat of profile.categories.additionalCategories || []) {
-        await db.businessCategory.create({
-          data: { locationId, categoryName: cat.displayName || "", isPrimary: false },
-        });
-        result.categories++;
+        catRows.push({ locationId, categoryName: cat.displayName || "", isPrimary: false });
       }
+      if (catRows.length) await db.businessCategory.createMany({ data: catRows });
+      result.categories = catRows.length;
     }
 
     // ─── 4. Sync Services ───────────────────────────────────────────────
     if (profile.serviceItems?.length > 0) {
       await db.service.deleteMany({ where: { locationId } });
-      for (const service of profile.serviceItems) {
-        const svcName = service.freeFormServiceItem?.label?.displayName
+      const serviceRows = profile.serviceItems.map((service: any) => ({
+        locationId,
+        serviceName:
+          service.freeFormServiceItem?.label?.displayName
           || service.structuredServiceItem?.description
           || service.displayName
           || service.name
-          || "Service";
-        const svcCategory = service.freeFormServiceItem?.categoryId
+          || "Service",
+        description: service.description || null,
+        category:
+          service.freeFormServiceItem?.categoryId
           || service.structuredServiceItem?.serviceTypeId
           || service.category
-          || null;
-        await db.service.create({
-          data: {
-            locationId,
-            serviceName: svcName,
-            description: service.description || null,
-            category: svcCategory,
-            status: "active",
-          },
-        });
-        result.services++;
-      }
+          || null,
+        status: "active",
+      }));
+      await db.service.createMany({ data: serviceRows });
+      result.services = serviceRows.length;
     }
 
-    // ─── 4b. Sync GMB product catalog + PRODUCT posts into MyFNG DB ─────
-    try {
-      const { syncGoogleProductsForLocation } = await import("./google-product-sync");
-      const productResult = await syncGoogleProductsForLocation(locationId);
-      if (productResult.errors.length) {
-        errors.push(...productResult.errors.map((e) => `Products: ${e}`));
-      }
-    } catch (e: any) {
-      errors.push(`Product sync: ${e.message}`);
-      await logError("google.sync.full", null, e.message, { locationId, step: "products" });
-    }
-
-    // ─── 5. Sync Reviews (v4 API — needs accounts/…/locations/… path) ──
-    try {
-      const reviews = await listReviews(accessToken, v4LocationName);
-      const reviewResult = await syncLocationReviewsFromGoogle(locationId, reviews);
-      result.reviews += reviewResult.created;
-    } catch (e: any) {
-      errors.push(`Reviews sync: ${e.message}`);
-      await logError("google.sync.full", null, e.message, { locationId, step: "reviews" });
-    }
-
-    // ─── 6. Sync Photos (v4 API — accounts/…/locations/…/media) ───────────
-    try {
-      const photoResult = await syncLocationPhotosFromGoogle(locationId);
-      result.photos += photoResult.created + photoResult.updated;
-      if (photoResult.errors.length) errors.push(...photoResult.errors.map((e) => `Photos sync: ${e}`));
-    } catch (e: any) {
-      errors.push(`Photos sync: ${e.message}`);
-      await logError("google.sync.full", null, e.message, { locationId, step: "photos" });
-    }
-
-    // ─── 6b. Sync social links, chat, menu into attributesJson ──────────
-    try {
-      const extrasResult = await syncLocationProfileExtrasFromGoogle(locationId);
-      if (extrasResult.errors.length) {
-        errors.push(...extrasResult.errors.map((e) => `Profile extras: ${e}`));
-      }
-    } catch (e: any) {
-      errors.push(`Profile extras: ${e.message}`);
-    }
-
-    // ─── 7. Sync Business Information (description, website, appointment URL) ──
+    // ─── 5–8. Local profile extras (fast DB writes; no Google round-trips) ─
     try {
       const description = profile.profile?.description || profile.metadata?.description || null;
       const website = profile.websiteUri || null;
       const appointmentUrl = profile.profile?.appointmentUrl || null;
-
-      if (gbp) {
-        const existingInfo = await db.businessInformation.findFirst({ where: { profileId: gbp.id } });
-        if (existingInfo) {
-          await db.businessInformation.update({
-            where: { id: existingInfo.id },
-            data: { description, website, appointmentUrl },
-          });
-        } else {
-          await db.businessInformation.create({
-            data: { profileId: gbp.id, locationId, description, website, appointmentUrl },
-          });
-        }
+      const existingInfo = await db.businessInformation.findFirst({ where: { profileId: gbp.id } });
+      if (existingInfo) {
+        await db.businessInformation.update({
+          where: { id: existingInfo.id },
+          data: { description, website, appointmentUrl },
+        });
+      } else {
+        await db.businessInformation.create({
+          data: { profileId: gbp.id, locationId, description, website, appointmentUrl },
+        });
       }
     } catch (e: any) {
       errors.push(`Business info sync: ${e.message}`);
       await logError("google.sync.full", null, e.message, { locationId, step: "business_info" });
     }
 
-    // ─── 8. Sync Attributes (wheelchair accessible, appointments, etc.) ────
     try {
       if (profile.attributes?.length > 0) {
         await db.businessAttribute.deleteMany({ where: { locationId } });
-        for (const attr of profile.attributes) {
-          await db.businessAttribute.create({
-            data: {
-              locationId,
-              attributeName: attr.name || attr.displayName || "Attribute",
-              attributeValue: Array.isArray(attr.value) ? attr.value.join(", ") : String(attr.value ?? "true"),
-            },
-          });
-        }
+        await db.businessAttribute.createMany({
+          data: profile.attributes.map((attr: any) => ({
+            locationId,
+            attributeName: attr.name || attr.displayName || "Attribute",
+            attributeValue: Array.isArray(attr.value) ? attr.value.join(", ") : String(attr.value ?? "true"),
+          })),
+        });
       }
     } catch (e: any) {
       errors.push(`Attributes sync: ${e.message}`);
       await logError("google.sync.full", null, e.message, { locationId, step: "attributes" });
     }
 
-    // ─── 9. Sync Special Hours (holidays) ─────────────────────────────────
     try {
       if (profile.specialHours?.specialHourRanges?.length > 0) {
         await db.specialHour.deleteMany({ where: { locationId } });
-        for (const range of profile.specialHours.specialHourRanges) {
-          const startDate = range.startDate ? new Date(`${range.startDate.year}-${String(range.startDate.month).padStart(2, "0")}-${String(range.startDate.day).padStart(2, "0")}`) : new Date();
-          await db.specialHour.create({
-            data: {
+        await db.specialHour.createMany({
+          data: profile.specialHours.specialHourRanges.map((range: any) => {
+            const startDate = range.startDate
+              ? new Date(`${range.startDate.year}-${String(range.startDate.month).padStart(2, "0")}-${String(range.startDate.day).padStart(2, "0")}`)
+              : new Date();
+            return {
               locationId,
               date: startDate,
               openTime: range.openTime ? `${String(range.openTime.hours).padStart(2, "0")}:${String(range.openTime.minutes).padStart(2, "0")}` : null,
               closeTime: range.closeTime ? `${String(range.closeTime.hours).padStart(2, "0")}:${String(range.closeTime.minutes).padStart(2, "0")}` : null,
               isClosed: !range.openTime,
-            },
-          });
-        }
+            };
+          }),
+        });
       }
     } catch (e: any) {
       errors.push(`Special hours sync: ${e.message}`);
       await logError("google.sync.full", null, e.message, { locationId, step: "special_hours" });
     }
 
-    // ─── 10. Sync Analytics (real Google Business Performance API) ────────
-    try {
-      const analyticsResult = await syncLocationAnalytics(locationId, 180);
-      result.analytics = analyticsResult.synced;
-      if (analyticsResult.errors.length > 0) {
-        errors.push(`Analytics sync: ${analyticsResult.errors.join("; ")}`);
-        await logError("google.sync.full", null, analyticsResult.errors.join("; "), { locationId, step: "analytics" });
-      }
-      if (analyticsResult.synced === 0 && analyticsResult.errors.length === 0) {
-        errors.push("Analytics sync: Google returned 0 daily metric rows for this location");
-      }
-    } catch (e: any) {
-      errors.push(`Analytics sync: ${e.message}`);
-      await logError("google.sync.full", null, e.message, { locationId, step: "analytics" });
-    }
+    // ─── 9. Parallel Google pulls: reviews + photos + posts + analytics ──
+    // Product catalog scrape is slow/unreliable — skip in full sync (use Products → Import).
+    const [reviewOutcome, photoOutcome, postsOutcome, analyticsOutcome, extrasOutcome] = await Promise.all([
+      (async () => {
+        try {
+          const reviews = await listReviews(accessToken, v4LocationName);
+          const reviewResult = await syncLocationReviewsFromGoogle(locationId, reviews);
+          return { created: reviewResult.created, error: null as string | null };
+        } catch (e: any) {
+          await logError("google.sync.full", null, e.message, { locationId, step: "reviews" });
+          return { created: 0, error: `Reviews sync: ${e.message}` };
+        }
+      })(),
+      (async () => {
+        try {
+          const photoResult = await syncLocationPhotosFromGoogle(locationId);
+          return {
+            count: photoResult.created + photoResult.updated,
+            errors: photoResult.errors.map((e) => `Photos sync: ${e}`),
+          };
+        } catch (e: any) {
+          await logError("google.sync.full", null, e.message, { locationId, step: "photos" });
+          return { count: 0, errors: [`Photos sync: ${e.message}`] };
+        }
+      })(),
+      (async () => {
+        try {
+          const googlePosts = await listGooglePosts(accessToken, v4LocationName);
+          const existingPosts = await db.post.findMany({
+            where: { locationId, googlePostId: { not: null } },
+            select: { googlePostId: true },
+          });
+          const existingPostIds = new Set(existingPosts.map((p) => p.googlePostId).filter(Boolean) as string[]);
+          const existingProducts = await db.product.findMany({
+            where: { locationId, googleItemId: { not: null } },
+            select: { googleItemId: true },
+          });
+          const existingProductIds = new Set(existingProducts.map((p) => p.googleItemId).filter(Boolean) as string[]);
 
-    // ─── 11. Sync Posts (v4 API — pull existing Google posts) ──────────────
-    try {
-      const googlePosts = await listGooglePosts(accessToken, v4LocationName);
-      let postsSynced = 0;
-      let productsSynced = 0;
-      for (const gp of googlePosts) {
-        const googlePostId = gp.name;
-        if (!googlePostId) continue;
-        const topicType = gp.topicType || "STANDARD";
+          const postRows: any[] = [];
+          const productRows: any[] = [];
+          for (const gp of googlePosts) {
+            const googlePostId = gp.name;
+            if (!googlePostId) continue;
+            const topicType = gp.topicType || "STANDARD";
 
-        // PRODUCT type posts go to the Product table
-        if (topicType === "PRODUCT") {
-          const productName = gp.summary || gp.event?.title || "Product";
-          const existing = await db.product.findFirst({ where: { locationId, googleItemId: googlePostId } });
-          if (!existing) {
-            await db.product.create({
-              data: {
+            if (topicType === "PRODUCT") {
+              if (existingProductIds.has(googlePostId)) continue;
+              productRows.push({
                 locationId,
-                name: productName,
+                name: gp.summary || gp.event?.title || "Product",
                 description: gp.summary || null,
                 imageUrl: gp.media?.[0]?.googleUrl || gp.media?.[0]?.sourceUrl || null,
                 googleItemId: googlePostId,
                 source: "google",
                 price: gp.offer?.couponCode ? parseFloat(gp.offer.couponCode) || null : null,
                 category: gp.callToAction?.url ? "Product" : "Service",
-              },
-            });
-            productsSynced++;
-          }
-          continue;
-        }
+              });
+              existingProductIds.add(googlePostId);
+              continue;
+            }
 
-        const existing = await db.post.findFirst({ where: { googlePostId } });
-        if (!existing) {
-          const postType = topicType === "OFFER" ? "offer" : topicType === "EVENT" ? "event" : "whats_new";
-          await db.post.create({
-            data: {
+            if (existingPostIds.has(googlePostId)) continue;
+            const postType = topicType === "OFFER" ? "offer" : topicType === "EVENT" ? "event" : "whats_new";
+            postRows.push({
               locationId,
               profileId: gbp.id,
               type: postType,
@@ -2152,22 +2167,67 @@ export async function syncLocationFull(locationId: string): Promise<{
               couponCode: gp.offer?.couponCode || null,
               redeemUrl: gp.offer?.redeemOnlineUrl || null,
               offerTerms: gp.offer?.termsConditions || null,
-              startDate: gp.event?.schedule?.startDate ? new Date(`${gp.event.schedule.startDate.year}-${String(gp.event.schedule.startDate.month).padStart(2, "0")}-${String(gp.event.schedule.startDate.day).padStart(2, "0")}`) : null,
-              startTime: gp.event?.schedule?.startTime ? `${String(gp.event.schedule.startTime.hours).padStart(2, "0")}:${String(gp.event.schedule.startTime.minutes || 0).padStart(2, "0")}` : null,
-              endDate: gp.event?.schedule?.endDate ? new Date(`${gp.event.schedule.endDate.year}-${String(gp.event.schedule.endDate.month).padStart(2, "0")}-${String(gp.event.schedule.endDate.day).padStart(2, "0")}`) : null,
-              endTime: gp.event?.schedule?.endTime ? `${String(gp.event.schedule.endTime.hours).padStart(2, "0")}:${String(gp.event.schedule.endTime.minutes || 0).padStart(2, "0")}` : null,
-            },
-          });
-          postsSynced++;
+              startDate: gp.event?.schedule?.startDate
+                ? new Date(`${gp.event.schedule.startDate.year}-${String(gp.event.schedule.startDate.month).padStart(2, "0")}-${String(gp.event.schedule.startDate.day).padStart(2, "0")}`)
+                : null,
+              startTime: gp.event?.schedule?.startTime
+                ? `${String(gp.event.schedule.startTime.hours).padStart(2, "0")}:${String(gp.event.schedule.startTime.minutes || 0).padStart(2, "0")}`
+                : null,
+              endDate: gp.event?.schedule?.endDate
+                ? new Date(`${gp.event.schedule.endDate.year}-${String(gp.event.schedule.endDate.month).padStart(2, "0")}-${String(gp.event.schedule.endDate.day).padStart(2, "0")}`)
+                : null,
+              endTime: gp.event?.schedule?.endTime
+                ? `${String(gp.event.schedule.endTime.hours).padStart(2, "0")}:${String(gp.event.schedule.endTime.minutes || 0).padStart(2, "0")}`
+                : null,
+            });
+            existingPostIds.add(googlePostId);
+          }
+
+          if (postRows.length) await db.post.createMany({ data: postRows });
+          if (productRows.length) await db.product.createMany({ data: productRows });
+          console.log(`[syncLocationFull] Posts synced: ${postRows.length}, Products from posts: ${productRows.length}, Total Google posts fetched: ${googlePosts.length}`);
+          return { posts: postRows.length, error: null as string | null };
+        } catch (e: any) {
+          await logError("google.sync.full", null, e.message, { locationId, step: "posts" });
+          return { posts: 0, error: `Posts sync: ${e.message}` };
         }
-      }
-      result.posts = postsSynced;
-      console.log(`[syncLocationFull] Posts synced: ${postsSynced}, Products from posts: ${productsSynced}, Total Google posts fetched: ${googlePosts.length}`);
-      console.log(`[syncLocationFull] Post types found:`, googlePosts.map((p: any) => p.topicType).reduce((acc: any, t: string) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {}));
-    } catch (e: any) {
-      errors.push(`Posts sync: ${e.message}`);
-      await logError("google.sync.full", null, e.message, { locationId, step: "posts" });
-    }
+      })(),
+      (async () => {
+        try {
+          const analyticsResult = await syncLocationAnalytics(locationId, 180);
+          const stepErrors: string[] = [];
+          if (analyticsResult.errors.length > 0) {
+            stepErrors.push(`Analytics sync: ${analyticsResult.errors.join("; ")}`);
+            await logError("google.sync.full", null, analyticsResult.errors.join("; "), { locationId, step: "analytics" });
+          }
+          if (analyticsResult.synced === 0 && analyticsResult.errors.length === 0) {
+            stepErrors.push("Analytics sync: Google returned 0 daily metric rows for this location");
+          }
+          return { synced: analyticsResult.synced, errors: stepErrors };
+        } catch (e: any) {
+          await logError("google.sync.full", null, e.message, { locationId, step: "analytics" });
+          return { synced: 0, errors: [`Analytics sync: ${e.message}`] };
+        }
+      })(),
+      (async () => {
+        try {
+          const extrasResult = await syncLocationProfileExtrasFromGoogle(locationId);
+          return { errors: extrasResult.errors.map((e) => `Profile extras: ${e}`) };
+        } catch (e: any) {
+          return { errors: [`Profile extras: ${e.message}`] };
+        }
+      })(),
+    ]);
+
+    result.reviews += reviewOutcome.created;
+    if (reviewOutcome.error) errors.push(reviewOutcome.error);
+    result.photos += photoOutcome.count;
+    errors.push(...photoOutcome.errors);
+    result.posts = postsOutcome.posts;
+    if (postsOutcome.error) errors.push(postsOutcome.error);
+    result.analytics = analyticsOutcome.synced;
+    errors.push(...analyticsOutcome.errors);
+    errors.push(...extrasOutcome.errors);
 
     // Recompute health & visibility scores from synced data
     try {

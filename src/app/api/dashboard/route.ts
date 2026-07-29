@@ -116,16 +116,27 @@ export async function POST(req: NextRequest) {
 
   const errors: string[] = [];
   const syncResults: Record<string, any> = {};
+  const BATCH = 4;
 
-  for (const loc of locations) {
-    const gbp = loc.googleProfiles?.[0];
-    if (gbp) {
-      const result = await syncLocationFull(loc.id);
-      syncResults[loc.name] = result.synced;
-      if (result.errors.length > 0) errors.push(`${loc.name}: ${result.errors.join(", ")}`);
-    } else {
-      await db.location.update({ where: { id: loc.id }, data: { syncStatus: "synced", lastSyncedAt: new Date() } });
-    }
+  const linked = locations.filter((loc) => loc.googleProfiles?.[0]);
+  const unlinked = locations.filter((loc) => !loc.googleProfiles?.[0]);
+
+  if (unlinked.length) {
+    await db.location.updateMany({
+      where: { id: { in: unlinked.map((l) => l.id) } },
+      data: { syncStatus: "synced", lastSyncedAt: new Date() },
+    });
+  }
+
+  for (let i = 0; i < linked.length; i += BATCH) {
+    const batch = linked.slice(i, i + BATCH);
+    await Promise.all(
+      batch.map(async (loc) => {
+        const result = await syncLocationFull(loc.id);
+        syncResults[loc.name] = result.synced;
+        if (result.errors.length > 0) errors.push(`${loc.name}: ${result.errors.join(", ")}`);
+      }),
+    );
   }
 
   await logAudit({

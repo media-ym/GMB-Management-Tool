@@ -9,6 +9,7 @@ export interface LocationOption {
   city: string;
   status: string;
   phone?: string | null;
+  verificationState?: string | null;
 }
 
 export function useLocations() {

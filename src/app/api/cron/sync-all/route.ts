@@ -14,8 +14,8 @@ export const maxDuration = 300;
 
 const JOB_NAME = "google-sync-all";
 const INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const BATCH_SIZE = 2;
-const BATCH_PAUSE_MS = 1500;
+const BATCH_SIZE = 4;
+const BATCH_PAUSE_MS = 400;
 
 /**
  * GET /api/cron/sync-all — full Google sync for every linked location.

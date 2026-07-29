@@ -151,6 +151,7 @@ model Location {
   dashboardCache   DashboardCache[]
   syncLogs         SyncLog[]
   directoryPresences DirectoryPresence[]
+  reviewChanges    ReviewChange[]
   client           Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
 }
 
@@ -303,6 +304,7 @@ model BusinessPhoto {
   googlePhotoId String?
   imageUrl      String
   thumbnailUrl  String?
+  category      String? // COVER | PROFILE | LOGO | EXTERIOR | INTERIOR | PRODUCT | AT_WORK | FOOD_AND_DRINK | MENU | COMMON_AREA | ROOMS | TEAMS | ADDITIONAL
   uploadedBy    String?
   source        String   @default("manual") // manual | google | ai
   status        String   @default("active")
@@ -318,20 +320,27 @@ model BusinessPhoto {
 // ────────────────────────────────────────────────────────────────────────────
 
 model Product {
-  id          String   @id @default(cuid())
-  locationId  String
-  productName String
-  description String?
-  category    String?
-  price       Float?
-  currency    String   @default("INR")
-  imageUrl    String?
-  status      String   @default("active")
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  locationId   String
+  name         String
+  description  String?
+  category     String?
+  price        Float?
+  currency     String   @default("INR")
+  imageUrl     String?
+  googleItemId String?
+  googleEditId String?
+  landingUrl   String?
+  source       String   @default("manual") // manual | google | gmb_catalog
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
 
-  location    Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  location     Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
 
   @@index([locationId])
+  @@index([googleItemId])
+  @@index([source])
 }
 
 model Service {
@@ -408,7 +417,8 @@ model Review {
   replySource    String? // manual | ai | template
   replyStatus    String    @default("pending") // pending | replied | ignored
   repliedAt      DateTime?
-  syncStatus     String    @default("synced")
+  syncStatus     String    @default("synced") // synced | deleted
+  deletedAt      DateTime?
   createdAt      DateTime
   updatedAt      DateTime  @updatedAt
 
@@ -417,11 +427,36 @@ model Review {
   user           User?     @relation("ReviewRepliedBy", fields: [replyBy], references: [id])
   replies        ReviewReply[]
   labels         ReviewLabel[]
+  changes        ReviewChange[]
 
   @@index([locationId])
   @@index([replyStatus])
   @@index([rating])
   @@index([sentiment])
+  @@index([syncStatus])
+}
+
+model ReviewChange {
+  id             String    @id @default(cuid())
+  reviewId       String?
+  locationId     String
+  googleReviewId String
+  changeType     String // deleted | edited
+  authorName     String
+  authorPhoto    String?
+  previousRating Int?
+  previousText   String?
+  newRating      Int?
+  newText        String?
+  detectedAt     DateTime  @default(now())
+
+  review         Review?   @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  location       Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+  @@index([changeType])
+  @@index([detectedAt])
+  @@index([googleReviewId])
 }
 
 model ReviewReply {
@@ -482,9 +517,14 @@ model Post {
   ctaUrl       String?
   imageUrl     String?
   startDate    DateTime?
+  startTime    String?
   endDate      DateTime?
+  endTime      String?
+  couponCode   String?
+  redeemUrl    String?
+  offerTerms   String?
   status       String    @default("draft") // draft | scheduled | published | failed
-  source       String    @default("manual") // manual | ai
+  source       String    @default("manual") // manual | ai | google
   googlePostId String?
   scheduledAt  DateTime?
   recurrenceType String?

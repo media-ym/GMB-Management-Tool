@@ -3,7 +3,14 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { createGooglePost, deleteGooglePost, patchGooglePost, getValidAccessToken, resolveV4LocationName } from "@/lib/google-service";
+import {
+  attachLocalPostMedia,
+  createGooglePost,
+  deleteGooglePost,
+  patchGooglePost,
+  getValidAccessToken,
+  resolveV4LocationName,
+} from "@/lib/google-service";
 import { requireClientAuth } from "@/lib/client-auth";
 import { computeNextWeeklyOccurrence } from "@/lib/post-recurrence";
 
@@ -31,6 +38,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const gbp = post.location?.googleProfiles?.[0];
     if (!gbp) return fail("No Google Business Profile linked to this location. Connect Google first.", 400);
+    if (gbp.verificationState !== "verified") {
+      return fail(
+        "This Google listing is unverified. Verify it in Google Business Profile before publishing posts.",
+        400,
+      );
+    }
     const accessToken = await getValidAccessToken();
     if (!accessToken) return fail("No valid Google access token. Please reconnect your Google account.", 401);
     {
@@ -85,11 +98,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           }
 
           const v4Name = await resolveV4LocationName(accessToken, gbp.googleLocationId);
-          if (post.imageUrl && !post.imageUrl.includes("localhost")) {
-            googlePostData.media = [{ mediaFormat: "PHOTO", sourceUrl: post.imageUrl }];
-          }
+          await attachLocalPostMedia(accessToken, v4Name, googlePostData, post.imageUrl);
           const gPost = await createGooglePost(accessToken, v4Name, googlePostData);
           data.googlePostId = gPost.name || null;
+          if (!data.googlePostId) {
+            return fail("Google did not return a post id — not marked published.", 500);
+          }
         } catch (e: any) {
           return fail(`Failed to publish to Google: ${e.message}`, 500);
         }

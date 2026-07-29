@@ -3,7 +3,12 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { createGooglePost, getValidAccessToken, resolveV4LocationName } from "@/lib/google-service";
+import {
+  attachLocalPostMedia,
+  createGooglePost,
+  getValidAccessToken,
+  resolveV4LocationName,
+} from "@/lib/google-service";
 import { aiGeneratePost } from "@/lib/ai";
 import { requireClientAuth } from "@/lib/client-auth";
 import type { PostWithLocation } from "@/lib/types";
@@ -172,6 +177,12 @@ export async function POST(req: NextRequest) {
 
     const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
     if (!gbp) return fail("No Google Business Profile linked to this location. Connect Google first.", 400);
+    if (gbp.verificationState !== "verified") {
+      return fail(
+        "This Google listing is unverified. Verify it in Google Business Profile before publishing posts.",
+        400,
+      );
+    }
     const accessToken = await getValidAccessToken();
     if (!accessToken) return fail("No valid Google access token. Please reconnect your Google account.", 401);
     {
@@ -244,12 +255,8 @@ export async function POST(req: NextRequest) {
             };
           }
 
-          // Only include media if URL is publicly accessible (not localhost)
-          if (imageUrl && !imageUrl.includes("localhost")) {
-            googlePostData.media = [{ mediaFormat: "PHOTO", sourceUrl: imageUrl }];
-          }
-
           const v4Name = await resolveV4LocationName(accessToken, gbp.googleLocationId);
+          await attachLocalPostMedia(accessToken, v4Name, googlePostData, imageUrl);
           const gPost = await createGooglePost(accessToken, v4Name, googlePostData);
           googlePostId = gPost.name || null;
         } catch (e: any) {

@@ -2,7 +2,12 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { ok } from "@/lib/api-response";
 import { assertCronAuthorized } from "@/lib/cron-auth";
-import { createGooglePost, getValidAccessToken, resolveV4LocationName } from "@/lib/google-service";
+import {
+  attachLocalPostMedia,
+  createGooglePost,
+  getValidAccessToken,
+  resolveV4LocationName,
+} from "@/lib/google-service";
 import { computeNextWeeklyOccurrence } from "@/lib/post-recurrence";
 
 export const dynamic = "force-dynamic";
@@ -67,10 +72,7 @@ function buildGooglePostPayload(post: {
     };
   }
 
-  if (post.imageUrl && !post.imageUrl.includes("localhost")) {
-    googlePostData.media = [{ mediaFormat: "PHOTO", sourceUrl: post.imageUrl }];
-  }
-
+  // Media is attached later via attachLocalPostMedia (needs access token + v4 name)
   return googlePostData;
 }
 
@@ -105,10 +107,14 @@ export async function GET(req: NextRequest) {
       const gbp = post.location?.googleProfiles?.[0];
 
       if (gbp) {
+        if (gbp.verificationState !== "verified") {
+          throw new Error(`Unverified listing — cannot publish post for ${post.location?.name || post.locationId}`);
+        }
         const accessToken = await getValidAccessToken();
         if (accessToken) {
           const googlePostData = buildGooglePostPayload(post);
           const v4Name = await resolveV4LocationName(accessToken, gbp.googleLocationId);
+          await attachLocalPostMedia(accessToken, v4Name, googlePostData, post.imageUrl);
           const gPost = await createGooglePost(accessToken, v4Name, googlePostData);
           googlePostId = gPost.name || null;
         }

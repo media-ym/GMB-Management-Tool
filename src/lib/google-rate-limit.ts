@@ -95,15 +95,35 @@ export async function withRetry<T>(
 
 /** Sanitize Google API error messages for end-user display. */
 export function sanitizeGoogleError(message: string): string {
-  // Prefer Google's human-readable `error.message` when the payload is JSON.
+  // Prefer Google's human-readable `error.message` / validation details when JSON.
   const jsonMatch = message.match(/\{[\s\S]*\}$/);
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[0]);
+      const details = parsed?.error?.details;
+      if (Array.isArray(details)) {
+        for (const d of details) {
+          const errDetails = d?.errorDetails;
+          if (Array.isArray(errDetails) && errDetails.length) {
+            const first = errDetails[0];
+            const field = first?.field ? ` (${first.field})` : "";
+            const detailMsg = first?.message || first?.value;
+            if (detailMsg) {
+              if (/source_url|media/i.test(String(first?.field || "")) || /link.*invalid/i.test(String(detailMsg))) {
+                return `Google rejected the post image URL${field}: ${detailMsg}. Use a public HTTPS image URL (Google cannot fetch http:// IP or private storage links).`;
+              }
+              return `Google rejected the request${field}: ${detailMsg}`;
+            }
+          }
+        }
+      }
       const googleMsg = parsed?.error?.message;
       if (typeof googleMsg === "string" && googleMsg.trim()) {
         if (/not eligible/i.test(googleMsg)) {
           return `${googleMsg} Open Google Business Profile to verify (often video) — SMS/call may not be offered for this listing.`;
+        }
+        if (/INVALID_ARGUMENT|invalid argument/i.test(googleMsg) && /verif/i.test(message)) {
+          return "Google rejected this verification request. This listing may not offer SMS/call via API — verify in Google Business Profile instead.";
         }
         return googleMsg;
       }
@@ -131,8 +151,12 @@ export function sanitizeGoogleError(message: string): string {
   if (/50\d/.test(clean)) {
     return "Google servers are temporarily unavailable. Please try again.";
   }
-  if (/INVALID_ARGUMENT|invalid argument/i.test(clean)) {
+  // Only map INVALID_ARGUMENT → verification wording for verification endpoints
+  if (/INVALID_ARGUMENT|invalid argument/i.test(clean) && /verif/i.test(clean)) {
     return "Google rejected this verification request. This listing may not offer SMS/call via API — verify in Google Business Profile instead.";
+  }
+  if (/INVALID_ARGUMENT|invalid argument/i.test(clean)) {
+    return "Google rejected the request (invalid argument). Check the post image URL — it must be a public HTTPS link Google can fetch.";
   }
   // Truncate long messages
   return clean.length > 200 ? clean.slice(0, 200) + "…" : clean;
