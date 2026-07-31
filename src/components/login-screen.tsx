@@ -27,7 +27,7 @@ const FEATURES = [
   { icon: Sparkles, label: "MiSA AI Assistant" },
 ];
 
-const ADMIN_DEMO = { role: "Super Admin", email: "admin@myfng.in", password: "MyFNG@2025", color: "#0047AB" };
+const ADMIN_DEMO = { role: "Super Admin", email: "nikhil@myfng.in", password: "MyFNG@309@123*#BUS", color: "#0047AB" };
 
 export function LoginScreen() {
   const router = useRouter();
