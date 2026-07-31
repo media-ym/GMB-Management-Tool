@@ -5,7 +5,7 @@ import type { Role } from "./types";
 import { createClient } from "./supabase/server";
 import { isSupabaseConfigured } from "./supabase/env";
 import { loadRbacRoles } from "./rbac";
-import { getClientIdForUser } from "./portal-link";
+import { getClientIdForUser, listPortalClientIds } from "./portal-link";
 
 function toSessionUser(dbUser: {
   id: string;
@@ -113,15 +113,40 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     await loadRbacRoles();
     const session = toSessionUser(dbUser);
 
-    // Portal users: scope to locations owned by their Client (same filter path as branch_manager)
+    // Portal users: only their Client's locations
     if (session.role === "client_portal" && session.clientId) {
       const locs = await db.location.findMany({
         where: { clientId: session.clientId },
         select: { id: true },
       });
       session.assignedLocationIds = locs.map((l) => l.id);
+      session.scopedLocationIds = session.assignedLocationIds;
+      return session;
     }
 
+    // Staff / branch: never mix portal-tenant GBPs into the agency workspace
+    const portalClientIds = await listPortalClientIds();
+    const agencyWhere =
+      portalClientIds.length > 0
+        ? { OR: [{ clientId: null }, { clientId: { notIn: portalClientIds } }] }
+        : {};
+    const agencyLocs = await db.location.findMany({
+      where: agencyWhere,
+      select: { id: true },
+    });
+    let agencyIds = agencyLocs.map((l) => l.id);
+
+    // Branch managers stay within their assigned set ∩ agency locations
+    if (
+      session.role === "branch_manager" &&
+      session.assignedLocationIds &&
+      session.assignedLocationIds.length > 0
+    ) {
+      const allowed = new Set(session.assignedLocationIds);
+      agencyIds = agencyIds.filter((id) => allowed.has(id));
+    }
+
+    session.scopedLocationIds = agencyIds;
     return session;
   } catch (e) {
     console.error("getSessionUser failed", e);
@@ -142,19 +167,34 @@ export async function requirePermission(perm: Permission): Promise<SessionUser> 
   return u;
 }
 
-/** Roles whose data must stay within assignedLocationIds (never unscoped). */
+/** Roles / sessions whose data must stay within a fixed location ID list. */
 export function isLocationScopedUser(user: SessionUser): boolean {
-  return user.role === "branch_manager" || user.role === "client_portal";
+  return (
+    user.role === "branch_manager" ||
+    user.role === "client_portal" ||
+    Array.isArray(user.scopedLocationIds)
+  );
 }
 
-// Scope a query to a branch manager's / portal client's locations
+/**
+ * Scope a query to the caller's locations.
+ * Staff see agency locations only (portal clients like Yunick are excluded).
+ * Portal users see only their Client's locations.
+ */
 export function scopeLocationIds(user: SessionUser, requestedLocationId?: string): string[] | undefined {
+  const scoped = user.scopedLocationIds;
+  if (Array.isArray(scoped)) {
+    if (requestedLocationId && !scoped.includes(requestedLocationId)) {
+      throw new Error("FORBIDDEN");
+    }
+    return scoped.length > 0 ? scoped : ["__none__"];
+  }
+
   if (user.role === "client_portal") {
     const ids = user.assignedLocationIds ?? [];
     if (requestedLocationId && !ids.includes(requestedLocationId)) {
       throw new Error("FORBIDDEN");
     }
-    // Always scope — empty list means no locations yet (never all tenants)
     return ids.length > 0 ? ids : ["__none__"];
   }
   if (user.role === "branch_manager" && user.assignedLocationIds && user.assignedLocationIds.length > 0) {

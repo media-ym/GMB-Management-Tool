@@ -53,6 +53,19 @@ export async function getClientIdForUser(userId: string): Promise<string | null>
   }
 }
 
+/** Client IDs that have a portal login — their locations stay out of the staff workspace. */
+export async function listPortalClientIds(): Promise<string[]> {
+  try {
+    await ensurePortalLinkTable();
+    const rows = await db.$queryRawUnsafe<{ clientId: string }[]>(
+      `SELECT DISTINCT "clientId" FROM "ClientPortalLink"`,
+    );
+    return rows.map((r) => r.clientId).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export async function setPortalLink(userId: string, clientId: string): Promise<void> {
   await ensurePortalLinkTable();
   const existing = await db.$queryRawUnsafe<{ id: string }[]>(

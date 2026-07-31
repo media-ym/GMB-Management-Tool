@@ -47,6 +47,12 @@ export interface SessionUser {
   role: Role;
   avatar?: string | null;
   assignedLocationIds?: string[] | null;
+  /**
+   * When set, every location-scoped API must use these IDs.
+   * - client_portal → that client's locations
+   * - staff → agency locations only (excludes portal-tenant GBPs)
+   */
+  scopedLocationIds?: string[] | null;
   /** End-client portal link (null for staff). */
   clientId?: string | null;
   /** Effective permissions for this user (builtin + RBAC overrides / custom roles). */

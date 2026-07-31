@@ -17,11 +17,22 @@ export async function GET(req: NextRequest) {
   const portalClientId = user.role === "client_portal" ? user.clientId : null;
   const scopedLocIds = scopeLocationIds(user);
 
-  const accountWhere = portalClientId ? { clientId: portalClientId } : {};
-  const profileWhere = scopedLocIds ? { locationId: { in: scopedLocIds } } : {};
+  // Staff: platform Google account only (not yunickmedia@… portal OAuth)
+  const accountWhere = portalClientId
+    ? { clientId: portalClientId }
+    : { clientId: null };
+  const profileWhere = scopedLocIds
+    ? { locationId: { in: scopedLocIds } }
+    : portalClientId
+      ? { location: { clientId: portalClientId } }
+      : { location: { clientId: null } };
   const syncWhere = {
     status: { in: ["failed", "partial"] as string[] },
-    ...(scopedLocIds ? { locationId: { in: scopedLocIds } } : {}),
+    ...(scopedLocIds
+      ? { locationId: { in: scopedLocIds } }
+      : portalClientId
+        ? { location: { clientId: portalClientId } }
+        : { location: { clientId: null } }),
   };
 
   const [accounts, profiles, syncLogs, errorLogs] = await Promise.all([

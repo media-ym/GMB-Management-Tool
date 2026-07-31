@@ -342,20 +342,16 @@ export async function getValidAccessToken(opts?: {
     clientId = loc?.clientId ?? null;
   }
 
-  // Prefer end-client's own OAuth when scoped; else platform account (clientId null), then any active.
+  // Prefer end-client OAuth when scoped; else platform account only (never cross into portal tenants).
   const account = clientId
     ? await db.googleAccount.findFirst({
         where: { status: "active", clientId },
         orderBy: { updatedAt: "desc" },
       })
-    : (await db.googleAccount.findFirst({
+    : await db.googleAccount.findFirst({
         where: { status: "active", clientId: null },
         orderBy: { updatedAt: "desc" },
-      })) ||
-      (await db.googleAccount.findFirst({
-        where: { status: "active" },
-        orderBy: { updatedAt: "desc" },
-      }));
+      });
 
   if (!account) return null;
 

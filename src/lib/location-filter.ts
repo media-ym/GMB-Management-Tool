@@ -5,9 +5,14 @@ export function buildLocationIdFilter(
   user: SessionUser,
   opts: { locationId?: string | null; locationIds?: string[] | null },
 ): { locationId?: string | { in: string[] } } {
-  const scoped =
-    user.role === "client_portal"
-      ? (user.assignedLocationIds?.length ? user.assignedLocationIds : ["__none__"])
+  const scoped = Array.isArray(user.scopedLocationIds)
+    ? user.scopedLocationIds.length > 0
+      ? user.scopedLocationIds
+      : ["__none__"]
+    : user.role === "client_portal"
+      ? user.assignedLocationIds?.length
+        ? user.assignedLocationIds
+        : ["__none__"]
       : user.role === "branch_manager" &&
           user.assignedLocationIds &&
           user.assignedLocationIds.length > 0
