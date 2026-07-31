@@ -1,6 +1,12 @@
 /** Shared Supabase env helpers. Throws only when a caller requires the value. */
 
 export function getSupabaseUrl(): string | undefined {
+  // Server: prefer direct Kong URL (no loop through our own /supabase proxy)
+  if (typeof window === "undefined") {
+    const internal =
+      process.env.SUPABASE_URL || process.env.SUPABASE_INTERNAL_URL;
+    if (internal) return internal.replace(/\/$/, "");
+  }
   return process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") || undefined;
 }
 

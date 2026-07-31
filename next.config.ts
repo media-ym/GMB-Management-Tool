@@ -1,5 +1,11 @@
 import type { NextConfig } from "next";
 
+/** Direct Kong/API URL for proxying browser Auth over HTTPS (avoids mixed-content). */
+const SUPABASE_UPSTREAM =
+  process.env.SUPABASE_URL ||
+  process.env.SUPABASE_INTERNAL_URL ||
+  "http://89.116.21.158:8000";
+
 const nextConfig: NextConfig = {
   output: "standalone",
   // Allow ngrok / tunnel URLs to load dev assets (/_next/*) in development
@@ -21,6 +27,17 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "maps.googleapis.com" },
       { protocol: "https", hostname: "myfng.in" },
     ],
+  },
+  // Browser on https://gmb.myfng.in cannot call http://IP:8000 (mixed content).
+  // Proxy Supabase through same HTTPS origin: /supabase/* → Kong
+  async rewrites() {
+    const upstream = SUPABASE_UPSTREAM.replace(/\/$/, "");
+    return [
+      {
+        source: "/supabase/:path*",
+        destination: `${upstream}/:path*`,
+      },
+    ];
   },
   // Production headers for security
   async headers() {

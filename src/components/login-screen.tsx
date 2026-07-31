@@ -59,12 +59,13 @@ export function LoginScreen() {
       password: loginPassword,
     });
     if (error) {
-      const failRes = await fetch("/api/auth/login-attempt", {
+      await fetch("/api/auth/login-attempt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: normalized, result: "failure" }),
-      }).then((r) => r.json()).catch(() => null);
-      toast.error(failRes?.message || error.message || "Invalid credentials.");
+      }).catch(() => null);
+      // Prefer real Supabase error (lockout API returns success:"Operation completed")
+      toast.error(error.message || "Invalid credentials.");
       return false;
     }
     await fetch("/api/auth/login-attempt", {
