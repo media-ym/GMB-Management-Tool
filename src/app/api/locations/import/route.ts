@@ -47,8 +47,24 @@ export async function POST(req: NextRequest) {
   const imported: { id: string; name: string; city: string }[] = [];
   const errors: { name: string; error: string }[] = [];
 
-  // Get the connected Google account
-  const googleAccount = await db.googleAccount.findFirst();
+  // Portal imports bind locations to the end-client; staff imports stay unscoped (or body.clientId)
+  const bindClientId =
+    user.role === "client_portal"
+      ? user.clientId
+      : body.clientId
+        ? String(body.clientId)
+        : null;
+
+  const googleAccount = bindClientId
+    ? await db.googleAccount.findFirst({
+        where: { status: "active", clientId: bindClientId },
+        orderBy: { updatedAt: "desc" },
+      })
+    : (await db.googleAccount.findFirst({
+        where: { status: "active", clientId: null },
+        orderBy: { updatedAt: "desc" },
+      })) ||
+      (await db.googleAccount.findFirst({ where: { status: "active" } }));
 
   for (const gmb of locations) {
     try {
@@ -97,6 +113,7 @@ export async function POST(req: NextRequest) {
           reviewCount: gmb.totalReviews || 0,
           healthScore: 0,
           visibilityScore: 0,
+          clientId: bindClientId,
           categoriesJson: JSON.stringify([gmb.primaryCategory, ...(gmb.additionalCategories || [])].filter(Boolean)),
           servicesJson: JSON.stringify([]),
           hoursJson: JSON.stringify([]),

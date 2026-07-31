@@ -65,12 +65,23 @@ export async function GET(req: NextRequest) {
     db.storageFile.findMany({ orderBy: { createdAt: "desc" }, take: 10 }),
   ]);
 
-  // Storage buckets summary
-  const buckets = ["business-photos", "post-images", "reports", "exports", "documents", "ai-cache", "backups"];
+  // Storage buckets summary (StorageFile + MediaLibrary aggregate)
+  const buckets = ["business-photos", "post-images", "reports", "exports", "documents", "ai-cache", "backups", "archives"];
+  const mediaAgg = await db.mediaLibrary.aggregate({
+    _count: true,
+    _sum: { fileSize: true },
+  });
   const bucketStats = await Promise.all(
     buckets.map(async (b) => {
       const files = await db.storageFile.findMany({ where: { bucket: b }, select: { fileSize: true } });
-      return { bucket: b, fileCount: files.length, totalSize: files.reduce((a, f) => a + f.fileSize, 0) };
+      let fileCount = files.length;
+      let totalSize = files.reduce((a, f) => a + f.fileSize, 0);
+      // Fold MediaLibrary into business-photos for Settings → Storage totals
+      if (b === "business-photos") {
+        fileCount += mediaAgg._count;
+        totalSize += mediaAgg._sum.fileSize ?? 0;
+      }
+      return { bucket: b, fileCount, totalSize };
     }),
   );
 
@@ -100,7 +111,7 @@ export async function GET(req: NextRequest) {
     })),
     errorLogs: errorLogs.map((e) => ({
       id: e.id, module: e.module, errorCode: e.errorCode, errorMessage: e.errorMessage,
-      resolved: e.resolved, createdAt: e.createdAt.toISOString(),
+      stackTrace: e.stackTrace, resolved: e.resolved, createdAt: e.createdAt.toISOString(),
     })),
     apiLogs,
     dashboardWidgets: widgets,

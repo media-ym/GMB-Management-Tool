@@ -1,41 +1,58 @@
-import { NextRequest } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { ok, unauthorized, forbidden } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { getBrandConfig } from "@/lib/app-settings";
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/system-info — environment & deployment info (doc 12 §23, doc 14 §4)
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return unauthorized();
   if (!can(user.role, "settings.view")) return forbidden();
 
+  const brand = await getBrandConfig();
+  const [users, locations, settingsCount] = await Promise.all([
+    db.user.count(),
+    db.location.count(),
+    db.setting.count(),
+  ]);
+
+  const dbUrl = process.env.DATABASE_URL || "";
+  const databaseVersion = dbUrl.includes("postgres") || dbUrl.includes("supabase")
+    ? "PostgreSQL (Prisma ORM)"
+    : dbUrl.includes("file:") || dbUrl.includes("sqlite")
+      ? "SQLite (Prisma ORM)"
+      : "Prisma ORM";
+
   return ok({
     environment: process.env.NODE_ENV === "production" ? "Production" : "Development",
-    applicationVersion: "1.0.0",
-    buildNumber: `build-${new Date().getFullYear()}.${String(Math.floor(Date.now() / 86400000) % 365).padStart(3, "0")}`,
-    deploymentDate: new Date().toISOString(),
-    databaseVersion: "SQLite 3.x (Prisma ORM)",
-    framework: "Next.js 16.1.3 (App Router)",
-    runtime: "Bun",
+    applicationVersion: process.env.npm_package_version || "1.0.0",
+    buildNumber: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7)
+      || process.env.GIT_COMMIT?.slice(0, 7)
+      || `local-${process.env.NODE_ENV || "dev"}`,
+    deploymentDate: process.env.BUILD_TIME || null,
+    databaseVersion,
+    framework: "Next.js (App Router)",
+    runtime: typeof (globalThis as any).Bun !== "undefined" ? "Bun" : "Node.js",
     nodeVersion: process.version,
     platform: process.platform,
-    timezone: "Asia/Kolkata",
+    timezone: brand.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     apiVersion: "v1",
+    brandName: brand.name || "MyFNG",
     packages: {
-      frontend: ["Next.js 16", "React 19", "TypeScript 5", "Tailwind CSS 4", "shadcn/ui"],
-      backend: ["Prisma ORM", "NextAuth.js v4", "z-ai-web-dev-sdk"],
-      database: "SQLite (adaptable to PostgreSQL/Supabase)",
-      ai: "MiSA AI (glm-4.6 via z-ai-web-dev-sdk)",
+      frontend: ["Next.js", "React 19", "TypeScript", "Tailwind CSS", "shadcn/ui"],
+      backend: ["Prisma ORM", "Supabase Auth", "OpenRouter (MiSA AI)"],
+      database: databaseVersion,
+      ai: "MiSA AI via OpenRouter",
     },
     features: {
-      auth: "NextAuth Credentials + RBAC",
-      database: "Prisma + SQLite (49 models)",
-      ai: "MiSA AI — review replies, post generation, SEO recommendations, chat",
-      googleIntegration: "Real OAuth + sync engine",
-      realtime: "TanStack Query polling (WebSocket ready)",
-      storage: "Local file system (Supabase Storage ready)",
+      auth: "Supabase Auth + RBAC",
+      database: `Prisma · ${users} users · ${locations} locations · ${settingsCount} settings`,
+      ai: "MiSA AI — reviews, posts, SEO, chat",
+      googleIntegration: "OAuth + sync engine",
+      realtime: "TanStack Query polling",
+      storage: process.env.NEXT_PUBLIC_SUPABASE_URL ? "Supabase Storage" : "Local filesystem",
     },
   });
 }

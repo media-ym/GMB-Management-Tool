@@ -1,11 +1,7 @@
 // Shared domain types for MyFNG Local AI Manager
 
-export type Role =
-  | "super_admin"
-  | "marketing_manager"
-  | "branch_manager"
-  | "customer_support"
-  | "viewer";
+/** Built-in + custom role slugs (custom roles are free-form strings). */
+export type Role = string;
 
 export const ROLES: { value: Role; label: string; description: string }[] = [
   { value: "super_admin", label: "Super Admin", description: "Full access to every module and setting." },
@@ -51,6 +47,10 @@ export interface SessionUser {
   role: Role;
   avatar?: string | null;
   assignedLocationIds?: string[] | null;
+  /** End-client portal link (null for staff). */
+  clientId?: string | null;
+  /** Effective permissions for this user (builtin + RBAC overrides / custom roles). */
+  permissions?: string[];
 }
 
 export type SyncStatus = "synced" | "syncing" | "pending" | "error";

@@ -1,14 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getGoogleAuthUrl, exchangeCodeForTokens, googleServiceStatus, resolveGoogleRedirectUri, rememberOAuthState, consumeOAuthState, scopesIncludeBusinessManage } from "@/lib/google-service";
+import {
+  exchangeCodeForTokens,
+  googleServiceStatus,
+  resolveGoogleRedirectUri,
+  rememberOAuthState,
+  consumeOAuthState,
+  scopesIncludeBusinessManage,
+  getGoogleAuthUrl,
+} from "@/lib/google-service";
 import { encryptToken } from "@/lib/token-crypto";
 import { getSessionUser, logAudit } from "@/lib/session";
+import { DEFAULT_SCOPES } from "@/lib/client-auth";
 
 export const dynamic = "force-dynamic";
 
 function clearOAuthFlowCookies(res: NextResponse): void {
   res.cookies.set("gmb_oauth_state", "", { httpOnly: true, sameSite: "lax", maxAge: 0, path: "/" });
   res.cookies.set("gmb_oauth_redirect", "", { httpOnly: true, sameSite: "lax", maxAge: 0, path: "/" });
+  res.cookies.set("gmb_oauth_portal_client", "", { httpOnly: true, sameSite: "lax", maxAge: 0, path: "/" });
+  res.cookies.set("gmb_oauth_return", "", { httpOnly: true, sameSite: "lax", maxAge: 0, path: "/" });
 }
 
 // GET /api/google/callback — Google OAuth callback (real token exchange)
@@ -18,40 +29,41 @@ export async function GET(req: NextRequest) {
   const error = url.searchParams.get("error");
   const state = url.searchParams.get("state");
 
-  // Handle OAuth error from Google
-  if (error) {
-    return NextResponse.redirect(new URL(`/google?google_error=${encodeURIComponent(error)}`, url.origin));
-  }
-
-  // ─── CSRF: validate OAuth state (cookie first, server memory fallback) ─
-  // Cookie can be missing when the user starts on 0.0.0.0 and Google returns
-  // to localhost — hosts differ so the cookie is not sent.
   const cookieState = req.cookies.get("gmb_oauth_state")?.value;
   const cookieRedirect = req.cookies.get("gmb_oauth_redirect")?.value;
+  const cookiePortalClient = req.cookies.get("gmb_oauth_portal_client")?.value;
+  const cookieReturn = req.cookies.get("gmb_oauth_return")?.value;
   const memorized = state ? consumeOAuthState(state) : null;
   const stateOk = Boolean(state && ((cookieState && state === cookieState) || memorized));
   const resolvedRedirect = cookieRedirect || memorized?.redirectUri || undefined;
+  const portalClientId =
+    cookiePortalClient || memorized?.portalClientId || null;
+  const returnPath =
+    cookieReturn || memorized?.returnPath || "/google?google_connected=true";
 
-  if (!state || !stateOk) {
-    const redirect = NextResponse.redirect(new URL("/google?google_error=state_mismatch", url.origin));
+  const failRedirect = (q: string) => {
+    const redirect = NextResponse.redirect(new URL(`/google?google_error=${encodeURIComponent(q)}`, url.origin));
     clearOAuthFlowCookies(redirect);
     return redirect;
-  }
+  };
 
-  // ─── No code = OAuth flow did not complete ─────────────────────────────
-  if (!code) {
-    const redirect = NextResponse.redirect(new URL("/google?google_error=no_code", url.origin));
-    clearOAuthFlowCookies(redirect);
-    return redirect;
-  }
+  if (error) return failRedirect(error);
+
+  if (!state || !stateOk) return failRedirect("state_mismatch");
+  if (!code) return failRedirect("no_code");
 
   const user = await getSessionUser();
 
-  // Real OAuth — exchange code for tokens
+  // Portal connect must be done by the matching portal user
+  if (portalClientId) {
+    if (!user?.clientId || user.clientId !== portalClientId) {
+      return failRedirect("portal_session_mismatch");
+    }
+  }
+
   try {
     const tokens = await exchangeCodeForTokens(code, resolvedRedirect);
 
-    // Get user info from Google
     let email = "gmb@myfng.in";
     let googleUserId = "unknown";
     try {
@@ -63,68 +75,91 @@ export async function GET(req: NextRequest) {
         email = userInfo.email || email;
         googleUserId = userInfo.id || googleUserId;
       }
-    } catch { /* ignore userinfo error */ }
+    } catch { /* ignore */ }
 
     const grantedScopes = tokens.scope
       ? tokens.scope.split(" ").filter(Boolean)
       : [];
 
     if (!scopesIncludeBusinessManage(grantedScopes)) {
-      const redirect = NextResponse.redirect(
-        new URL("/google?google_error=missing_business_scope", url.origin),
-      );
-      clearOAuthFlowCookies(redirect);
-      return redirect;
+      return failRedirect("missing_business_scope");
     }
 
-    // Upsert google account
-    const existing = await db.googleAccount.findFirst();
-    // Google does not always return a new refresh_token on re-auth — preserve the
-    // existing one if missing. Encrypt both tokens at rest before saving.
+    // Upsert GoogleAccount scoped to end-client OR platform (clientId null)
+    const existing = portalClientId
+      ? await db.googleAccount.findFirst({
+          where: { clientId: portalClientId },
+          orderBy: { updatedAt: "desc" },
+        })
+      : await db.googleAccount.findFirst({
+          where: { clientId: null },
+          orderBy: { updatedAt: "desc" },
+        }) || await db.googleAccount.findFirst({ orderBy: { updatedAt: "desc" } });
+
     const newRefresh = tokens.refreshToken || existing?.refreshToken || null;
+    const accountData = {
+      email,
+      googleUserId,
+      status: "active" as const,
+      accessToken: encryptToken(tokens.accessToken),
+      refreshToken: encryptToken(newRefresh),
+      tokenExpiry: new Date(tokens.expiryDate),
+      scopesJson: JSON.stringify(grantedScopes),
+      clientId: portalClientId,
+    };
+
     if (existing) {
       await db.googleAccount.update({
         where: { id: existing.id },
-        data: {
-          email,
-          googleUserId,
-          status: "active",
-          accessToken: encryptToken(tokens.accessToken),
-          refreshToken: encryptToken(newRefresh),
-          tokenExpiry: new Date(tokens.expiryDate),
-          scopesJson: JSON.stringify(grantedScopes),
-        },
+        data: accountData,
       });
     } else {
-      await db.googleAccount.create({
-        data: {
-          email,
-          googleUserId,
+      await db.googleAccount.create({ data: accountData });
+    }
+
+    // Auto-grant ClientAuthorization when portal client connects Google
+    if (portalClientId) {
+      const activeAuth = await db.clientAuthorization.findFirst({
+        where: {
+          clientId: portalClientId,
           status: "active",
-          accessToken: encryptToken(tokens.accessToken),
-          refreshToken: encryptToken(newRefresh),
-          tokenExpiry: new Date(tokens.expiryDate),
-          scopesJson: JSON.stringify(grantedScopes),
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
         },
       });
+      if (!activeAuth) {
+        await db.clientAuthorization.create({
+          data: {
+            clientId: portalClientId,
+            status: "active",
+            authorizedScopes: JSON.stringify(DEFAULT_SCOPES),
+            grantedByUserId: user?.id ?? null,
+            notes: "Auto-granted when client connected Google Business Profile via portal",
+          },
+        });
+      }
     }
 
     if (user) {
-      await logAudit({ userId: user.id, userName: user.name, action: "google.connect", entity: "google_account", newValue: { email, mode: "production" }, ip: req.headers.get("x-forwarded-for") ?? undefined });
+      await logAudit({
+        userId: user.id,
+        userName: user.name,
+        action: portalClientId ? "portal.google.connect" : "google.connect",
+        entity: "google_account",
+        newValue: { email, mode: "production", clientId: portalClientId },
+        ip: req.headers.get("x-forwarded-for") ?? undefined,
+      });
     }
 
-    const redirect = NextResponse.redirect(new URL("/google?google_connected=true", url.origin));
+    const redirect = NextResponse.redirect(new URL(returnPath, url.origin));
     clearOAuthFlowCookies(redirect);
     return redirect;
   } catch (e: any) {
     console.error("Google OAuth callback error:", e);
-    const redirect = NextResponse.redirect(new URL(`/google?google_error=${encodeURIComponent(e.message)}`, url.origin));
-    clearOAuthFlowCookies(redirect);
-    return redirect;
+    return failRedirect(e.message || "oauth_failed");
   }
 }
 
-// POST /api/google/callback — initiate OAuth flow (get auth URL + set state cookie)
+// POST /api/google/callback — initiate OAuth (legacy; prefer /api/google-integration or /api/portal/connect)
 export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
@@ -136,17 +171,36 @@ export async function POST(req: NextRequest) {
     host: req.headers.get("host"),
     forwardedProto: req.headers.get("x-forwarded-proto"),
   });
+  const portalClientId =
+    body.portalClientId ||
+    (user.role === "client_portal" ? user.clientId : null) ||
+    null;
+  const returnPath = body.returnPath || "/google?google_connected=true";
+
   const { url: authUrl, state } = getGoogleAuthUrl(body.state, redirectUri);
-  rememberOAuthState(state, redirectUri);
+  rememberOAuthState(state, redirectUri, 60 * 60 * 1000, { portalClientId, returnPath });
   const res = NextResponse.json({ success: true, authUrl, state, redirectUri, mode: googleServiceStatus.mode });
-  // Set CSRF state cookie — HttpOnly, SameSite=Lax, 1h expiry
   res.cookies.set("gmb_oauth_state", state, {
     httpOnly: true,
     sameSite: "lax",
-    maxAge: 60 * 60, // 1 hour
+    maxAge: 60 * 60,
     path: "/",
   });
   res.cookies.set("gmb_oauth_redirect", redirectUri, {
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 60 * 60,
+    path: "/",
+  });
+  if (portalClientId) {
+    res.cookies.set("gmb_oauth_portal_client", portalClientId, {
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: 60 * 60,
+      path: "/",
+    });
+  }
+  res.cookies.set("gmb_oauth_return", returnPath, {
     httpOnly: true,
     sameSite: "lax",
     maxAge: 60 * 60,

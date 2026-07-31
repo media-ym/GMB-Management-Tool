@@ -3,6 +3,7 @@ import type { SessionUser } from "./types";
 import { openRouterChat } from "./openrouter";
 import { DEFAULT_OPENROUTER_MODEL } from "./openrouter-models";
 import { buildMisaDashboardContext, buildMisaSystemPrompt } from "./misa-context";
+import { getAiConfig, getBrandConfig } from "./app-settings";
 
 // MiSA AI — backend service layer for intelligent automation.
 // Uses OpenRouter (free models + fallback) with versioned prompts, safety
@@ -13,19 +14,34 @@ interface CompletionArgs {
   user: string;
   model?: string;
   maxTokens?: number;
+  temperature?: number;
 }
 
 async function complete({
   system,
   user,
   model,
+  maxTokens,
+  temperature,
 }: CompletionArgs): Promise<{ content: string; tokens: number; model: string }> {
+  const ai = await getAiConfig();
+  const brand = await getBrandConfig();
+  const brandName = brand.name || "MyFNG";
+  const assistant = ai.assistantName || "MiSA AI";
+  const systemWithBrand = system
+    .replace(/\bMyFNG\b/g, brandName)
+    .replace(/\bMiSA AI\b/g, assistant);
+
   const result = await openRouterChat(
     [
-      { role: "system", content: system },
+      { role: "system", content: systemWithBrand },
       { role: "user", content: user },
     ],
-    model ?? DEFAULT_OPENROUTER_MODEL,
+    model ?? ai.defaultModel ?? DEFAULT_OPENROUTER_MODEL,
+    {
+      temperature: temperature ?? ai.temperature,
+      maxTokens: maxTokens ?? ai.maxTokens,
+    },
   );
   return { content: result.content, tokens: result.tokens, model: result.model };
 }
@@ -356,12 +372,14 @@ export async function aiChat(opts: {
     // Keep conversation window manageable for free models
     const history = opts.messages.slice(-16);
 
+    const aiCfg = await getAiConfig();
     const result = await openRouterChat(
       [
         { role: "system", content: system },
         ...history.map((m) => ({ role: m.role, content: m.content })),
       ],
-      opts.model ?? DEFAULT_OPENROUTER_MODEL,
+      opts.model ?? aiCfg.defaultModel ?? DEFAULT_OPENROUTER_MODEL,
+      { temperature: aiCfg.temperature, maxTokens: aiCfg.maxTokens },
     );
     const reply = sanitize(result.content, 6000);
     await logAI({

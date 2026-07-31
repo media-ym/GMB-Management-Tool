@@ -36,9 +36,12 @@ model User {
   /// Supabase Auth user id (auth.users.id). Password lives in Supabase Auth.
   authId              String?   @unique
   password            String? // legacy local hash; unused when Supabase Auth is configured
-  role                String    @default("viewer") // super_admin | marketing_manager | branch_manager | customer_support | viewer
+  role                String    @default("viewer") // super_admin | marketing_manager | branch_manager | customer_support | viewer | client_portal
   roleId              String? // FK to Role (normalized; role string kept for backward compat)
   roleRef             Role?    @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  /// End-client portal users are linked to a Client record
+  clientId            String?
+  client              Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   avatar              String?
   phone               String?
   assignedLocationIds String? // CSV of Location ids (branch_manager scope)
@@ -193,6 +196,7 @@ model Client {
 
   locations       Location[]
   authorizations  ClientAuthorization[]
+  portalUsers     User[]
 }
 
 // Tracks per-client authorization for managing their Google Business Profile.

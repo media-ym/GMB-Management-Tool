@@ -57,7 +57,9 @@ export async function GET(req: NextRequest) {
   const avgHealth = locations.length ? Math.round(locations.reduce((a, l) => a + l.healthScore, 0) / locations.length) : 0;
   const avgVisibility = locations.length ? Math.round(locations.reduce((a, l) => a + l.visibilityScore, 0) / locations.length) : 0;
 
-  const googleConnected = await isGoogleOAuthConnected();
+  const googleConnected = await isGoogleOAuthConnected(
+    user.role === "client_portal" ? user.clientId : undefined,
+  );
   const sum = analyticsAgg._sum;
   const totalWebsiteClicks = sum.websiteClicks ?? 0;
   const totalPhoneCalls = sum.phoneCalls ?? 0;
@@ -100,7 +102,7 @@ export async function POST(req: NextRequest) {
   if (!user) return unauthorized();
   if (!can(user.role, "system.sync")) return forbidden("Your role cannot trigger sync.");
 
-  if (!(await isGoogleOAuthConnected())) {
+  if (!(await isGoogleOAuthConnected(user.role === "client_portal" ? user.clientId : undefined))) {
     return fail("Google account not connected. Connect from Google Integration first.", 401);
   }
 

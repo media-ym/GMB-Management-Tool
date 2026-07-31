@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ import {
   Users, Shield, Download, Plus, MoreVertical, CheckCircle2, XCircle,
   FileText, Lock, Building2, Mail, Phone, MapPin, ExternalLink,
   Loader2, Search, RefreshCw, KeyRound, ShieldCheck, Eye, Database,
-  AlertTriangle, Trash2, Activity, Inbox,
+  AlertTriangle, Activity, Inbox, UserPlus, Copy,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -42,7 +42,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuLabel,
+  DropdownMenuTrigger, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -103,9 +103,19 @@ interface ClientLocationSummary {
 }
 
 interface ClientDetailResponse {
-  client: ClientListItem;
+  client?: ClientListItem;
   locations: ClientLocationSummary[];
   authorizations: ClientAuthorization[];
+  portalLogin?: {
+    userId: string;
+    email: string | null;
+    temporaryPassword: string | null;
+    mustChangePassword: boolean;
+  } | null;
+  // Flat fields also returned by GET /api/clients/[id]
+  id?: string;
+  name?: string;
+  contactEmail?: string;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -191,12 +201,13 @@ function fullTime(iso: string | null | undefined): string {
 }
 
 function clientStatusBadge(s: ClientStatus) {
-  const map = {
+  const map: Record<ClientStatus, { label: string; cls: string }> = {
     active: { label: "Active", cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
     paused: { label: "Paused", cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
-    terminated: { label: "Terminated", cls: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" },
-  }[s];
-  return <Badge variant="outline" className={cn("font-medium", map.cls)}>{map.label}</Badge>;
+    terminated: { label: "Paused", cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  };
+  const m = map[s] ?? map.active;
+  return <Badge variant="outline" className={cn("font-medium", m.cls)}>{m.label}</Badge>;
 }
 
 function authStatusBadge(s: AuthorizationStatus) {
@@ -763,68 +774,6 @@ function RevokeAuthorizationDialog({
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Terminate Client (DELETE) Confirmation
-// ────────────────────────────────────────────────────────────────────────────
-
-function TerminateClientDialog({
-  open, onOpenChange, client, onDone,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  client: ClientListItem | null;
-  onDone: () => void;
-}) {
-  const qc = useQueryClient();
-  const [terminating, setTerminating] = useState(false);
-
-  async function handleConfirm() {
-    if (!client) return;
-    setTerminating(true);
-    try {
-      await api(`/api/clients/${client.id}`, { method: "DELETE" });
-      toast.success("Client terminated.");
-      qc.invalidateQueries({ queryKey: ["clients"] });
-      onDone();
-      onOpenChange(false);
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Failed to terminate client.");
-    } finally {
-      setTerminating(false);
-    }
-  }
-
-  return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2">
-            <AlertTriangle className="size-5 text-rose-500" />
-            Terminate client?
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            You are about to terminate <span className="font-medium text-foreground">{client?.name ?? ""}</span>.
-            All linked Google Business Profile write operations will be suspended. The client
-            record is retained for audit history. Please ensure a data export has been offered
-            to the client before terminating — this is required by Google&rsquo;s Third-Party Policy.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={terminating}>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={(e) => { e.preventDefault(); handleConfirm(); }}
-            disabled={terminating}
-            className="bg-rose-600 hover:bg-rose-700 text-white"
-          >
-            {terminating ? <Loader2 className="size-4 mr-1.5 animate-spin" /> : <Trash2 className="size-4 mr-1.5" />}
-            Terminate client
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // Client Detail Dialog
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -837,6 +786,7 @@ function ClientDetailDialog({
 }) {
   const qc = useQueryClient();
   const [grantOpen, setGrantOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<ClientAuthorization | null>(null);
 
   const { data, isLoading, isError, refetch } = useQuery<ClientDetailResponse>({
@@ -856,7 +806,13 @@ function ClientDetailDialog({
   const detail = data?.client ?? client;
   const locations = data?.locations ?? [];
   const authorizations = data?.authorizations ?? [];
+  const portalLogin = data?.portalLogin ?? null;
   const activeAuth = authorizations.find((a) => a.status === "active");
+
+  function copyText(text: string, label: string) {
+    void navigator.clipboard.writeText(text);
+    toast.success(`${label} copied`);
+  }
 
   return (
     <>
@@ -868,7 +824,7 @@ function ClientDetailDialog({
                 <DialogTitle className="flex items-center gap-2 flex-wrap">
                   <Building2 className="size-5 text-emerald-500 shrink-0" />
                   <span className="truncate">{detail.name}</span>
-                  {clientStatusBadge(detail.status)}
+                  {clientStatusBadge(detail.status === "terminated" ? "active" : detail.status)}
                 </DialogTitle>
                 <DialogDescription className="mt-1">
                   {detail.legalName && <span>{detail.legalName} · </span>}
@@ -958,8 +914,59 @@ function ClientDetailDialog({
             </div>
           )}
 
+          {/* Portal login credentials (visible to super admin) */}
+          <div className="rounded-lg border border-sky-500/25 bg-sky-500/[0.06] p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300 flex items-center gap-1.5">
+                <KeyRound className="size-3.5" /> Client login (gmb.myfng.in)
+              </div>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setInviteOpen(true)}>
+                {portalLogin?.temporaryPassword ? "Reset password" : "Create login"}
+              </Button>
+            </div>
+            {portalLogin?.email || portalLogin?.temporaryPassword ? (
+              <div className="grid gap-1.5 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase text-muted-foreground w-16 shrink-0">Email</span>
+                  <code className="text-xs flex-1 break-all">{portalLogin.email || detail.contactEmail || "—"}</code>
+                  {portalLogin.email && (
+                    <Button size="icon" variant="ghost" className="size-7" onClick={() => copyText(portalLogin.email!, "Email")}>
+                      <Copy className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] uppercase text-muted-foreground w-16 shrink-0">Password</span>
+                  <code className="text-xs flex-1 break-all">
+                    {portalLogin.temporaryPassword || "— (reset to generate a new one)"}
+                  </code>
+                  {portalLogin.temporaryPassword && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-7"
+                      onClick={() => copyText(portalLogin.temporaryPassword!, "Password")}
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Same password is shown to the client in the app until they change it.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No portal login yet — click Create login / Invite to portal.
+              </p>
+            )}
+          </div>
+
           {/* Action bar */}
           <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="default" onClick={() => setInviteOpen(true)}>
+              <UserPlus className="size-4 mr-1.5" /> Invite to portal
+            </Button>
             <Button size="sm" onClick={() => setGrantOpen(true)}>
               <KeyRound className="size-4 mr-1.5" /> Grant authorization
             </Button>
@@ -1134,6 +1141,15 @@ function ClientDetailDialog({
         onDone={() => refetch()}
       />
 
+      <PortalInviteDialog
+        client={client}
+        open={inviteOpen}
+        onOpenChange={(v) => {
+          setInviteOpen(v);
+          if (!v) void refetch();
+        }}
+      />
+
       <RevokeAuthorizationDialog
         open={!!revokeTarget}
         onOpenChange={(v) => { if (!v) setRevokeTarget(null); }}
@@ -1143,6 +1159,141 @@ function ClientDetailDialog({
         onDone={() => refetch()}
       />
     </>
+  );
+}
+
+function PortalInviteDialog({
+  client, open, onOpenChange,
+}: {
+  client: ClientListItem;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const qc = useQueryClient();
+  const [email, setEmail] = useState(client.contactEmail || "");
+  const [name, setName] = useState(client.contactName || client.name);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{
+    portalUrl: string;
+    temporaryPassword: string;
+    email: string;
+    emailSent: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setEmail(client.contactEmail || "");
+      setName(client.contactName || client.name);
+      setResult(null);
+    }
+  }, [open, client]);
+
+  async function invite() {
+    setLoading(true);
+    try {
+      const data = await api<{
+        portalUrl: string;
+        temporaryPassword: string;
+        email: string;
+        emailSent: boolean;
+      }>(`/api/clients/${client.id}/portal-invite`, {
+        method: "POST",
+        body: JSON.stringify({ email, name }),
+      });
+      setResult(data);
+      toast.success(data.emailSent ? "Invite emailed to client" : "Login created — share credentials");
+      // Refresh client detail so admin sees stored password immediately
+      void qc.invalidateQueries({ queryKey: ["client", client.id] });
+    } catch (e: any) {
+      toast.error(e?.message || "Invite failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function copy(text: string, label: string) {
+    void navigator.clipboard.writeText(text);
+    toast.success(`${label} copied`);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserPlus className="size-4" /> Invite to Client Portal
+          </DialogTitle>
+          <DialogDescription>
+            Create login credentials for <strong>{client.name}</strong>. They sign in at the same URL as MyFNG
+            (e.g. gmb.myfng.in) with email &amp; password, then connect Google Business Profile.
+          </DialogDescription>
+        </DialogHeader>
+
+        {!result ? (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Contact name</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Login email</Label>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="client@business.com" />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              A temporary password is generated automatically. If SMTP is configured, credentials are emailed; otherwise copy them from the next screen.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3 rounded-lg border bg-muted/30 p-3 text-sm">
+            <div>
+              <div className="text-[10px] uppercase text-muted-foreground">Login URL</div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <code className="text-xs break-all flex-1">{result.portalUrl}</code>
+                <Button size="icon" variant="ghost" className="size-7 shrink-0" onClick={() => copy(result.portalUrl, "URL")}>
+                  <Copy className="size-3.5" />
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">Same site as staff — no separate portal login page.</p>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase text-muted-foreground">Email</div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <code className="text-xs flex-1">{result.email}</code>
+                <Button size="icon" variant="ghost" className="size-7 shrink-0" onClick={() => copy(result.email, "Email")}>
+                  <Copy className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase text-muted-foreground">Temporary password</div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <code className="text-xs flex-1">{result.temporaryPassword}</code>
+                <Button size="icon" variant="ghost" className="size-7 shrink-0" onClick={() => copy(result.temporaryPassword, "Password")}>
+                  <Copy className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              {result.emailSent
+                ? "Email sent. Client can also use these credentials if the mail is delayed."
+                : "Email not sent (SMTP). Share these credentials securely with the client."}
+            </p>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {result ? "Close" : "Cancel"}
+          </Button>
+          {!result && (
+            <Button onClick={invite} disabled={loading || !email.trim()}>
+              {loading ? <Loader2 className="size-3.5 animate-spin mr-1.5" /> : <UserPlus className="size-3.5 mr-1.5" />}
+              Create login
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1160,7 +1311,6 @@ export function ClientsView() {
   const [addOpen, setAddOpen] = useState(false);
   const [detailClient, setDetailClient] = useState<ClientListItem | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [terminateClient, setTerminateClient] = useState<ClientListItem | null>(null);
 
   const { data: clients, isLoading, isError, refetch, isFetching } = useQuery<ClientListItem[]>({
     queryKey: ["clients"],
@@ -1186,7 +1336,9 @@ export function ClientsView() {
     const list = clients ?? [];
     const q = search.trim().toLowerCase();
     return list.filter((c) => {
-      if (statusFilter !== "all" && c.status !== statusFilter) return false;
+      // Treat legacy "terminated" as active for filtering (Terminate removed from product)
+      const status = c.status === "terminated" ? "active" : c.status;
+      if (statusFilter !== "all" && status !== statusFilter) return false;
       if (!q) return true;
       return (
         c.name.toLowerCase().includes(q) ||
@@ -1302,7 +1454,6 @@ export function ClientsView() {
                 <SelectItem value="all">All statuses</SelectItem>
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="paused">Paused</SelectItem>
-                <SelectItem value="terminated">Terminated</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1401,7 +1552,7 @@ export function ClientsView() {
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell>{clientStatusBadge(c.status)}</TableCell>
+                        <TableCell>{clientStatusBadge(c.status === "terminated" ? "active" : c.status)}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm">
                           {locationsCount(c)}
                         </TableCell>
@@ -1465,17 +1616,14 @@ export function ClientsView() {
                                 >
                                   <KeyRound className="size-3.5 mr-2" /> Manage authorization
                                 </DropdownMenuItem>
-                                {canManage && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      onClick={() => setTerminateClient(c)}
-                                      className="text-rose-600 focus:text-rose-600 focus:bg-rose-500/10"
-                                    >
-                                      <Trash2 className="size-3.5 mr-2" /> Terminate
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setDetailClient(c);
+                                    setDetailOpen(true);
+                                  }}
+                                >
+                                  <UserPlus className="size-3.5 mr-2" /> Invite to portal
+                                </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
@@ -1514,13 +1662,6 @@ export function ClientsView() {
         client={detailClient}
         open={detailOpen}
         onOpenChange={(v) => { setDetailOpen(v); if (!v) setDetailClient(null); }}
-      />
-
-      <TerminateClientDialog
-        open={!!terminateClient}
-        onOpenChange={(v) => { if (!v) setTerminateClient(null); }}
-        client={terminateClient}
-        onDone={() => refetch()}
       />
     </div>
   );

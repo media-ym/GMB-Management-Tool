@@ -17,11 +17,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!can(user.role, "settings.manage")) return forbidden();
 
   const { id } = await params;
-  const client = await db.client.findUnique({ where: { id } });
+  let client = await db.client.findUnique({ where: { id } });
   if (!client) return notFound("Client not found");
 
+  // Terminate flow removed — revive legacy terminated clients
   if (client.status === "terminated") {
-    return fail("Cannot grant authorization to a terminated client");
+    client = await db.client.update({
+      where: { id },
+      data: { status: "active" },
+    });
   }
 
   const body = await req.json().catch(() => ({}));

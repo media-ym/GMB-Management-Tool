@@ -37,7 +37,10 @@ export async function GET(req: NextRequest) {
   }
 
   // ─── State 2: Configured but not connected ─────────────────────────────
-  const accessToken = await getValidAccessToken();
+  // Portal users use their own OAuth; staff use platform account
+  const accessToken = await getValidAccessToken({
+    clientId: user.role === "client_portal" ? user.clientId : null,
+  });
   if (!accessToken) {
     return ok({
       status: "not_connected",

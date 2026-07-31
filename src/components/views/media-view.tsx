@@ -412,38 +412,55 @@ function UploadDialog({
   locations: { id: string; name: string; city: string }[];
   onUploaded: () => void;
 }) {
-  const [bucket, setBucket] = React.useState<Bucket>("business-photos");
-  const [locationId, setLocationId] = React.useState<string>("all");
-  const [fileName, setFileName] = React.useState("");
-  const [aiGenerated, setAiGenerated] = React.useState(false);
+  const [locationId, setLocationId] = React.useState<string>("");
+  const [file, setFile] = React.useState<File | null>(null);
+  const [publishToGoogle, setPublishToGoogle] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     if (open) {
-      setBucket("business-photos");
-      setLocationId("all");
-      setFileName("");
-      setAiGenerated(false);
+      setLocationId(locations[0]?.id || "");
+      setFile(null);
+      setPublishToGoogle(false);
       setSubmitting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
-  }, [open]);
+  }, [open, locations]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fileName.trim()) {
-      toast.error("Please enter a file name.");
+    if (!file) {
+      toast.error("Please choose an image file.");
+      return;
+    }
+    if (!locationId) {
+      toast.error("Please select a location.");
       return;
     }
     setSubmitting(true);
-    // Upload queued for processing.
-    setTimeout(() => {
-      setSubmitting(false);
-      toast.success("Upload queued for background processing", {
-        description: `${fileName} → ${bucketLabel(bucket)}`,
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("locationId", locationId);
+      form.append("publishToGoogle", publishToGoogle ? "true" : "false");
+      form.append("category", "ADDITIONAL");
+      const res = await fetch("/api/media", { method: "POST", body: form });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.message || `Upload failed (${res.status})`);
+      }
+      const sizeKb = Math.max(1, Math.round((json.data?.fileSize || 0) / 1024));
+      toast.success(json.message || "Uploaded as WebP", {
+        description: `${json.data?.fileName || file.name} · ${sizeKb} KB`,
       });
       onUploaded();
       onOpenChange(false);
-    }, 700);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -455,34 +472,17 @@ function UploadDialog({
             Upload media
           </DialogTitle>
           <DialogDescription>
-            Choose a bucket, location and file name. Files are processed in the background.
+            Images are automatically converted to compressed WebP (max ~2120px) before saving.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="upload-bucket">Bucket</Label>
-            <Select value={bucket} onValueChange={(v) => setBucket(v as Bucket)}>
-              <SelectTrigger id="upload-bucket" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {BUCKET_ORDER.map((b) => (
-                  <SelectItem key={b} value={b}>
-                    {bucketLabel(b)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
             <Label htmlFor="upload-location">Location</Label>
-            <Select value={locationId} onValueChange={setLocationId}>
+            <Select value={locationId || undefined} onValueChange={setLocationId}>
               <SelectTrigger id="upload-location" className="w-full">
-                <SelectValue />
+                <SelectValue placeholder="Select location" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All locations</SelectItem>
                 {locations.map((l) => (
                   <SelectItem key={l.id} value={l.id}>
                     {l.name}{l.city ? `, ${l.city}` : ""}
@@ -493,29 +493,31 @@ function UploadDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="upload-filename">File name</Label>
+            <Label htmlFor="upload-file">Image file</Label>
             <Input
-              id="upload-filename"
-              placeholder="e.g. thane_centre_hero.jpg"
-              value={fileName}
-              onChange={(e) => setFileName(e.target.value)}
-              autoComplete="off"
+              id="upload-file"
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
             />
+            {file && (
+              <p className="text-xs text-muted-foreground">
+                Selected: {file.name} ({Math.max(1, Math.round(file.size / 1024))} KB) → will save as WebP
+              </p>
+            )}
           </div>
 
-          <label className="flex cursor-pointer items-center gap-3 rounded-md border bg-amber-500/[0.04] p-3">
+          <label className="flex cursor-pointer items-center gap-3 rounded-md border p-3">
             <input
               type="checkbox"
-              className="size-4 accent-amber-500"
-              checked={aiGenerated}
-              onChange={(e) => setAiGenerated(e.target.checked)}
+              className="size-4 accent-primary"
+              checked={publishToGoogle}
+              onChange={(e) => setPublishToGoogle(e.target.checked)}
             />
-            <div className="flex items-center gap-2 text-sm">
-              <Sparkles className="size-4 text-amber-500" />
-              <div>
-                <div className="font-medium">Mark as AI-generated asset</div>
-                <div className="text-xs text-muted-foreground">Highlights the file with an amber AI badge.</div>
-              </div>
+            <div className="text-sm">
+              <div className="font-medium">Also publish to Google</div>
+              <div className="text-xs text-muted-foreground">Push this photo to the linked GBP listing.</div>
             </div>
           </label>
 
@@ -523,16 +525,16 @@ function UploadDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting || !file || !locationId}>
               {submitting ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Queuing…
+                  Uploading…
                 </>
               ) : (
                 <>
                   <Upload className="size-4" />
-                  Queue upload
+                  Upload
                 </>
               )}
             </Button>

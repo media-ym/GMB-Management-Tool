@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, notFound, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
+import { getPortalCredentialsByClientId } from "@/lib/portal-link";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     };
   });
 
+  const portalCreds = await getPortalCredentialsByClientId(client.id);
+
   return ok({
     id: client.id,
     clientCode: client.clientCode,
@@ -93,6 +96,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     })),
     authorizations,
     stats: { totalReviews, totalPosts, totalPhotos, totalLocations: client.locations.length },
+    portalLogin: portalCreds
+      ? {
+          userId: portalCreds.userId,
+          email: portalCreds.loginEmail,
+          temporaryPassword: portalCreds.temporaryPassword,
+          mustChangePassword: portalCreds.mustChangePassword,
+        }
+      : null,
   });
 }
 

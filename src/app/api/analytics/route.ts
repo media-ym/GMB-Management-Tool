@@ -36,7 +36,9 @@ export async function GET(req: NextRequest) {
   }
   if (locationId && (!scoped || scoped.includes(locationId))) where.locationId = locationId;
 
-  const googleConnected = await isGoogleOAuthConnected();
+  const googleConnected = await isGoogleOAuthConnected(
+    user.role === "client_portal" ? user.clientId : undefined,
+  );
   if (!googleConnected) {
     return ok({
       googleConnected: false,

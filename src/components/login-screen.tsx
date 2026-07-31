@@ -27,8 +27,6 @@ const FEATURES = [
   { icon: Sparkles, label: "MiSA AI Assistant" },
 ];
 
-const ADMIN_DEMO = { role: "Super Admin", email: "nikhil@myfng.in", password: "MyFNG@309@123*#BUS", color: "#0047AB" };
-
 export function LoginScreen() {
   const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -42,15 +40,38 @@ export function LoginScreen() {
   const [regForm, setRegForm] = useState({ name: "", email: "", mobile: "", branch: "", role: "viewer", password: "", confirm: "", agree: false });
 
   async function loginWithPassword(loginEmail: string, loginPassword: string) {
+    const normalized = loginEmail.trim().toLowerCase();
+
+    // Enforce Settings → Security lockout before hitting Supabase
+    const lockCheck = await fetch("/api/auth/login-attempt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: normalized, result: "check" }),
+    }).then((r) => r.json()).catch(() => null);
+    if (lockCheck && lockCheck.success === false) {
+      toast.error(lockCheck.message || "Account locked.");
+      return false;
+    }
+
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword({
-      email: loginEmail.trim().toLowerCase(),
+      email: normalized,
       password: loginPassword,
     });
     if (error) {
-      toast.error(error.message || "Invalid credentials.");
+      const failRes = await fetch("/api/auth/login-attempt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalized, result: "failure" }),
+      }).then((r) => r.json()).catch(() => null);
+      toast.error(failRes?.message || error.message || "Invalid credentials.");
       return false;
     }
+    await fetch("/api/auth/login-attempt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: normalized, result: "success" }),
+    }).catch(() => null);
     await fetch("/api/session", { method: "POST" }).catch(() => null);
     return true;
   }
@@ -59,21 +80,20 @@ export function LoginScreen() {
     e.preventDefault();
     setLoading(true);
     const ok = await loginWithPassword(email, password);
-    setLoading(false);
-    if (!ok) return;
+    if (!ok) {
+      setLoading(false);
+      return;
+    }
+    const session = await fetch("/api/session").then((r) => r.json()).catch(() => null);
+    if (!session?.success) {
+      setLoading(false);
+      toast.error("Signed in, but session profile failed. Refresh once and try again.");
+      return;
+    }
     toast.success("Welcome to MyFNG Local AI Manager");
+    router.replace("/dashboard");
     router.refresh();
-  }
-
-  async function quickAdminLogin() {
-    setEmail(ADMIN_DEMO.email);
-    setPassword(ADMIN_DEMO.password);
-    setLoading(true);
-    const ok = await loginWithPassword(ADMIN_DEMO.email, ADMIN_DEMO.password);
     setLoading(false);
-    if (!ok) { toast.error("Login failed — bootstrap Supabase Auth users first"); return; }
-    toast.success("Signed in as Super Admin");
-    router.refresh();
   }
 
   function handleRegister(e: React.FormEvent) {
@@ -437,32 +457,8 @@ export function LoginScreen() {
                   </motion.button>
                 </form>
 
-                {/* Admin demo login */}
-                <div className="flex items-center gap-4 my-7">
-                  <div className="flex-1 h-px" style={{ background: BRAND.border }} />
-                  <span className="text-xs" style={{ color: BRAND.gray }}>OR</span>
-                  <div className="flex-1 h-px" style={{ background: BRAND.border }} />
-                </div>
-                <motion.button
-                  type="button"
-                  onClick={quickAdminLogin}
-                  disabled={loading}
-                  whileHover={{ y: -2, borderColor: BRAND.primary }}
-                  whileTap={{ scale: 0.98 }}
-                  className="w-full rounded-xl border bg-white px-4 py-3 text-left transition-all disabled:opacity-50 mb-5"
-                  style={{ borderColor: BRAND.border }}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="size-2.5 rounded-full shrink-0" style={{ background: ADMIN_DEMO.color }} />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium" style={{ color: BRAND.text }}>Demo Login — {ADMIN_DEMO.role}</div>
-                      <div className="text-xs truncate" style={{ color: BRAND.gray }}>{ADMIN_DEMO.email}</div>
-                    </div>
-                  </div>
-                </motion.button>
-
                 {/* Register link */}
-                <div className="text-center text-sm" style={{ color: BRAND.gray }}>
+                <div className="text-center text-sm mt-7" style={{ color: BRAND.gray }}>
                   Don't have an account?{" "}
                   <button onClick={() => setMode("register")} className="font-semibold hover:underline" style={{ color: BRAND.primaryDark }}>
                     Create Account

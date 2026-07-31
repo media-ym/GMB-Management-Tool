@@ -20,6 +20,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Menu, LogOut, RefreshCw, Sun, Moon, ChevronDown, Command,
   Bell, Search as SearchIcon, MoreHorizontal, Settings, ScrollText, FileJson, Bot,
+  KeyRound,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
@@ -32,6 +33,7 @@ import {
   CommandItem, CommandList,
 } from "@/components/ui/command";
 import { toast } from "sonner";
+import { ChangePasswordDialog } from "@/components/shared/change-password-dialog";
 
 interface NavItem {
   key: ViewKey;
@@ -76,6 +78,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
   const qc = useQueryClient();
   const { theme, setTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
@@ -110,6 +113,29 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
     refetchInterval: 60_000,
   });
   const unreadCount = notifs?.length ?? 0;
+
+  const { data: brandSettings } = useQuery<{ name?: string; tagline?: string; logoUrl?: string }>({
+    queryKey: ["brand-public"],
+    queryFn: () => api("/api/brand"),
+    staleTime: 60_000,
+  });
+  const brandName = brandSettings?.name || "MyFNG";
+  const brandTagline = brandSettings?.tagline || "Your Friendly Neighbourhood Garage";
+  const brandLogo = brandSettings?.logoUrl || "/myfng-logo-transparent.png";
+
+  const { data: sessionExtra } = useQuery<{
+    portalLogin?: {
+      email: string | null;
+      temporaryPassword: string | null;
+      mustChangePassword: boolean;
+    } | null;
+  }>({
+    queryKey: ["session-portal-login"],
+    queryFn: () => api("/api/session"),
+    enabled: user.role === "client_portal",
+    staleTime: 30_000,
+  });
+  const portalLogin = sessionExtra?.portalLogin;
 
   const visibleNav = NAV.filter(
     (n) => canAccessView(user.role, n.key) && !HIDDEN_NAV_KEYS.has(n.key),
@@ -161,10 +187,10 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
         <div className="max-w-[1600px] mx-auto h-14 flex items-center gap-4 px-4 sm:px-6">
           {/* Logo */}
           <div className="flex items-center shrink-0">
-            <Link href="/dashboard" className="flex items-center">
+            <Link href="/dashboard" className="flex items-center" title={brandName}>
               <Image
-                src="/myfng-logo-transparent.png"
-                alt="MyFNG - Your Friendly Neighbourhood Garage"
+                src={brandLogo}
+                alt={`${brandName} - ${brandTagline}`}
                 width={140}
                 height={40}
                 className="h-8 sm:h-9 w-auto object-contain"
@@ -293,6 +319,9 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
                 <DropdownMenuItem onClick={() => navigate("settings")}>
                   <Settings className="size-4 mr-2" /> Settings
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
+                  <KeyRound className="size-4 mr-2" /> Change password
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate("audit")}>
                   <ScrollText className="size-4 mr-2" /> My activity
                 </DropdownMenuItem>
@@ -309,6 +338,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
 
             {/* Hamburger menu — mobile only, LAST item on right */}
             <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
@@ -353,7 +383,35 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
 
       {/* ═══ MAIN CONTENT — colorful dashboard pages use PageHeader inside ═══ */}
       <main className="flex-1 min-w-0 kt-fade-in bg-gradient-to-b from-slate-50/90 via-background to-background dark:from-background dark:via-background dark:to-background">
-        <div className="max-w-[1600px] mx-auto p-4 sm:p-6">
+        <div className="max-w-[1600px] mx-auto p-4 sm:p-6 space-y-4">
+          {user.role === "client_portal" && portalLogin?.temporaryPassword && (
+            <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-sky-800 dark:text-sky-200 flex items-center gap-1.5">
+                  <KeyRound className="size-4" /> Your MyFNG login password
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Email: <code className="text-foreground">{portalLogin.email || user.email}</code>
+                  {" · "}
+                  Password: <code className="text-foreground">{portalLogin.temporaryPassword}</code>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Save this password. Change it anytime from your profile menu → Change password.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => {
+                  void navigator.clipboard.writeText(portalLogin.temporaryPassword!);
+                  toast.success("Password copied");
+                }}
+              >
+                Copy password
+              </Button>
+            </div>
+          )}
           {children}
         </div>
       </main>

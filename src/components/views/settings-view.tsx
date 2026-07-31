@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api-client";
+import { api, apiRaw } from "@/lib/api-client";
 import { useAppNavigation } from "@/hooks/use-app-navigation";
 import { useUser } from "@/lib/user-context";
 import { can } from "@/lib/permissions";
@@ -42,9 +42,17 @@ import {
   CheckCircle2, AlertTriangle, KeyRound, Plug, ExternalLink, Users, Lock, Save, Zap,
   LayoutDashboard, Bell, ListChecks, HardDrive, HeartPulse, Info, Code2, DatabaseBackup,
   Shield, ChevronDown, ChevronRight, Loader2, Activity, Database, FileWarning,
+  Eye, EyeOff, Trash2, Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow, format } from "date-fns";
+import { ChangePasswordDialog } from "@/components/shared/change-password-dialog";
+import {
+  PERMISSION_CATALOG,
+  type Permission,
+  type RbacRoleDef,
+} from "@/lib/permissions";
+import { OPENROUTER_MODELS, AUTO_MODEL_ID } from "@/lib/openrouter-models";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -126,7 +134,7 @@ interface HealthCheck {
 }
 interface HealthResponse {
   overall: "healthy" | "warning" | "critical";
-  summary: { total: number; healthy: number; warnings: number; critical: number };
+  summary: { total: number; healthy: number; warnings: number; critical: number; googleAccounts?: number };
   checks: HealthCheck[];
 }
 
@@ -154,6 +162,7 @@ interface ErrorLogItem {
   errorMessage: string;
   resolved: boolean;
   createdAt: string;
+  stackTrace?: string | null;
 }
 interface SystemResponse {
   schema: { totalTables: number; totalRows: number; tables: any[] };
@@ -176,7 +185,7 @@ interface BackupHistory {
   type: string;
 }
 interface BackupResponse {
-  lastBackup: string;
+  lastBackup: string | null;
   status: string;
   retention: string;
   schedule: string;
@@ -188,7 +197,7 @@ interface SystemInfoResponse {
   environment: string;
   applicationVersion: string;
   buildNumber: string;
-  deploymentDate: string;
+  deploymentDate: string | null;
   databaseVersion: string;
   framework: string;
   runtime: string;
@@ -214,23 +223,25 @@ interface PromptType {
 // ---------------------------------------------------------------------------
 // Role helpers
 // ---------------------------------------------------------------------------
-const ROLE_BADGE: Record<Role, string> = {
+const ROLE_BADGE: Record<string, string> = {
   super_admin: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
   marketing_manager: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
   branch_manager: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
   customer_support: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
   viewer: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
 };
+const DEFAULT_ROLE_BADGE = "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20";
 
-const ROLE_DOT: Record<Role, string> = {
+const ROLE_DOT: Record<string, string> = {
   super_admin: "bg-emerald-500",
   marketing_manager: "bg-amber-500",
   branch_manager: "bg-teal-500",
   customer_support: "bg-rose-500",
   viewer: "bg-slate-400",
 };
+const DEFAULT_ROLE_DOT = "bg-violet-500";
 
-const ROLE_ICON: Record<Role, React.ComponentType<{ className?: string }>> = {
+const ROLE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   super_admin: ShieldCheck,
   marketing_manager: BarChart3,
   branch_manager: Building2,
@@ -238,8 +249,20 @@ const ROLE_ICON: Record<Role, React.ComponentType<{ className?: string }>> = {
   viewer: Users,
 };
 
-function roleLabel(role: Role) {
-  return ROLES.find((r) => r.value === role)?.label ?? role;
+function roleBadge(role: string) {
+  return ROLE_BADGE[role] || DEFAULT_ROLE_BADGE;
+}
+function roleDot(role: string) {
+  return ROLE_DOT[role] || DEFAULT_ROLE_DOT;
+}
+function roleIcon(role: string) {
+  return ROLE_ICON[role] || Shield;
+}
+
+function roleLabel(role: Role, roles?: { value: string; label: string }[]) {
+  return roles?.find((r) => r.value === role)?.label
+    || ROLES.find((r) => r.value === role)?.label
+    || role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function initials(name: string) {
@@ -302,22 +325,22 @@ interface CategoryMeta {
 }
 
 const CATEGORIES: CategoryMeta[] = [
-  { key: "overview", label: "Overview", icon: LayoutDashboard, canSee: (r) => can(r, "system.view") || can(r, "settings.view") },
-  { key: "users", label: "Users & Roles", icon: Users, canSee: (r) => can(r, "settings.view") },
-  { key: "general", label: "General", icon: Settings, canSee: (r) => can(r, "settings.view") },
-  { key: "google", label: "Google Integration", icon: Plug, canSee: (r) => can(r, "settings.view") },
-  { key: "ai", label: "AI Provider", icon: Sparkles, canSee: (r) => can(r, "settings.view") },
+  { key: "overview", label: "Overview", icon: LayoutDashboard, canSee: (r) => r !== "client_portal" && (can(r, "system.view") || can(r, "settings.view")) },
+  { key: "users", label: "Users & Roles", icon: Users, canSee: (r) => r !== "client_portal" && can(r, "settings.view") },
+  { key: "general", label: "General", icon: Settings, canSee: (r) => r !== "client_portal" && can(r, "settings.view") },
+  { key: "google", label: "Google Integration", icon: Plug, canSee: (r) => can(r, "settings.view") || can(r, "locations.manage") },
+  { key: "ai", label: "AI Provider", icon: Sparkles, canSee: (r) => r !== "client_portal" && can(r, "settings.view") },
   { key: "notifications", label: "Notifications", icon: Bell, canSee: (r) => can(r, "settings.view") },
-  { key: "smtp", label: "Email / SMTP", icon: Mail, canSee: (r) => can(r, "settings.view") },
-  { key: "sync", label: "Sync", icon: RefreshCw, canSee: (r) => can(r, "settings.view") },
-  { key: "security", label: "Security", icon: Shield, canSee: (r) => can(r, "settings.view") },
-  { key: "storage", label: "Storage", icon: HardDrive, canSee: (r) => can(r, "settings.view") || can(r, "system.view") },
+  { key: "smtp", label: "Email / SMTP", icon: Mail, canSee: (r) => r !== "client_portal" && can(r, "settings.view") },
+  { key: "sync", label: "Sync", icon: RefreshCw, canSee: (r) => r !== "client_portal" && can(r, "settings.view") },
+  { key: "security", label: "Security", icon: Shield, canSee: (r) => r !== "client_portal" && can(r, "settings.view") },
+  { key: "storage", label: "Storage", icon: HardDrive, canSee: (r) => r !== "client_portal" && (can(r, "settings.view") || can(r, "system.view")) },
   { key: "health", label: "Health Checks", icon: HeartPulse, canSee: (r) => can(r, "system.view") },
   { key: "jobs", label: "Background Jobs", icon: ListChecks, canSee: (r) => can(r, "system.view") },
   { key: "errors", label: "Error Monitoring", icon: AlertTriangle, canSee: (r) => can(r, "system.view") },
-  { key: "backup", label: "Backup & Restore", icon: DatabaseBackup, canSee: (r) => can(r, "system.view") || can(r, "settings.view") },
-  { key: "environment", label: "Environment", icon: Info, canSee: (r) => can(r, "settings.view") },
-  { key: "api-docs", label: "API Documentation", icon: Code2, canSee: () => true },
+  { key: "backup", label: "Backup & Restore", icon: DatabaseBackup, canSee: (r) => r !== "client_portal" && (can(r, "system.view") || can(r, "settings.view")) },
+  { key: "environment", label: "Environment", icon: Info, canSee: (r) => r !== "client_portal" && can(r, "settings.view") },
+  { key: "api-docs", label: "API Documentation", icon: Code2, canSee: (r) => r !== "client_portal" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -469,7 +492,13 @@ function OverviewContent() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Total Users" value={totalUsers} icon={Users} accent="emerald" hint="Across all roles" />
         <StatCard label="Active Locations" value={activeLocations} icon={Building2} accent="teal" hint={`of ${locations?.length ?? 0} total`} />
-        <StatCard label="Google Accounts" value="1" icon={Plug} accent="amber" hint="OAuth connected" />
+        <StatCard
+          label="Google Accounts"
+          value={health?.summary?.googleAccounts ?? (health?.checks.find((c) => c.service === "Google OAuth")?.details as any)?.profiles ?? 0}
+          icon={Plug}
+          accent="amber"
+          hint={health?.checks.find((c) => c.service === "Google OAuth")?.message ?? "Connected accounts"}
+        />
         <StatCard
           label="System Health"
           value={health ? health.overall.charAt(0).toUpperCase() + health.overall.slice(1) : "—"}
@@ -606,11 +635,17 @@ function UsersTab() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<UserRow | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [passwordUser, setPasswordUser] = useState<UserRow | null>(null);
 
   const { data: users, isLoading } = useQuery<UserRow[]>({
     queryKey: ["users"],
     queryFn: () => api<UserRow[]>("/api/users"),
   });
+  const { data: rolesData } = useQuery<{ roles: RbacRoleDef[] }>({
+    queryKey: ["rbac-roles"],
+    queryFn: () => api<{ roles: RbacRoleDef[]; catalog: typeof PERMISSION_CATALOG }>("/api/roles"),
+  });
+  const roleOptions = rolesData?.roles ?? ROLES.map((r) => ({ ...r, permissions: [], system: true }));
 
   const locationMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -625,9 +660,9 @@ function UsersTab() {
     return users.filter((u) =>
       u.name.toLowerCase().includes(q) ||
       u.email.toLowerCase().includes(q) ||
-      roleLabel(u.role).toLowerCase().includes(q),
+      roleLabel(u.role, roleOptions).toLowerCase().includes(q),
     );
-  }, [users, search]);
+  }, [users, search, roleOptions]);
 
   function openCreate() {
     setEditing(null);
@@ -705,10 +740,12 @@ function UsersTab() {
                 <UserTableRow
                   key={u.id}
                   u={u}
+                  roleOptions={roleOptions}
                   locationMap={locationMap}
                   toggling={togglingId === u.id}
                   onToggle={() => toggleStatus(u)}
                   onEdit={() => openEdit(u)}
+                  onResetPassword={() => setPasswordUser(u)}
                 />
               ))}
             </TableBody>
@@ -732,36 +769,50 @@ function UsersTab() {
             <UserCard
               key={u.id}
               u={u}
+              roleOptions={roleOptions}
               locationMap={locationMap}
               toggling={togglingId === u.id}
               onToggle={() => toggleStatus(u)}
               onEdit={() => openEdit(u)}
+              onResetPassword={() => setPasswordUser(u)}
             />
           ))
         )}
       </div>
 
-      {/* Role legend */}
-      <RoleLegend />
+      <RolesManager />
 
-      {/* Create / Edit dialog */}
       <UserDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         editing={editing}
+        roleOptions={roleOptions}
+        onRequestPasswordReset={() => {
+          if (editing) setPasswordUser(editing);
+        }}
+      />
+
+      <ChangePasswordDialog
+        open={!!passwordUser}
+        onOpenChange={(o) => { if (!o) setPasswordUser(null); }}
+        mode="admin"
+        targetUserId={passwordUser?.id}
+        targetEmail={passwordUser?.email}
       />
     </div>
   );
 }
 
 function UserTableRow({
-  u, locationMap, toggling, onToggle, onEdit,
+  u, roleOptions, locationMap, toggling, onToggle, onEdit, onResetPassword,
 }: {
   u: UserRow;
+  roleOptions: { value: string; label: string }[];
   locationMap: Map<string, string>;
   toggling: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  onResetPassword: () => void;
 }) {
   const assignedCities = u.assignedLocationIds
     .map((id) => locationMap.get(id))
@@ -773,7 +824,7 @@ function UserTableRow({
         <div className="flex items-center gap-2.5 min-w-0">
           <Avatar className="size-8">
             {u.avatar ? <AvatarImage src={u.avatar} alt={u.name} /> : null}
-            <AvatarFallback className={cn("text-[10px] font-semibold", ROLE_BADGE[u.role].split(" ").slice(0, 2).join(" "))}>
+            <AvatarFallback className={cn("text-[10px] font-semibold", roleBadge(u.role).split(" ").slice(0, 2).join(" "))}>
               {initials(u.name)}
             </AvatarFallback>
           </Avatar>
@@ -782,7 +833,7 @@ function UserTableRow({
       </TableCell>
       <TableCell className="text-muted-foreground">{u.email}</TableCell>
       <TableCell>
-        <RoleBadge role={u.role} />
+        <RoleBadge role={u.role} label={roleLabel(u.role, roleOptions)} />
       </TableCell>
       <TableCell>
         {u.role === "branch_manager" ? (
@@ -823,22 +874,36 @@ function UserTableRow({
         {format(new Date(u.createdAt), "dd MMM yyyy")}
       </TableCell>
       <TableCell className="pr-5 text-right">
-        <Button variant="ghost" size="sm" onClick={onEdit} className="h-7 px-2">
-          <Pencil className="size-3.5 mr-1" /> Edit
-        </Button>
+        <div className="inline-flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={onResetPassword}
+            aria-label="Change password"
+            title="Change password"
+          >
+            <KeyRound className="size-3.5" />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onEdit} className="h-7 px-2">
+            <Pencil className="size-3.5 mr-1" /> Edit
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );
 }
 
 function UserCard({
-  u, locationMap, toggling, onToggle, onEdit,
+  u, roleOptions, locationMap, toggling, onToggle, onEdit, onResetPassword,
 }: {
   u: UserRow;
+  roleOptions: { value: string; label: string }[];
   locationMap: Map<string, string>;
   toggling: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  onResetPassword: () => void;
 }) {
   const assignedCities = u.assignedLocationIds
     .map((id) => locationMap.get(id))
@@ -851,7 +916,7 @@ function UserCard({
           <div className="flex items-center gap-2.5 min-w-0">
             <Avatar className="size-9">
               {u.avatar ? <AvatarImage src={u.avatar} alt={u.name} /> : null}
-              <AvatarFallback className={cn("text-[11px] font-semibold", ROLE_BADGE[u.role].split(" ").slice(0, 2).join(" "))}>
+              <AvatarFallback className={cn("text-[11px] font-semibold", roleBadge(u.role).split(" ").slice(0, 2).join(" "))}>
                 {initials(u.name)}
               </AvatarFallback>
             </Avatar>
@@ -860,7 +925,7 @@ function UserCard({
               <div className="text-xs text-muted-foreground truncate">{u.email}</div>
             </div>
           </div>
-          <RoleBadge role={u.role} />
+          <RoleBadge role={u.role} label={roleLabel(u.role, roleOptions)} />
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-xs">
@@ -900,7 +965,10 @@ function UserCard({
           </div>
         )}
 
-        <div className="flex justify-end pt-1 border-t">
+        <div className="flex justify-end gap-2 pt-1 border-t">
+          <Button variant="outline" size="sm" onClick={onResetPassword} className="h-7">
+            <KeyRound className="size-3.5 mr-1" /> Password
+          </Button>
           <Button variant="outline" size="sm" onClick={onEdit} className="h-7">
             <Pencil className="size-3.5 mr-1" /> Edit
           </Button>
@@ -910,11 +978,11 @@ function UserCard({
   );
 }
 
-function RoleBadge({ role }: { role: Role }) {
+function RoleBadge({ role, label }: { role: Role; label?: string }) {
   return (
-    <Badge variant="outline" className={cn("font-medium", ROLE_BADGE[role])}>
-      <span className={cn("size-1.5 rounded-full", ROLE_DOT[role])} />
-      {roleLabel(role)}
+    <Badge variant="outline" className={cn("font-medium", roleBadge(role))}>
+      <span className={cn("size-1.5 rounded-full", roleDot(role))} />
+      {label || roleLabel(role)}
     </Badge>
   );
 }
@@ -962,32 +1030,269 @@ function UsersEmpty({ search }: { search: string }) {
   );
 }
 
-function RoleLegend() {
+function RolesManager() {
+  const qc = useQueryClient();
+  const [expanded, setExpanded] = useState<string | null>("super_admin");
+  const [editing, setEditing] = useState<RbacRoleDef | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const { data, isLoading } = useQuery<{ roles: RbacRoleDef[]; catalog: typeof PERMISSION_CATALOG }>({
+    queryKey: ["rbac-roles"],
+    queryFn: () => api("/api/roles"),
+  });
+  const roles = data?.roles ?? [];
+  const catalog = data?.catalog ?? PERMISSION_CATALOG;
+
+  async function deleteRole(value: string) {
+    if (!confirm("Delete this custom role? Users with this role must be reassigned.")) return;
+    try {
+      await api(`/api/roles?value=${encodeURIComponent(value)}`, { method: "DELETE" });
+      qc.invalidateQueries({ queryKey: ["rbac-roles"] });
+      toast.success("Role deleted");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete role");
+    }
+  }
+
   return (
     <CardSection
       title="Roles & Permissions"
-      description="Five role tiers power the MyFNG RBAC matrix"
+      description="Har role ka detailed access — create, edit, aur permissions on/off"
+      action={
+        <Button size="sm" onClick={() => setCreating(true)}>
+          <Plus className="size-3.5 mr-1.5" /> Create role
+        </Button>
+      }
     >
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {ROLES.map((r) => {
-          const Icon = ROLE_ICON[r.value];
-          return (
-            <div key={r.value} className="rounded-lg border p-3 flex gap-3">
-              <div className={cn("size-8 rounded-md flex items-center justify-center shrink-0", ROLE_BADGE[r.value])}>
-                <Icon className="size-4" />
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {roles.map((r) => {
+            const Icon = roleIcon(r.value);
+            const open = expanded === r.value;
+            const groups = Array.from(new Set(catalog.map((c) => c.group)));
+            return (
+              <div key={r.value} className="rounded-lg border overflow-hidden">
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-3 p-3 text-left hover:bg-accent/40 transition-colors"
+                  onClick={() => setExpanded(open ? null : r.value)}
+                >
+                  <div className={cn("size-8 rounded-md flex items-center justify-center shrink-0", roleBadge(r.value))}>
+                    <Icon className="size-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">{r.label}</span>
+                      <span className={cn("size-1.5 rounded-full", roleDot(r.value))} />
+                      {r.system ? (
+                        <Badge variant="outline" className="text-[10px]">System</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 border-violet-500/20">Custom</Badge>
+                      )}
+                      <span className="text-[10px] text-muted-foreground tabular-nums">
+                        {r.permissions.length}/{catalog.length} permissions
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{r.description || "No description"}</p>
+                  </div>
+                  {open ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronRight className="size-4 text-muted-foreground" />}
+                </button>
+                {open && (
+                  <div className="border-t bg-muted/20 p-3 space-y-3">
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <Button size="sm" variant="outline" className="h-7" onClick={() => setEditing(r)}>
+                        <Pencil className="size-3 mr-1" /> Edit access
+                      </Button>
+                      {!r.system && (
+                        <Button size="sm" variant="outline" className="h-7 text-rose-600" onClick={() => deleteRole(r.value)}>
+                          <Trash2 className="size-3 mr-1" /> Delete
+                        </Button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {groups.map((group) => {
+                        const items = catalog.filter((c) => c.group === group);
+                        return (
+                          <div key={group} className="rounded-md border bg-background p-2.5">
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                              {group}
+                            </div>
+                            <ul className="space-y-1">
+                              {items.map((item) => {
+                                const on = r.permissions.includes(item.key);
+                                return (
+                                  <li key={item.key} className="flex items-start gap-2 text-xs">
+                                    <CheckCircle2 className={cn("size-3.5 mt-0.5 shrink-0", on ? "text-emerald-500" : "text-muted-foreground/30")} />
+                                    <div className="min-w-0">
+                                      <div className={cn("font-medium", !on && "text-muted-foreground")}>{item.label}</div>
+                                      <div className="text-[10px] text-muted-foreground">{item.description}</div>
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-semibold">{r.label}</span>
-                  <span className={cn("size-1.5 rounded-full", ROLE_DOT[r.value])} />
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{r.description}</p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
+
+      <RoleEditorDialog
+        open={creating || !!editing}
+        onOpenChange={(o) => {
+          if (!o) { setCreating(false); setEditing(null); }
+        }}
+        role={editing}
+        catalog={catalog}
+        mode={creating ? "create" : "edit"}
+      />
     </CardSection>
+  );
+}
+
+function RoleEditorDialog({
+  open,
+  onOpenChange,
+  role,
+  catalog,
+  mode,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  role: RbacRoleDef | null;
+  catalog: typeof PERMISSION_CATALOG;
+  mode: "create" | "edit";
+}) {
+  const qc = useQueryClient();
+  const [label, setLabel] = useState("");
+  const [description, setDescription] = useState("");
+  const [perms, setPerms] = useState<Permission[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    if (mode === "edit" && role) {
+      setLabel(role.label);
+      setDescription(role.description || "");
+      setPerms([...role.permissions]);
+    } else {
+      setLabel("");
+      setDescription("");
+      setPerms(["dashboard.view"]);
+    }
+  }, [open, mode, role]);
+
+  function toggle(p: Permission) {
+    setPerms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
+  }
+
+  async function save() {
+    if (!label.trim()) {
+      toast.error("Role name required");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (mode === "create") {
+        await api("/api/roles", {
+          method: "POST",
+          body: JSON.stringify({ label: label.trim(), description, permissions: perms }),
+        });
+        toast.success("Role created");
+      } else if (role) {
+        await api("/api/roles", {
+          method: "PATCH",
+          body: JSON.stringify({
+            value: role.value,
+            label: label.trim(),
+            description,
+            permissions: perms,
+          }),
+        });
+        toast.success("Role access updated");
+      }
+      qc.invalidateQueries({ queryKey: ["rbac-roles"] });
+      onOpenChange(false);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to save role");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const groups = Array.from(new Set(catalog.map((c) => c.group)));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto scroll-area">
+        <DialogHeader>
+          <DialogTitle>{mode === "create" ? "Create role" : `Edit access — ${role?.label}`}</DialogTitle>
+          <DialogDescription>
+            Select exactly which modules and actions this role can use.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Role name</Label>
+              <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Content Editor" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Description</Label>
+              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Short summary" />
+            </div>
+          </div>
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>{perms.length} permissions selected</span>
+            <div className="flex gap-2">
+              <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => setPerms(catalog.map((c) => c.key))}>
+                Select all
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => setPerms([])}>
+                Clear
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {groups.map((group) => (
+              <div key={group} className="rounded-md border p-2.5 space-y-1.5">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group}</div>
+                {catalog.filter((c) => c.group === group).map((item) => (
+                  <label key={item.key} className="flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-accent/40 cursor-pointer">
+                    <Checkbox
+                      checked={perms.includes(item.key)}
+                      onCheckedChange={() => toggle(item.key)}
+                      className="mt-0.5"
+                    />
+                    <span className="min-w-0">
+                      <span className="text-xs font-medium block">{item.label}</span>
+                      <span className="text-[10px] text-muted-foreground">{item.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving}>
+            {saving ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <Save className="size-3.5 mr-1.5" />}
+            {mode === "create" ? "Create role" : "Save access"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -995,11 +1300,13 @@ function RoleLegend() {
 // Create / Edit user dialog
 // ---------------------------------------------------------------------------
 function UserDialog({
-  open, onOpenChange, editing,
+  open, onOpenChange, editing, roleOptions, onRequestPasswordReset,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   editing: UserRow | null;
+  roleOptions: { value: string; label: string; description?: string }[];
+  onRequestPasswordReset?: () => void;
 }) {
   const qc = useQueryClient();
   const { data: locations, isLoading: locationsLoading } = useLocations();
@@ -1009,6 +1316,7 @@ function UserDialog({
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("viewer");
   const [password, setPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
   const [assignedIds, setAssignedIds] = useState<string[]>([]);
   const [active, setActive] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -1031,6 +1339,7 @@ function UserDialog({
       setAssignedIds([]);
       setActive(true);
     }
+    setShowPass(false);
     setErrors({});
   }, [open, editing]);
 
@@ -1046,7 +1355,7 @@ function UserDialog({
     if (!email.trim()) e.email = "Email is required";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = "Invalid email";
     if (!isEdit && !password) e.password = "Password is required";
-    else if (!isEdit && password.length < 8) e.password = "Min 8 characters";
+    else if (password && password.length < 12) e.password = "Min 12 characters";
     if (role === "branch_manager" && assignedIds.length === 0) {
       e.assigned = "Assign at least one location";
     }
@@ -1067,9 +1376,12 @@ function UserDialog({
             role,
             active,
             assignedLocationIds: role === "branch_manager" ? assignedIds : [],
+            ...(password.trim()
+              ? { password: password.trim(), confirmPassword: password.trim() }
+              : {}),
           }),
         });
-        toast.success("User updated");
+        toast.success(password.trim() ? "User & password updated" : "User updated");
       } else {
         await api("/api/users", {
           method: "POST",
@@ -1081,7 +1393,7 @@ function UserDialog({
             assignedLocationIds: role === "branch_manager" ? assignedIds : [],
           }),
         });
-        toast.success("User invited");
+        toast.success("User created");
       }
       qc.invalidateQueries({ queryKey: ["users"] });
       onOpenChange(false);
@@ -1099,7 +1411,7 @@ function UserDialog({
           <DialogTitle>{isEdit ? "Edit user" : "Invite a new user"}</DialogTitle>
           <DialogDescription>
             {isEdit
-              ? "Update role, location assignments, and status."
+              ? "Update role, password, location assignments, and status."
               : "Create a new team member and assign a role."}
           </DialogDescription>
         </DialogHeader>
@@ -1134,20 +1446,43 @@ function UserDialog({
             )}
           </div>
 
-          {!isEdit && (
-            <div className="space-y-1.5">
-              <Label htmlFor="u-pass">Password</Label>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="u-pass">{isEdit ? "New password (optional)" : "Password"}</Label>
+              {isEdit && onRequestPasswordReset && (
+                <button
+                  type="button"
+                  className="text-[11px] text-primary hover:underline"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onRequestPasswordReset();
+                  }}
+                >
+                  Open password reset
+                </button>
+              )}
+            </div>
+            <div className="relative">
               <Input
                 id="u-pass"
-                type="password"
+                type={showPass ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Min 8 characters"
+                placeholder={isEdit ? "Leave blank to keep current" : "Min 12 chars + special"}
                 aria-invalid={!!errors.password}
+                className="pr-10"
               />
-              {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                onClick={() => setShowPass((v) => !v)}
+                aria-label={showPass ? "Hide password" : "Show password"}
+              >
+                {showPass ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
             </div>
-          )}
+            {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
+          </div>
 
           <div className="space-y-1.5">
             <Label>Role</Label>
@@ -1156,7 +1491,7 @@ function UserDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ROLES.map((r) => (
+                {roleOptions.map((r) => (
                   <SelectItem key={r.value} value={r.value}>
                     {r.label}
                   </SelectItem>
@@ -1164,7 +1499,8 @@ function UserDialog({
               </SelectContent>
             </Select>
             <p className="text-[11px] text-muted-foreground leading-snug">
-              {ROLES.find((r) => r.value === role)?.description}
+              {roleOptions.find((r) => r.value === role)?.description
+                || ROLES.find((r) => r.value === role)?.description}
             </p>
           </div>
 
@@ -1236,7 +1572,7 @@ function UserDialog({
 // ===========================================================================
 function GeneralContent() {
   const user = useUser();
-  return <GeneralTab readonly={!can(user.role, "settings.view")} />;
+  return <GeneralTab readonly={!can(user.role, "settings.manage")} />;
 }
 
 function GeneralTab({ readonly }: { readonly: boolean }) {
@@ -1252,19 +1588,18 @@ function GeneralTab({ readonly }: { readonly: boolean }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (brand && Object.keys(brand).length > 0) {
-      setForm({
-        name: brand.name ?? "MyFNG",
-        tagline: brand.tagline ?? "",
-        supportEmail: brand.supportEmail ?? "",
-        supportPhone: brand.supportPhone ?? "",
-        logoUrl: brand.logoUrl ?? "",
-        timezone: brand.timezone ?? "Asia/Kolkata",
-        language: brand.language ?? "en-IN",
-        dateFormat: brand.dateFormat ?? "dd MMM yyyy",
-        currency: brand.currency ?? "INR",
-      });
-    }
+    if (!settings) return;
+    setForm({
+      name: brand.name ?? "MyFNG",
+      tagline: brand.tagline ?? "",
+      supportEmail: brand.supportEmail ?? "",
+      supportPhone: brand.supportPhone ?? "",
+      logoUrl: brand.logoUrl ?? "",
+      timezone: brand.timezone ?? "Asia/Kolkata",
+      language: brand.language ?? "en-IN",
+      dateFormat: brand.dateFormat ?? "dd MMM yyyy",
+      currency: brand.currency ?? "INR",
+    });
   }, [settings]);
 
   function set<K extends keyof BrandSettings>(k: K, v: BrandSettings[K]) {
@@ -1396,7 +1731,7 @@ function GeneralTab({ readonly }: { readonly: boolean }) {
 // ===========================================================================
 function GoogleIntegrationContent() {
   const user = useUser();
-  const readonly = !can(user.role, "settings.view");
+  const readonly = !can(user.role, "settings.manage");
   const qc = useQueryClient();
   const { data: settings } = useQuery<SettingsMap>({
     queryKey: ["settings"],
@@ -1405,6 +1740,10 @@ function GoogleIntegrationContent() {
   const { data: health } = useQuery<HealthResponse>({
     queryKey: ["admin", "system-health"],
     queryFn: () => api<HealthResponse>("/api/admin/system-health"),
+  });
+  const { data: googleIntegration } = useQuery<any>({
+    queryKey: ["google-integration"],
+    queryFn: () => api("/api/google-integration"),
   });
 
   const google = (settings?.google as any) ?? {};
@@ -1419,20 +1758,36 @@ function GoogleIntegrationContent() {
   useEffect(() => {
     if (google && Object.keys(google).length > 0) {
       setSyncFreq(google.syncFrequency ?? "15m");
+      const ds = google.defaultSync ?? {};
+      setDefaultReviews(ds.reviews ?? true);
+      setDefaultBusiness(ds.business ?? true);
+      setDefaultPosts(ds.posts ?? true);
+      setDefaultAnalytics(ds.analytics ?? false);
     }
   }, [settings]);
 
-  function reauthorize() {
-    toast.message("Redirecting to Google…", {
-      description: "You'll be asked to grant MyFNG access to your Business Profile.",
-    });
+  async function reauthorize() {
+    try {
+      const data = await api<{ authUrl: string }>("/api/google-integration", { method: "POST", body: JSON.stringify({ action: "connect" }) });
+      if (data.authUrl) window.location.href = data.authUrl;
+      else toast.error("No auth URL returned");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to start Google OAuth");
+    }
   }
 
-  function testConnection() {
-    toast.promise(
-      new Promise((r) => setTimeout(r, 900)),
-      { loading: "Testing connection…", success: "Google OAuth: Connection successful", error: "Connection failed" },
-    );
+  async function testConnection() {
+    try {
+      toast.loading("Testing connection…", { id: "g-test" });
+      await qc.invalidateQueries({ queryKey: ["admin", "system-health"] });
+      await qc.invalidateQueries({ queryKey: ["google-integration"] });
+      const h = await api<HealthResponse>("/api/admin/system-health");
+      const oauth = h.checks.find((c) => c.service === "Google OAuth");
+      if (oauth?.status === "healthy") toast.success(oauth.message || "Google OAuth connected", { id: "g-test" });
+      else toast.error(oauth?.message || "Google connection failed", { id: "g-test" });
+    } catch (e: any) {
+      toast.error(e?.message || "Test failed", { id: "g-test" });
+    }
   }
 
   async function save() {
@@ -1480,11 +1835,11 @@ function GoogleIntegrationContent() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Client ID</Label>
-            <Input readOnly value="••••••••••••••••••.apps.googleusercontent.com" className="font-mono text-xs" />
+            <Input readOnly value={googleIntegration?.oauth?.clientIdMasked ?? "—"} className="font-mono text-xs" />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Redirect URI</Label>
-            <Input readOnly value="/api/google/oauth/callback" className="font-mono text-xs" />
+            <Input readOnly value={googleIntegration?.oauth?.redirectUri ?? "—"} className="font-mono text-xs" />
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Connected Account</Label>
@@ -1567,9 +1922,8 @@ function GoogleIntegrationContent() {
 // 5. AI PROVIDER
 // ===========================================================================
 const AI_MODELS = [
-  { value: "glm-4.6", label: "GLM-4.6 (Recommended)" },
-  { value: "glm-4-air", label: "GLM-4 Air (Fast)" },
-  { value: "glm-4-flash", label: "GLM-4 Flash (Lightweight)" },
+  { value: AUTO_MODEL_ID, label: "Auto (best available)" },
+  ...OPENROUTER_MODELS.map((m) => ({ value: m.id, label: `${m.label}${m.free ? " (free)" : ""}` })),
 ];
 
 const PROMPT_TYPES: PromptType[] = [
@@ -1637,7 +1991,7 @@ const PROMPT_TYPES: PromptType[] = [
 
 function AiProviderContent() {
   const user = useUser();
-  const readonly = !can(user.role, "settings.view");
+  const readonly = !can(user.role, "settings.manage");
   return <AiTab readonly={readonly} />;
 }
 
@@ -1658,7 +2012,7 @@ function AiTab({ readonly }: { readonly: boolean }) {
     if (ai && Object.keys(ai).length > 0) {
       setForm({
         assistantName: ai.assistantName ?? "MiSA AI",
-        defaultModel: ai.defaultModel ?? "glm-4.6",
+        defaultModel: ai.defaultModel ?? AUTO_MODEL_ID,
         temperature: ai.temperature ?? 0.7,
         maxTokens: ai.maxTokens ?? 2048,
         timeout: ai.timeout ?? 30,
@@ -1667,6 +2021,12 @@ function AiTab({ readonly }: { readonly: boolean }) {
         maxTokensPerDay: ai.maxTokensPerDay ?? 200000,
       });
     }
+  }, [settings]);
+
+  const prompts = useMemo(() => {
+    const saved = Array.isArray(settings?.ai_prompts) ? (settings.ai_prompts as PromptType[]) : [];
+    const byId = new Map(saved.map((p) => [p.id, p]));
+    return PROMPT_TYPES.map((base) => ({ ...base, ...byId.get(base.id) }));
   }, [settings]);
 
   function set<K extends keyof AiSettings>(k: K, v: AiSettings[K]) {
@@ -1703,6 +2063,9 @@ function AiTab({ readonly }: { readonly: boolean }) {
 
   if (isLoading) return <FormSkeleton />;
 
+  const activeModel = form.defaultModel ?? ai.defaultModel ?? AUTO_MODEL_ID;
+  const settingsLoaded = !!settings;
+
   return (
     <div className="space-y-4">
       <div>
@@ -1721,15 +2084,21 @@ function AiTab({ readonly }: { readonly: boolean }) {
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-base font-semibold">MiSA AI</h3>
-                  <Badge variant="outline" className="text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
-                    <span className="size-1.5 rounded-full bg-emerald-500 mr-1" />
-                    Active
-                  </Badge>
+                  {settingsLoaded ? (
+                    <Badge variant="outline" className="text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                      <span className="size-1.5 rounded-full bg-emerald-500 mr-1" />
+                      Active
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] font-medium bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20">
+                      Loading
+                    </Badge>
+                  )}
                 </div>
-                <p className="text-sm text-muted-foreground mt-1">glm-4.6 via z-ai-web-dev-sdk — powers review replies, post generation, SEO recs, monthly summaries & multi-turn chat.</p>
+                <p className="text-sm text-muted-foreground mt-1">OpenRouter — powers review replies, post generation, SEO recs, monthly summaries & multi-turn chat.</p>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  <Badge variant="outline" className="text-[10px] font-mono">model: glm-4.6</Badge>
-                  <Badge variant="outline" className="text-[10px] font-mono">sdk: z-ai-web-dev-sdk</Badge>
+                  <Badge variant="outline" className="text-[10px] font-mono">model: {activeModel}</Badge>
+                  <Badge variant="outline" className="text-[10px] font-mono">provider: OpenRouter</Badge>
                 </div>
               </div>
             </div>
@@ -1748,7 +2117,7 @@ function AiTab({ readonly }: { readonly: boolean }) {
             <Input value={form.assistantName ?? ""} onChange={(e) => set("assistantName", e.target.value)} disabled={readonly} placeholder="MiSA AI" aria-invalid={!!errors.assistantName} />
           </Field>
           <Field label="Default model" icon={Cpu}>
-            <Select value={form.defaultModel ?? "glm-4.6"} onValueChange={(v) => set("defaultModel", v)} disabled={readonly}>
+            <Select value={form.defaultModel ?? AUTO_MODEL_ID} onValueChange={(v) => set("defaultModel", v)} disabled={readonly}>
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {AI_MODELS.map((m) => (
@@ -1839,7 +2208,7 @@ function AiTab({ readonly }: { readonly: boolean }) {
         action={readonly ? <ReadonlyBadge /> : undefined}
       >
         <div className="space-y-2">
-          {PROMPT_TYPES.map((p) => (
+          {prompts.map((p) => (
             <div key={p.id} className="rounded-lg border p-3 flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -1870,24 +2239,93 @@ function AiTab({ readonly }: { readonly: boolean }) {
       </CardSection>
 
       {/* Edit prompt dialog */}
-      <PromptEditDialog prompt={editingPrompt} open={!!editingPrompt} onOpenChange={(o) => !o && setEditingPrompt(null)} />
+      <PromptEditDialog
+        prompt={editingPrompt}
+        prompts={prompts}
+        open={!!editingPrompt}
+        onOpenChange={(o) => !o && setEditingPrompt(null)}
+        onSaved={() => setEditingPrompt(null)}
+      />
     </div>
   );
 }
 
-function PromptEditDialog({ prompt, open, onOpenChange }: { prompt: PromptType | null; open: boolean; onOpenChange: (o: boolean) => void }) {
+function PromptEditDialog({
+  prompt,
+  prompts,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  prompt: PromptType | null;
+  prompts: PromptType[];
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onSaved: () => void;
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto scroll-area">
-        {prompt ? <PromptEditForm key={prompt.id} prompt={prompt} onClose={() => onOpenChange(false)} /> : null}
+        {prompt ? (
+          <PromptEditForm
+            key={prompt.id}
+            prompt={prompt}
+            prompts={prompts}
+            onClose={() => onOpenChange(false)}
+            onSaved={onSaved}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function PromptEditForm({ prompt, onClose }: { prompt: PromptType; onClose: () => void }) {
-  // Initialize fresh on each mount (keyed by prompt.id in the parent).
+function PromptEditForm({
+  prompt,
+  prompts,
+  onClose,
+  onSaved,
+}: {
+  prompt: PromptType;
+  prompts: PromptType[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const qc = useQueryClient();
   const [text, setText] = useState(prompt.template);
+  const [saving, setSaving] = useState(false);
+
+  async function savePrompt() {
+    setSaving(true);
+    try {
+      const version = nextVersion(prompt.version);
+      const updated: PromptType = {
+        ...prompt,
+        template: text,
+        version,
+        lastModified: new Date().toISOString(),
+      };
+      const next = prompts.map((p) => (p.id === prompt.id ? updated : p));
+      // Ensure all PROMPT_TYPES bases are represented if prompts was partial
+      const byId = new Map(next.map((p) => [p.id, p]));
+      const full = PROMPT_TYPES.map((base) => byId.get(base.id) ?? base).map((p) =>
+        p.id === prompt.id ? updated : p,
+      );
+      await api("/api/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ key: "ai_prompts", value: full }),
+      });
+      await qc.invalidateQueries({ queryKey: ["settings"] });
+      toast.success(`Prompt saved as v${version}`);
+      onSaved();
+      onClose();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to save prompt");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <>
       <DialogHeader>
@@ -1911,9 +2349,13 @@ function PromptEditForm({ prompt, onClose }: { prompt: PromptType; onClose: () =
         />
       </div>
       <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Cancel</Button>
-        <Button onClick={() => { toast.success(`Prompt saved as v${nextVersion(prompt.version)}`); onClose(); }}>
-          <Save className="size-3.5 mr-1.5" /> Save new version
+        <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+        <Button onClick={savePrompt} disabled={saving}>
+          {saving ? (
+            <><RefreshCw className="size-3.5 mr-1.5 animate-spin" /> Saving…</>
+          ) : (
+            <><Save className="size-3.5 mr-1.5" /> Save new version</>
+          )}
         </Button>
       </DialogFooter>
     </>
@@ -1943,7 +2385,7 @@ const NOTIF_EVENTS = [
 
 function NotificationsContent() {
   const user = useUser();
-  const readonly = !can(user.role, "settings.view");
+  const readonly = !can(user.role, "settings.manage");
   const qc = useQueryClient();
   const { data: settings } = useQuery<SettingsMap>({
     queryKey: ["settings"],
@@ -1951,6 +2393,7 @@ function NotificationsContent() {
   });
   const notif = (settings?.notifications as any) ?? {};
   const [events, setEvents] = useState<Record<string, { email: boolean; dashboard: boolean }>>({});
+  const [emailChannel, setEmailChannel] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -1962,6 +2405,7 @@ function NotificationsContent() {
       NOTIF_EVENTS.forEach((e) => { init[e.id] = { email: e.id === "1-star-review" || e.id === "sync-failure", dashboard: true }; });
       setEvents(init);
     }
+    setEmailChannel(notif.emailChannel ?? notif.emailEnabled ?? true);
   }, [settings]);
 
   function toggleEvent(id: string, channel: "email" | "dashboard") {
@@ -1973,7 +2417,7 @@ function NotificationsContent() {
     try {
       await api("/api/settings", {
         method: "PATCH",
-        body: JSON.stringify({ key: "notifications", value: { events } }),
+        body: JSON.stringify({ key: "notifications", value: { events, emailChannel } }),
       });
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast.success("Notification settings saved");
@@ -2006,8 +2450,8 @@ function NotificationsContent() {
             name="Email"
             description="SMTP-driven email alerts"
             icon={Mail}
-            enabled={!!notif.emailEnabled}
-            onChange={() => toast.success("Email channel updated")}
+            enabled={emailChannel}
+            onChange={(v) => setEmailChannel(v)}
             color="bg-amber-500/10 text-amber-600 dark:text-amber-400"
             disabled={readonly}
           />
@@ -2060,7 +2504,7 @@ function NotificationsContent() {
                     <Switch
                       checked={events[e.id]?.dashboard ?? true}
                       onCheckedChange={() => toggleEvent(e.id, "dashboard")}
-                      disabled={readonly || true}
+                      disabled={readonly}
                       aria-label={`${e.label} dashboard`}
                     />
                   </TableCell>
@@ -2099,7 +2543,7 @@ function ChannelCard({ name, description, icon: Icon, enabled, onChange, lockedO
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   enabled: boolean;
-  onChange?: () => void;
+  onChange?: (v: boolean) => void;
   lockedOn?: boolean;
   comingSoon?: boolean;
   color: string;
@@ -2132,7 +2576,7 @@ function ChannelCard({ name, description, icon: Icon, enabled, onChange, lockedO
 // ===========================================================================
 function SmtpContent() {
   const user = useUser();
-  const readonly = !can(user.role, "settings.view");
+  const readonly = !can(user.role, "settings.manage");
   const qc = useQueryClient();
   const { data: settings } = useQuery<SettingsMap>({
     queryKey: ["settings"],
@@ -2312,7 +2756,7 @@ function SmtpContent() {
 // ===========================================================================
 function SyncContent() {
   const user = useUser();
-  return <SyncTab readonly={!can(user.role, "settings.view")} />;
+  return <SyncTab readonly={!can(user.role, "settings.manage")} />;
 }
 
 function SyncTab({ readonly }: { readonly: boolean }) {
@@ -2433,7 +2877,7 @@ function SyncTab({ readonly }: { readonly: boolean }) {
         <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2.5">
           <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-            Sync intervals are saved as settings, but the actual cron jobs run on the backend. Changes to production cron schedules require a deployment.
+            Sync interval & batch size are applied by `/api/cron/sync-all` (poll every 5m via cron loop; sync runs when due). No deploy needed after Save.
           </p>
         </div>
 
@@ -2458,7 +2902,7 @@ function SyncTab({ readonly }: { readonly: boolean }) {
 // ===========================================================================
 function SecurityContent() {
   const user = useUser();
-  const readonly = !can(user.role, "settings.view");
+  const readonly = !can(user.role, "settings.manage");
   const qc = useQueryClient();
   const { data: settings } = useQuery<SettingsMap>({
     queryKey: ["settings"],
@@ -2467,6 +2911,7 @@ function SecurityContent() {
   const security: SecuritySettings = (settings?.security as SecuritySettings) ?? {};
   const [form, setForm] = useState<SecuritySettings>({});
   const [saving, setSaving] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   useEffect(() => {
     if (security && Object.keys(security).length > 0) {
@@ -2505,6 +2950,22 @@ function SecurityContent() {
         <h2 className="text-lg font-semibold">Security</h2>
         <p className="text-sm text-muted-foreground mt-0.5">Password policy, session management & account lockout.</p>
       </div>
+
+      <CardSection
+        title="Change password"
+        description={`Update password for ${user.email}`}
+        action={
+          <Button size="sm" onClick={() => setChangePasswordOpen(true)}>
+            <KeyRound className="size-3.5 mr-1.5" />
+            Change password
+          </Button>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Current password verify hoga, phir naya password set hoga (min 12 chars, upper/lower/number/special).
+        </p>
+      </CardSection>
+      <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
 
       {/* Password policy — read-only info card */}
       <CardSection
@@ -2617,6 +3078,7 @@ function FutureFeature({ icon: Icon, name, description }: { icon: React.Componen
 // ===========================================================================
 function StorageContent() {
   const user = useUser();
+  const qc = useQueryClient();
   const canSystem = can(user.role, "system.view") || can(user.role, "audit.view");
   const { data: system, isLoading } = useQuery<SystemResponse>({
     queryKey: ["system"],
@@ -2628,9 +3090,22 @@ function StorageContent() {
   const files = system?.storageFiles ?? [];
   const totalUsed = buckets.reduce((a, b) => a + b.totalSize, 0);
   const totalUsedMb = (totalUsed / 1024 / 1024).toFixed(1);
-  const totalQuotaMb = 1024; // 1 GB
-  const usedPct = Math.min(100, Math.round((Number(totalUsedMb) / totalQuotaMb) * 100));
-  const availableMb = (totalQuotaMb - Number(totalUsedMb)).toFixed(1);
+  const softCapMb = 5 * 1024; // 5 GB soft cap for progress only
+  const usedPct = Math.min(100, Math.round((Number(totalUsedMb) / softCapMb) * 100));
+
+  async function runCleanup(action: "temp" | "archive-reports") {
+    try {
+      const res = await apiRaw("/api/admin/storage/cleanup", {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+      if (!res.success) throw new Error(res.message || "Cleanup failed");
+      toast.success(res.message || (action === "temp" ? "Temporary files cleaned up" : "Reports archived"));
+      qc.invalidateQueries({ queryKey: ["system"] });
+    } catch (e: any) {
+      toast.error(e?.message || "Cleanup failed");
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -2647,23 +3122,22 @@ function StorageContent() {
         <>
           {/* Usage overview */}
           <CardSection title="Storage Usage" description="Aggregate across all buckets">
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              <UsageStat label="Total" value={`${totalQuotaMb} MB`} accent="text-slate-600 dark:text-slate-400" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
               <UsageStat label="Used" value={`${totalUsedMb} MB`} accent="text-amber-600 dark:text-amber-400" />
-              <UsageStat label="Available" value={`${availableMb} MB`} accent="text-emerald-600 dark:text-emerald-400" />
+              <UsageStat label="Buckets" value={String(buckets.length)} accent="text-slate-600 dark:text-slate-400" />
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">{usedPct}% used</span>
-                <span className="tabular-nums">{totalUsedMb} / {totalQuotaMb} MB</span>
+                <span className="text-muted-foreground">{usedPct}% of 5 GB soft cap</span>
+                <span className="tabular-nums">{totalUsedMb} MB used</span>
               </div>
               <Progress value={usedPct} className="h-2.5" />
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 mt-4 pt-4 border-t">
-              <Button variant="outline" size="sm" onClick={() => toast.success("Temporary files cleanup queued")}>
+              <Button variant="outline" size="sm" onClick={() => runCleanup("temp")}>
                 <RefreshCw className="size-3.5 mr-1.5" /> Cleanup Temporary Files
               </Button>
-              <Button variant="outline" size="sm" onClick={() => toast.success("Report archiving queued")}>
+              <Button variant="outline" size="sm" onClick={() => runCleanup("archive-reports")}>
                 <DatabaseBackup className="size-3.5 mr-1.5" /> Archive Reports
               </Button>
             </div>
@@ -3018,6 +3492,7 @@ function JobStat({ label, value, icon: Icon, color }: { label: string; value: nu
 // 13. ERROR MONITORING
 // ===========================================================================
 function ErrorMonitoringContent() {
+  const qc = useQueryClient();
   const { data: system, isLoading } = useQuery<SystemResponse>({
     queryKey: ["system"],
     queryFn: () => api<SystemResponse>("/api/system"),
@@ -3027,8 +3502,17 @@ function ErrorMonitoringContent() {
   const errors = system?.errorLogs ?? [];
   const unresolved = errors.filter((e) => !e.resolved).length;
 
-  function markResolved(id: string) {
-    toast.success(`Error ${id} marked as resolved`);
+  async function markResolved(id: string) {
+    try {
+      await api(`/api/admin/error-logs/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ resolved: true }),
+      });
+      await qc.invalidateQueries({ queryKey: ["system"] });
+      toast.success("Error marked as resolved");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to resolve error");
+    }
   }
 
   return (
@@ -3077,7 +3561,7 @@ function ErrorMonitoringContent() {
                       <TableCell className="pl-4 text-sm font-medium">{e.module}</TableCell>
                       <TableCell><code className="text-[11px] font-mono bg-muted px-1.5 py-0.5 rounded">{e.errorCode}</code></TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-xs truncate" title={e.errorMessage}>{e.errorMessage}</TableCell>
-                      <TableCell className="text-center text-xs tabular-nums">{(e.errorMessage?.length ?? 0) % 7 + 1}×</TableCell>
+                      <TableCell className="text-center text-xs tabular-nums">—</TableCell>
                       <TableCell className="text-xs text-muted-foreground tabular-nums">{formatDistanceToNow(new Date(e.createdAt), { addSuffix: true })}</TableCell>
                       <TableCell className="text-center">
                         {e.resolved ? (
@@ -3105,18 +3589,8 @@ function ErrorMonitoringContent() {
                           <div className="rounded-md border bg-card p-3 mt-1">
                             <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5">Stack Trace</div>
                             <pre className="text-[11px] font-mono whitespace-pre-wrap leading-relaxed">
-{`Error: ${e.errorMessage}
-    at ${e.module}.process (/app/src/server/${e.module.toLowerCase()}.ts:42:15)
-    at SyncWorker.run (/app/src/server/worker.ts:128:9)
-    at async Queue.processNext (/app/src/server/queue.ts:64:5)
-    at async retryWithBackoff (/app/src/lib/retry.ts:18:3)
-  caused by: Google API rate limit exceeded (429)`}
+                              {e.stackTrace || e.errorMessage}
                             </pre>
-                            <div className="flex justify-end mt-2 pt-2 border-t">
-                              <Button size="sm" variant="outline" className="h-7" onClick={() => toast.success("Retry job queued")}>
-                                <RefreshCw className="size-3 mr-1" /> Retry Job
-                              </Button>
-                            </div>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -3185,8 +3659,12 @@ function BackupContent() {
             }
           >
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <BackupStat label="Last Backup" value={data ? formatDistanceToNow(new Date(data.lastBackup), { addSuffix: true }) : "—"} icon={Clock} />
-              <BackupStat label="Status" value={data?.status ?? "—"} icon={CheckCircle2} />
+              <BackupStat
+                label="Last Backup"
+                value={data?.lastBackup ? formatDistanceToNow(new Date(data.lastBackup), { addSuffix: true }) : "Never"}
+                icon={Clock}
+              />
+              <BackupStat label="Status" value={data?.status || "No backups yet"} icon={CheckCircle2} />
               <BackupStat label="Retention" value={data?.retention ?? "—"} icon={Shield} />
               <BackupStat label="Schedule" value={data?.schedule ?? "—"} icon={RefreshCw} />
             </div>
@@ -3309,7 +3787,11 @@ function EnvironmentContent() {
               <InfoTile label="Environment" value={data.environment} icon={Settings} accent={data.environment === "Production" ? "emerald" : "amber"} />
               <InfoTile label="Application Version" value={data.applicationVersion} icon={Code2} />
               <InfoTile label="Build Number" value={data.buildNumber} icon={Server} />
-              <InfoTile label="Deployment Date" value={format(new Date(data.deploymentDate), "dd MMM yyyy, HH:mm")} icon={Clock} />
+              <InfoTile
+                label="Deployment Date"
+                value={data.deploymentDate ? format(new Date(data.deploymentDate), "dd MMM yyyy, HH:mm") : "—"}
+                icon={Clock}
+              />
               <InfoTile label="API Version" value={data.apiVersion} icon={Plug} />
               <InfoTile label="Timezone" value={data.timezone} icon={Clock} />
             </div>

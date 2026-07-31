@@ -51,6 +51,7 @@ server.log
 # local uploads & chrome session
 /public/uploads/**
 !/public/uploads/.gitkeep
+/backups/
 .gmb-chrome-profile/
 
 # scratch / extracted assets (not for production repo)

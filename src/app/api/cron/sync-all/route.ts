@@ -7,25 +7,57 @@ import {
   getValidAccessToken,
   googleServiceStatus,
 } from "@/lib/google-service";
+import {
+  getSyncConfig,
+  intervalToCronHint,
+  parseIntervalMs,
+} from "@/lib/app-settings";
+import { dispatchAppNotification } from "@/lib/notify";
 
 export const dynamic = "force-dynamic";
 /** Allow longer runs when many locations are synced (Hostinger / Node). */
 export const maxDuration = 300;
 
 const JOB_NAME = "google-sync-all";
-const INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const BATCH_SIZE = 4;
 const BATCH_PAUSE_MS = 400;
 
 /**
  * GET /api/cron/sync-all — full Google sync for every linked location.
  *
- * Schedule via host crontab every 6 hours (see DEPLOYMENT.md).
+ * Interval / batch size come from Settings → Sync.
+ * Host crontab should poll often (e.g. every 5m); this route skips if not due.
  * Auth: x-cron-secret must match process.env.CRON_SECRET.
+ * Query: ?force=1 to run even if interval not elapsed.
  */
 export async function GET(req: NextRequest) {
   const denied = assertCronAuthorized(req);
   if (denied) return denied;
+
+  const syncCfg = await getSyncConfig();
+  const intervalMs = Math.min(
+    parseIntervalMs(syncCfg.reviewsInterval, 30 * 60 * 1000),
+    parseIntervalMs(syncCfg.businessInfoInterval, 60 * 60 * 1000),
+    parseIntervalMs(syncCfg.postsInterval, 30 * 60 * 1000),
+  );
+  const BATCH_SIZE = Math.max(1, Math.min(50, Number(syncCfg.batchSize) || 4));
+  const force = new URL(req.url).searchParams.get("force") === "1";
+
+  const existing = await db.scheduledJob.findFirst({ where: { jobName: JOB_NAME } });
+  if (!force && existing?.lastRun) {
+    const dueAt = existing.lastRun.getTime() + intervalMs;
+    if (Date.now() < dueAt) {
+      return ok(
+        {
+          synced: 0,
+          skipped: true,
+          reason: "not_due",
+          nextRun: new Date(dueAt).toISOString(),
+          intervalMs,
+        },
+        `Sync not due yet — next run ${new Date(dueAt).toISOString()}`,
+      );
+    }
+  }
 
   if (!googleServiceStatus.isConfigured) {
     return ok(
@@ -89,8 +121,8 @@ export async function GET(req: NextRequest) {
   }
 
   const completedAt = new Date();
-  const nextRun = new Date(completedAt.getTime() + INTERVAL_MS);
-  const existing = await db.scheduledJob.findFirst({ where: { jobName: JOB_NAME } });
+  const nextRun = new Date(completedAt.getTime() + intervalMs);
+  const cronExpression = intervalToCronHint(intervalMs);
   if (existing) {
     await db.scheduledJob.update({
       where: { id: existing.id },
@@ -98,14 +130,14 @@ export async function GET(req: NextRequest) {
         lastRun: completedAt,
         nextRun,
         isEnabled: true,
-        cronExpression: "0 */6 * * *",
+        cronExpression,
       },
     });
   } else {
     await db.scheduledJob.create({
       data: {
         jobName: JOB_NAME,
-        cronExpression: "0 */6 * * *",
+        cronExpression,
         isEnabled: true,
         lastRun: completedAt,
         nextRun,
@@ -128,6 +160,23 @@ export async function GET(req: NextRequest) {
     },
   }).catch(() => null);
 
+  if (failed > 0) {
+    await dispatchAppNotification({
+      eventId: "sync-failure",
+      title: "Google sync failure",
+      message: `${failed}/${locations.length} location(s) failed. ${errors[0] || ""}`.trim(),
+      type: "sync",
+      severity: "critical",
+      link: "/settings",
+      metadata: { synced, failed, total: locations.length },
+    }).catch(() => null);
+  }
+
+  const nextLabel =
+    intervalMs < 60 * 60 * 1000
+      ? `~${Math.round(intervalMs / 60000)}m`
+      : `~${Math.round(intervalMs / 3600000)}h`;
+
   return ok(
     {
       synced,
@@ -136,9 +185,11 @@ export async function GET(req: NextRequest) {
       startedAt: startedAt.toISOString(),
       completedAt: completedAt.toISOString(),
       nextRun: nextRun.toISOString(),
+      intervalMs,
+      batchSize: BATCH_SIZE,
       errors: errors.slice(0, 20),
       results,
     },
-    `Auto-sync done: ${synced}/${locations.length} location(s) · next run ~6h`,
+    `Auto-sync done: ${synced}/${locations.length} location(s) · next run ${nextLabel}`,
   );
 }

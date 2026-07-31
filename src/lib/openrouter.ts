@@ -31,6 +31,7 @@ function resolveModelOrder(preferred?: string): string[] {
 export async function openRouterChat(
   messages: OpenRouterMessage[],
   preferredModel?: string,
+  opts?: { temperature?: number; maxTokens?: number },
 ): Promise<OpenRouterChatResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -42,6 +43,10 @@ export async function openRouterChat(
 
   for (const model of models) {
     try {
+      const body: Record<string, unknown> = { model, messages };
+      if (opts?.temperature != null) body.temperature = opts.temperature;
+      if (opts?.maxTokens != null) body.max_tokens = opts.maxTokens;
+
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -50,7 +55,7 @@ export async function openRouterChat(
           "HTTP-Referer": process.env.OPENROUTER_HTTP_REFERER || "https://myfng.in",
           "X-Title": process.env.OPENROUTER_APP_TITLE || "MyFNG",
         },
-        body: JSON.stringify({ model, messages }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {

@@ -6,11 +6,13 @@ export function buildLocationIdFilter(
   opts: { locationId?: string | null; locationIds?: string[] | null },
 ): { locationId?: string | { in: string[] } } {
   const scoped =
-    user.role === "branch_manager" &&
-    user.assignedLocationIds &&
-    user.assignedLocationIds.length > 0
-      ? user.assignedLocationIds
-      : undefined;
+    user.role === "client_portal"
+      ? (user.assignedLocationIds?.length ? user.assignedLocationIds : ["__none__"])
+      : user.role === "branch_manager" &&
+          user.assignedLocationIds &&
+          user.assignedLocationIds.length > 0
+        ? user.assignedLocationIds
+        : undefined;
 
   const requested = opts.locationIds?.filter(Boolean)?.length
     ? opts.locationIds!.filter(Boolean)

@@ -22,8 +22,11 @@ import {
   uploadMediaFile,
   MEDIA_BUCKET,
 } from "@/lib/supabase/storage";
+import { optimizeImageToWebp, webpFileName } from "@/lib/image-optimize";
 
 export const dynamic = "force-dynamic";
+/** sharp native bindings — keep off Edge runtime */
+export const runtime = "nodejs";
 
 // ─── GET /api/media — list media library entries (optionally scoped) ──────
 export async function GET(req: NextRequest) {
@@ -137,21 +140,39 @@ export async function POST(req: NextRequest) {
   const category = normalizePhotoCategory(rawCategory);
   const publishToGoogle = String(formData.get("publishToGoogle") || "false").toLowerCase() === "true";
 
-  // ─── 1. Persist file (Supabase Storage preferred) ─────────────────────
+  // ─── 1. Optimize → WebP, then persist (Supabase preferred) ────────────
   const fileUuid = randomUUID();
-  const ext = extForMime(file.type);
-  const fileName = `${fileUuid}.${ext}`;
-  const bytes = Buffer.from(await file.arrayBuffer());
+  const rawBytes = Buffer.from(await file.arrayBuffer());
+  let bytes: Buffer = rawBytes;
+  let mimeType = file.type;
+  let ext = extForMime(file.type);
+
+  try {
+    const optimized = await optimizeImageToWebp(rawBytes, file.type);
+    if (optimized) {
+      bytes = optimized.bytes;
+      mimeType = optimized.mimeType;
+      ext = optimized.ext;
+    }
+  } catch (e: any) {
+    console.warn("image optimize failed, storing original:", e?.message || e);
+  }
+
+  const storageFileName = `${fileUuid}.${ext}`;
+  const displayName =
+    mimeType === "image/webp"
+      ? webpFileName(file.name || storageFileName, fileUuid)
+      : file.name || storageFileName;
   let fileUrl: string;
   let storageBucket = MEDIA_BUCKET;
 
   if (isSupabaseStorageConfigured()) {
     try {
-      const storagePath = `${locationId}/${fileName}`;
+      const storagePath = `${locationId}/${storageFileName}`;
       const uploaded = await uploadMediaFile({
         path: storagePath,
         bytes,
-        contentType: file.type,
+        contentType: mimeType,
         bucket: MEDIA_BUCKET,
       });
       fileUrl = uploaded.publicUrl;
@@ -159,14 +180,14 @@ export async function POST(req: NextRequest) {
       return fail(`Failed to upload to Supabase Storage: ${e.message}`, 500);
     }
   } else {
-    const absPath = join(UPLOAD_DIR, fileName);
+    const absPath = join(UPLOAD_DIR, storageFileName);
     try {
       await mkdir(UPLOAD_DIR, { recursive: true });
       await writeFile(absPath, bytes);
     } catch (e: any) {
       return fail(`Failed to save file locally: ${e.message}`, 500);
     }
-    fileUrl = `${publicBaseFromRequest(req)}/uploads/media/${fileName}`;
+    fileUrl = `${publicBaseFromRequest(req)}/uploads/media/${storageFileName}`;
     storageBucket = "local";
   }
 
@@ -174,11 +195,11 @@ export async function POST(req: NextRequest) {
   const media = await db.mediaLibrary.create({
     data: {
       locationId,
-      fileName: file.name || fileName,
+      fileName: displayName,
       bucket: storageBucket,
       fileUrl,
-      mimeType: file.type,
-      fileSize: file.size,
+      mimeType,
+      fileSize: bytes.byteLength,
       uploadedBy: user.id,
       aiGenerated: false,
     },
@@ -203,7 +224,7 @@ export async function POST(req: NextRequest) {
           userId: user.id, userName: user.name,
           action: "media.upload.google_blocked",
           entity: "media", entityId: media.id,
-          newValue: { locationId, fileName, reason: googleError },
+          newValue: { locationId, fileName: displayName, reason: googleError },
           ip: req.headers.get("x-forwarded-for") ?? undefined,
         });
       } else {
@@ -231,7 +252,7 @@ export async function POST(req: NextRequest) {
               userId: user.id, userName: user.name,
               action: "media.upload.google_failed",
               entity: "media", entityId: media.id,
-              newValue: { locationId, fileName, category: category ?? null, error: googleError },
+              newValue: { locationId, fileName: displayName, category: category ?? null, error: googleError },
               ip: req.headers.get("x-forwarded-for") ?? undefined,
               status: "failed",
             });

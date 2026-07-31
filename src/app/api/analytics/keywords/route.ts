@@ -17,9 +17,6 @@ export async function GET(req: NextRequest) {
   const months = Math.min(parseInt(url.searchParams.get("months") || "6"), 12);
   const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "100") || 100, 1), 200);
 
-  const accessToken = await getValidAccessToken();
-  if (!accessToken) return fail("No valid Google access token");
-
   const scoped = scopeLocationIds(user);
 
   let locationIds: string[];
@@ -33,20 +30,37 @@ export async function GET(req: NextRequest) {
     locationIds = locs.map((l) => l.id);
   }
 
+  if (locationIds.length === 0) {
+    return ok({ keywords: [] });
+  }
+
   const gbps = await db.googleBusinessProfile.findMany({
     where: { locationId: { in: locationIds } },
     select: { locationId: true, googleLocationId: true },
   });
 
+  if (gbps.length === 0) {
+    return ok({ keywords: [] });
+  }
+
+  // Prefer portal/client token when all locations share a client; else per-location
+  const portalToken =
+    user.role === "client_portal" && user.clientId
+      ? await getValidAccessToken({ clientId: user.clientId })
+      : null;
+
   const aggregated = new Map<string, number>();
 
   await Promise.allSettled(
     gbps.map(async (gbp) => {
+      const accessToken =
+        portalToken || (await getValidAccessToken({ locationId: gbp.locationId }));
+      if (!accessToken) return;
       const keywords = await getSearchKeywords(accessToken, gbp.googleLocationId, months);
       for (const kw of keywords) {
         aggregated.set(kw.keyword, (aggregated.get(kw.keyword) ?? 0) + kw.impressions);
       }
-    })
+    }),
   );
 
   const result = Array.from(aggregated.entries())

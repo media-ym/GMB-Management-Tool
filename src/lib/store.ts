@@ -63,13 +63,15 @@ export const useAppStore = create<AppState>()(
 );
 
 export function roleLabel(role: Role): string {
+  const builtin: Record<string, string> = {
+    super_admin: "Super Admin",
+    marketing_manager: "Marketing Manager",
+    branch_manager: "Branch Manager",
+    customer_support: "Customer Support",
+    viewer: "Viewer",
+  };
   return (
-    {
-      super_admin: "Super Admin",
-      marketing_manager: "Marketing Manager",
-      branch_manager: "Branch Manager",
-      customer_support: "Customer Support",
-      viewer: "Viewer",
-    } as Record<Role, string>
-  )[role];
+    builtin[role] ||
+    role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  );
 }

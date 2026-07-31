@@ -43,7 +43,11 @@ export async function GET(req: NextRequest) {
   }
 
   // Refresh verification + backfill address/city from Google for incomplete imports
-  const accessToken = googleServiceStatus.isConfigured ? await getValidAccessToken() : null;
+  const accessToken = googleServiceStatus.isConfigured
+    ? await getValidAccessToken({
+        clientId: user.role === "client_portal" ? user.clientId : undefined,
+      })
+    : null;
   if (accessToken) {
     for (const l of rows) {
       const gbp = l.googleProfiles[0];

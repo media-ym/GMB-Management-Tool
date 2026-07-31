@@ -111,22 +111,49 @@ export function resolveGoogleRedirectUri(fromRequest?: {
 }
 
 /** Short-lived OAuth state (cookie fallback when host switches 0.0.0.0 ↔ localhost). */
-const oauthPendingStates = new Map<string, { redirectUri: string; expiresAt: number }>();
+type OAuthPending = {
+  redirectUri: string;
+  expiresAt: number;
+  /** When set, tokens are stored on GoogleAccount for this end-client */
+  portalClientId?: string | null;
+  /** Where to send the browser after OAuth (default /google) */
+  returnPath?: string;
+};
 
-export function rememberOAuthState(state: string, redirectUri: string, ttlMs = 60 * 60 * 1000): void {
+const oauthPendingStates = new Map<string, OAuthPending>();
+
+export function rememberOAuthState(
+  state: string,
+  redirectUri: string,
+  ttlMs = 60 * 60 * 1000,
+  meta?: { portalClientId?: string | null; returnPath?: string },
+): void {
   const now = Date.now();
   for (const [k, v] of oauthPendingStates) {
     if (v.expiresAt <= now) oauthPendingStates.delete(k);
   }
-  oauthPendingStates.set(state, { redirectUri, expiresAt: now + ttlMs });
+  oauthPendingStates.set(state, {
+    redirectUri,
+    expiresAt: now + ttlMs,
+    portalClientId: meta?.portalClientId ?? null,
+    returnPath: meta?.returnPath,
+  });
 }
 
-export function consumeOAuthState(state: string): { redirectUri: string } | null {
+export function consumeOAuthState(state: string): {
+  redirectUri: string;
+  portalClientId?: string | null;
+  returnPath?: string;
+} | null {
   const row = oauthPendingStates.get(state);
   if (!row) return null;
   oauthPendingStates.delete(state);
   if (row.expiresAt <= Date.now()) return null;
-  return { redirectUri: row.redirectUri };
+  return {
+    redirectUri: row.redirectUri,
+    portalClientId: row.portalClientId,
+    returnPath: row.returnPath,
+  };
 }
 
 // ─── Error Persistence ────────────────────────────────────────────────────
@@ -268,23 +295,27 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   };
 }
 
-export async function isGoogleOAuthConnected(): Promise<boolean> {
+export async function isGoogleOAuthConnected(clientId?: string | null): Promise<boolean> {
   const account = await db.googleAccount.findFirst({
-    where: { status: "active", accessToken: { not: null } },
+    where: clientId
+      ? { status: "active", accessToken: { not: null }, clientId }
+      : { status: "active", accessToken: { not: null } },
     select: { id: true, scopesJson: true },
   });
   if (!account) return false;
   return scopesIncludeBusinessManage(parseAccountScopes(account.scopesJson));
 }
 
-export async function getGoogleOAuthScopeStatus(): Promise<{
+export async function getGoogleOAuthScopeStatus(clientId?: string | null): Promise<{
   connected: boolean;
   hasBusinessScope: boolean;
   hasAdwordsScope: boolean;
   scopes: string[];
 }> {
   const account = await db.googleAccount.findFirst({
-    where: { status: "active", accessToken: { not: null } },
+    where: clientId
+      ? { status: "active", accessToken: { not: null }, clientId }
+      : { status: "active", accessToken: { not: null } },
     select: { scopesJson: true },
   });
   const scopes = parseAccountScopes(account?.scopesJson);
@@ -298,8 +329,34 @@ export async function getGoogleOAuthScopeStatus(): Promise<{
   };
 }
 
-export async function getValidAccessToken(): Promise<string | null> {
-  const account = await db.googleAccount.findFirst({ where: { status: "active" } });
+export async function getValidAccessToken(opts?: {
+  clientId?: string | null;
+  locationId?: string | null;
+}): Promise<string | null> {
+  let clientId = opts?.clientId ?? null;
+  if (!clientId && opts?.locationId) {
+    const loc = await db.location.findUnique({
+      where: { id: opts.locationId },
+      select: { clientId: true },
+    });
+    clientId = loc?.clientId ?? null;
+  }
+
+  // Prefer end-client's own OAuth when scoped; else platform account (clientId null), then any active.
+  const account = clientId
+    ? await db.googleAccount.findFirst({
+        where: { status: "active", clientId },
+        orderBy: { updatedAt: "desc" },
+      })
+    : (await db.googleAccount.findFirst({
+        where: { status: "active", clientId: null },
+        orderBy: { updatedAt: "desc" },
+      })) ||
+      (await db.googleAccount.findFirst({
+        where: { status: "active" },
+        orderBy: { updatedAt: "desc" },
+      }));
+
   if (!account) return null;
 
   // Defensive: reject legacy "no_token" placeholder. This guard is in addition
@@ -500,7 +557,7 @@ export async function getGoogleUpdated(accessToken: string, locationName: string
  *          `{ drift: false, differences: [] }`.
  */
 export async function detectLocationDrift(locationId: string): Promise<{ drift: boolean; differences: string[] }> {
-  const accessToken = await getValidAccessToken();
+  const accessToken = await getValidAccessToken({ locationId });
   if (!accessToken) return { drift: false, differences: [] };
 
   const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
@@ -698,7 +755,7 @@ export async function syncLocationPhotosFromGoogle(locationId: string): Promise<
   let created = 0;
   let updated = 0;
 
-  const accessToken = await getValidAccessToken();
+  const accessToken = await getValidAccessToken({ locationId });
   if (!accessToken) {
     return { created: 0, updated: 0, errors: ["No valid Google access token"] };
   }
@@ -773,7 +830,7 @@ export async function syncLocationProfileExtrasFromGoogle(locationId: string): P
   errors: string[];
 }> {
   const errors: string[] = [];
-  const accessToken = await getValidAccessToken();
+  const accessToken = await getValidAccessToken({ locationId });
   if (!accessToken) return { updated: false, errors: ["No valid Google access token"] };
 
   const gbp = await db.googleBusinessProfile.findFirst({ where: { locationId } });
@@ -1357,7 +1414,7 @@ export async function getSearchKeywords(
 
 export async function syncLocationAnalytics(locationId: string, daysBack: number = 180): Promise<{ synced: number; errors: string[] }> {
   const errors: string[] = [];
-  const accessToken = await getValidAccessToken();
+  const accessToken = await getValidAccessToken({ locationId });
   if (!accessToken) {
     await logError("google.sync.analytics", null, "No valid Google access token", { locationId, step: "auth" });
     return { synced: 0, errors: ["No valid Google access token"] };
@@ -1746,17 +1803,21 @@ export async function reconcileGoogleProfileFields(
 // Business Information API uses just "locations/{lid}". This helper resolves
 // the full v4 path by looking up the account that owns the location.
 
-let _cachedAccountName: string | null = null;
+/** Cache account name per token — never share across portal vs platform OAuth. */
+const _accountNameByToken = new Map<string, string>();
 
 export async function resolveV4LocationName(accessToken: string, v1LocationName: string): Promise<string> {
   if (v1LocationName.startsWith("accounts/")) return v1LocationName;
-  if (!_cachedAccountName) {
+  const cacheKey = accessToken.slice(-32);
+  let accountName = _accountNameByToken.get(cacheKey) ?? null;
+  if (!accountName) {
     const accounts = await listGoogleAccounts(accessToken);
-    _cachedAccountName = accounts[0]?.name ?? null;
+    accountName = accounts[0]?.name ?? null;
+    if (accountName) _accountNameByToken.set(cacheKey, accountName);
   }
-  if (!_cachedAccountName) throw new Error("No Google account found");
+  if (!accountName) throw new Error("No Google account found");
   const locationId = v1LocationName.replace("locations/", "");
-  return `${_cachedAccountName}/locations/${locationId}`;
+  return `${accountName}/locations/${locationId}`;
 }
 
 // ─── Sync Engine ──────────────────────────────────────────────────────────
@@ -1841,7 +1902,7 @@ export async function syncGoogleProfiles(): Promise<{ synced: number; errors: st
 
 export async function syncGoogleReviews(locationId: string, googleLocationId: string): Promise<{ synced: number; autoReplied: number; errors: string[] }> {
   const errors: string[] = [];
-  const accessToken = await getValidAccessToken();
+  const accessToken = await getValidAccessToken({ locationId });
   if (!accessToken) {
     await logError("google.sync.reviews", null, "No valid access token", { locationId, googleLocationId, step: "auth" });
     return { synced: 0, autoReplied: 0, errors: ["No valid access token"] };
@@ -1875,14 +1936,18 @@ export async function syncLocationFull(locationId: string): Promise<{
 }> {
   const errors: string[] = [];
   const result = { reviews: 0, photos: 0, hours: 0, services: 0, categories: 0, posts: 0, analytics: 0 };
-  const accessToken = await getValidAccessToken();
+  const accessToken = await getValidAccessToken({ locationId });
 
   if (!accessToken) {
     await logError("google.sync.full", null, "No valid Google access token. Please reconnect Google OAuth.", { locationId, step: "auth" });
     return { success: false, synced: result, errors: ["No valid Google access token. Please reconnect Google OAuth."] };
   }
 
-  const account = await db.googleAccount.findFirst({ where: { status: "active" }, select: { scopesJson: true } });
+  const locClient = await db.location.findUnique({ where: { id: locationId }, select: { clientId: true } });
+  const account = locClient?.clientId
+    ? await db.googleAccount.findFirst({ where: { status: "active", clientId: locClient.clientId }, select: { scopesJson: true } })
+    : await db.googleAccount.findFirst({ where: { status: "active", clientId: null }, select: { scopesJson: true } })
+      || await db.googleAccount.findFirst({ where: { status: "active" }, select: { scopesJson: true } });
   if (!scopesIncludeBusinessManage(parseAccountScopes(account?.scopesJson))) {
     return {
       success: false,

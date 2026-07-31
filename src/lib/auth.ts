@@ -2,10 +2,11 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "./db";
 import { verifyPassword, isLocked, MAX_FAILED_ATTEMPTS, LOCK_DURATION_MS } from "./password";
+import { getSecurityConfig } from "./app-settings";
 
-// Session config per doc 06 §8: JWT 8h, refresh enabled, 30min idle, 30d remember
+// Session config — jwtExpiry hours come from Settings → Security when available
 export const authOptions: NextAuthOptions = {
-  session: { strategy: "jwt", maxAge: 8 * 60 * 60 }, // 8 hours
+  session: { strategy: "jwt", maxAge: 8 * 60 * 60 }, // default 8h; runtime authorize uses Setting
   pages: { signIn: "/" }, // single-route SPA — login rendered inside the shell
   providers: [
     CredentialsProvider({
@@ -17,6 +18,10 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials, req) {
         if (!credentials?.email || !credentials?.password) return null;
         const email = credentials.email.trim().toLowerCase();
+        const security = await getSecurityConfig();
+        const maxFailed = security.maxFailedAttempts || MAX_FAILED_ATTEMPTS;
+        const lockMs = (security.lockDuration || 15) * 60 * 1000 || LOCK_DURATION_MS;
+
         const user = await db.user.findUnique({ where: { email } });
         if (!user) {
           await logAuthEvent(null, email, "login.failed", "User not found", req);
@@ -49,16 +54,16 @@ export const authOptions: NextAuthOptions = {
         if (!valid) {
           // Increment failed attempts
           const newFailed = user.failedLoginAttempts + 1;
-          const shouldLock = newFailed >= MAX_FAILED_ATTEMPTS;
+          const shouldLock = newFailed >= maxFailed;
           await db.user.update({
             where: { id: user.id },
             data: {
               failedLoginAttempts: newFailed,
               status: shouldLock ? "locked" : user.status,
-              lockedUntil: shouldLock ? new Date(Date.now() + LOCK_DURATION_MS) : user.lockedUntil,
+              lockedUntil: shouldLock ? new Date(Date.now() + lockMs) : user.lockedUntil,
             },
           });
-          await logAuthEvent(user.id, email, "login.failed", `Invalid password (attempt ${newFailed}/${MAX_FAILED_ATTEMPTS})`, req);
+          await logAuthEvent(user.id, email, "login.failed", `Invalid password (attempt ${newFailed}/${maxFailed})`, req);
           return null;
         }
 
