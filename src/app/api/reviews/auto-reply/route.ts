@@ -8,6 +8,7 @@ import {
   mergeAutoReplyConfig,
   type AutoReplyConfig,
 } from "@/lib/auto-reply";
+import { processAllPendingAutoReplies } from "@/lib/review-auto-reply";
 
 export const dynamic = "force-dynamic";
 
@@ -108,5 +109,17 @@ export async function PUT(req: NextRequest) {
     ip: req.headers.get("x-forwarded-for") ?? undefined,
   });
 
-  return ok(payload, "Auto reply settings saved");
+  let backlogResult: Awaited<ReturnType<typeof processAllPendingAutoReplies>> | null = null;
+  if (payload.enabled && payload.mode === "manual") {
+    backlogResult = await processAllPendingAutoReplies({ batchSize: 10, maxBatches: 50 });
+  }
+
+  const message =
+    backlogResult && backlogResult.replied > 0
+      ? `Auto reply settings saved · replied to ${backlogResult.replied} pending review(s)`
+      : backlogResult && payload.enabled
+        ? "Auto reply settings saved · no matching pending reviews right now"
+        : "Auto reply settings saved";
+
+  return ok({ ...payload, backlogResult }, message);
 }

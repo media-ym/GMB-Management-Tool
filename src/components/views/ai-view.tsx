@@ -440,6 +440,7 @@ export function AiView() {
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const lastInputRef = React.useRef<string>(""); // for retry
+  const messagesRef = React.useRef<ChatMessage[]>([]);
 
   const hydratedRef = React.useRef(false);
   const sendingRef = React.useRef(false);
@@ -448,7 +449,9 @@ export function AiView() {
 
   // Hydrate from localStorage once on mount
   React.useEffect(() => {
-    setMessages(loadMessages());
+    const loaded = loadMessages();
+    messagesRef.current = loaded;
+    setMessages(loaded);
     try {
       const saved = localStorage.getItem(MODEL_STORAGE_KEY);
       if (saved && MODEL_OPTIONS.some((m) => m.id === saved)) {
@@ -462,6 +465,7 @@ export function AiView() {
 
   // Persist on change
   React.useEffect(() => {
+    messagesRef.current = messages;
     if (!hydratedRef.current) return;
     saveMessages(messages);
   }, [messages]);
@@ -504,21 +508,22 @@ export function AiView() {
       createdAt: new Date().toISOString(),
     };
 
-    let nextMessages: ChatMessage[] = [];
-    setMessages((prev) => {
-      nextMessages = [...prev, userMsg];
-      return nextMessages;
-    });
+    // Build payload from ref — never rely on setState updater timing (was sending [])
+    const nextMessages = [...messagesRef.current, userMsg];
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
     setInput("");
     setLoading(true);
 
     try {
+      const history = nextMessages
+        .filter((m) => m.content.trim() && !m.error)
+        .map((m) => ({ role: m.role, content: m.content }));
       const payload = {
         action: "chat" as const,
         model: selectedModelRef.current,
-        messages: nextMessages
-          .filter((m) => m.content.trim() && !m.error)
-          .map((m) => ({ role: m.role, content: m.content })),
+        messages: history,
+        message: trimmed,
       };
       const data = await api<{ reply: string; model?: string }>("/api/ai", {
         method: "POST",
@@ -532,7 +537,8 @@ export function AiView() {
         createdAt: new Date().toISOString(),
         model: data.model,
       };
-      setMessages((prev) => [...prev, aiMsg]);
+      messagesRef.current = [...messagesRef.current, aiMsg];
+      setMessages(messagesRef.current);
     } catch (e: any) {
       const errMsg: ChatMessage = {
         id: uid(),
@@ -541,7 +547,8 @@ export function AiView() {
         createdAt: new Date().toISOString(),
         error: true,
       };
-      setMessages((prev) => [...prev, errMsg]);
+      messagesRef.current = [...messagesRef.current, errMsg];
+      setMessages(messagesRef.current);
       toast.error(e?.message || "MiSA AI request failed");
     } finally {
       sendingRef.current = false;

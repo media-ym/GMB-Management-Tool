@@ -81,6 +81,7 @@ Summary:
 6. Cron with header `x-cron-secret: $CRON_SECRET`:
    - `GET /api/cron/sync-all`
    - `GET /api/cron/publish-scheduled`
+   - `GET /api/cron/auto-post-daily` (daily MiSA SEO posts to all verified locations)
    - `GET /api/cron/auto-reply-reviews`
    - `GET /api/cron/drift-detection`
 

@@ -208,6 +208,9 @@ Open the server crontab (`crontab -e`) and add:
 
 # Optional: publish scheduled posts every 15 minutes
 */15 * * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/publish-scheduled
+
+# Daily MiSA auto-posts (checks IST run hour; use hourly poll or set to your hour)
+0 * * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/auto-post-daily
 ```
 
 Replace `YOUR_CRON_SECRET` with the value you set in `.env` (`CRON_SECRET`).

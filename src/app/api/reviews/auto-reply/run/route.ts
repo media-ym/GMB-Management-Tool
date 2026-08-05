@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getSessionUser } from "@/lib/session";
+import { getSessionUser, scopeLocationIds } from "@/lib/session";
 import { ok, unauthorized, forbidden } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import { processAllPendingAutoReplies } from "@/lib/review-auto-reply";
@@ -17,7 +17,14 @@ export async function POST(req: NextRequest) {
     ? body.ratings.filter((r: unknown) => typeof r === "number")
     : undefined;
 
-  const result = await processAllPendingAutoReplies({ ratings, batchSize: 10, maxBatches: 50 });
+  const locationIds = scopeLocationIds(user);
+
+  const result = await processAllPendingAutoReplies({
+    ratings,
+    batchSize: 10,
+    maxBatches: 50,
+    locationIds,
+  });
 
   return ok(
     result,

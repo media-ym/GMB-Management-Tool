@@ -50,7 +50,31 @@ export async function POST(req: NextRequest) {
 
   try {
     if (action === "chat") {
-      const messages: { role: "user" | "assistant"; content: string }[] = body.messages || [];
+      let messages: { role: "user" | "assistant"; content: string }[] = Array.isArray(body.messages)
+        ? body.messages
+            .filter(
+              (m: unknown) =>
+                !!m &&
+                typeof m === "object" &&
+                ("role" in m) &&
+                ("content" in m) &&
+                String((m as { content: unknown }).content || "").trim(),
+            )
+            .map((m: { role: string; content: unknown }) => ({
+              role: m.role === "assistant" ? "assistant" : "user",
+              content: String(m.content),
+            }))
+        : [];
+      // Fallback when client only sent a single prompt (or empty history race)
+      const single =
+        typeof body.message === "string"
+          ? body.message.trim()
+          : typeof body.prompt === "string"
+            ? body.prompt.trim()
+            : "";
+      if (!messages.length && single) {
+        messages = [{ role: "user", content: single }];
+      }
       if (!messages.length) return fail("messages required");
       const { reply, model } = await aiChat({ user, messages, model: requestedModel });
       await logAudit({

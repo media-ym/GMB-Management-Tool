@@ -5,7 +5,6 @@ import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import type { LocationWithStats } from "@/lib/types";
 import { extractLocationFromName, inferCityFromAddress, parseGoogleAddress } from "@/lib/location-utils";
-import { refreshAllLocationScores } from "@/lib/location-scores";
 import { getValidAccessToken, googleServiceStatus, getVoiceOfMerchantState, getBusinessProfile } from "@/lib/google-service";
 import { resolveVerificationFromVoiceOfMerchant } from "@/lib/gbp-profile-utils";
 
@@ -91,14 +90,9 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  await refreshAllLocationScores(rows.map((l) => l.id), { writeAudit: false });
-  const refreshed = await db.location.findMany({
-    where,
-    orderBy: { city: "asc" },
-    include: { googleProfiles: { take: 1 } },
-  });
-
-  const data: LocationWithStats[] = refreshed.map((l) => ({
+  // Do NOT refresh scores for every list load — that opens hundreds of queries and
+  // exhausts Supavisor session pool (EMAXCONNSESSION). Scores update on sync.
+  const data: LocationWithStats[] = rows.map((l) => ({
     id: l.id,
     name: l.name,
     city: l.city,

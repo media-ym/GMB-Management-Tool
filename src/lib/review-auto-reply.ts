@@ -20,13 +20,44 @@ export async function loadAutoReplyConfig(): Promise<AutoReplyConfig> {
   }
 }
 
+/** Active template text for a star rating (DB templates first, then global config fallback). */
+export async function loadActiveTemplateForRating(rating: number): Promise<string | null> {
+  const exact = await db.reviewReplyTemplate.findFirst({
+    where: { rating, isActive: true },
+    orderBy: { createdAt: "desc" },
+    select: { template: true },
+  });
+  if (exact?.template.trim()) return exact.template.trim();
+
+  const nearest = await db.reviewReplyTemplate.findFirst({
+    where: { rating: { lte: rating }, isActive: true },
+    orderBy: { rating: "desc" },
+    select: { template: true },
+  });
+  if (nearest?.template.trim()) return nearest.template.trim();
+
+  const config = await loadAutoReplyConfig();
+  if (
+    config.enabled &&
+    config.mode === "manual" &&
+    config.template.trim() &&
+    config.selectedRatings.includes(rating)
+  ) {
+    return config.template.trim();
+  }
+
+  return null;
+}
+
 export function reviewMatchesAutoReply(
   config: AutoReplyConfig,
   review: { rating: number; text: string; replyStatus: string },
+  templateText?: string | null,
 ): boolean {
   if (!config.enabled) return false;
   if (config.mode !== "manual") return false;
-  if (!config.template.trim()) return false;
+  const tpl = templateText?.trim() || config.template.trim();
+  if (!tpl) return false;
   if (!config.selectedRatings.includes(review.rating)) return false;
   if (review.replyStatus === "replied" || review.replyStatus === "ignored") return false;
 
@@ -38,6 +69,7 @@ export function reviewMatchesAutoReply(
 
 export function buildAutoReplyMessage(
   config: AutoReplyConfig,
+  templateText: string,
   review: {
     authorName: string;
     rating: number;
@@ -51,7 +83,7 @@ export function buildAutoReplyMessage(
     categoriesJson: string | null;
   },
 ): string {
-  let text = substituteReviewReplyTemplate(config.template, {
+  let text = substituteReviewReplyTemplate(templateText, {
     customerName: review.authorName,
     businessName: location.name,
     category: inferLocationCategory(location.categoriesJson),
@@ -87,6 +119,8 @@ export function buildAutoReplyMessage(
 export async function tryAutoReplyToReview(
   reviewId: string,
   config?: AutoReplyConfig,
+  templateOverride?: string,
+  opts?: { skipConfigGate?: boolean },
 ): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
   const cfg = config ?? (await loadAutoReplyConfig());
 
@@ -97,8 +131,16 @@ export async function tryAutoReplyToReview(
     },
   });
   if (!review) return { ok: false, skipped: true, error: "Review not found" };
-  if (!reviewMatchesAutoReply(cfg, review)) {
+
+  const templateText = templateOverride ?? (await loadActiveTemplateForRating(review.rating));
+  const matches = opts?.skipConfigGate
+    ? review.replyStatus === "pending" && !!templateText?.trim()
+    : reviewMatchesAutoReply(cfg, review, templateText);
+  if (!matches) {
     return { ok: false, skipped: true };
+  }
+  if (!templateText) {
+    return { ok: false, skipped: true, error: "No template for this rating" };
   }
 
   const auth = await checkClientAuthorization(review.locationId, "review.reply");
@@ -106,7 +148,7 @@ export async function tryAutoReplyToReview(
     return { ok: false, error: auth.reason ?? "Client not authorized for review.reply" };
   }
 
-  const replyText = buildAutoReplyMessage(cfg, review, review.location);
+  const replyText = buildAutoReplyMessage(cfg, templateText, review, review.location);
   if (replyText.length < 3) {
     return { ok: false, error: "Auto reply text too short" };
   }
@@ -172,6 +214,7 @@ export async function processAllPendingAutoReplies(opts?: {
   batchSize?: number;
   maxBatches?: number;
   ratings?: number[];
+  locationIds?: string[];
 }): Promise<{ replied: number; skipped: number; errors: string[]; remaining: number }> {
   const batchSize = opts?.batchSize ?? 25;
   const maxBatches = opts?.maxBatches ?? 50;
@@ -191,6 +234,7 @@ export async function processAllPendingAutoReplies(opts?: {
         syncStatus: "synced",
         replyStatus: "pending",
         rating: { in: ratings },
+        ...(opts?.locationIds?.length ? { locationId: { in: opts.locationIds } } : {}),
       },
       orderBy: { createdAt: "asc" },
       take: batchSize,
@@ -199,15 +243,25 @@ export async function processAllPendingAutoReplies(opts?: {
 
     if (pending.length === 0) break;
 
-    const eligible = pending.filter((r) => reviewMatchesAutoReply(config, r));
-    if (eligible.length === 0) break;
+    let batchReplied = 0;
+    for (const r of pending) {
+      const templateText = await loadActiveTemplateForRating(r.rating);
+      if (!reviewMatchesAutoReply(config, r, templateText)) {
+        skipped++;
+        continue;
+      }
+      const result = await tryAutoReplyToReview(r.id, config, templateText ?? undefined);
+      if (result.ok) {
+        replied++;
+        batchReplied++;
+      } else if (result.skipped) {
+        skipped++;
+      } else if (result.error) {
+        errors.push(`${r.id}: ${result.error}`);
+      }
+    }
 
-    const result = await processAutoRepliesForReviews(eligible.map((r) => r.id));
-    replied += result.replied;
-    skipped += result.skipped;
-    errors.push(...result.errors);
-
-    if (result.replied === 0) break;
+    if (batchReplied === 0) break;
   }
 
   const remaining = await db.review.count({
@@ -215,8 +269,44 @@ export async function processAllPendingAutoReplies(opts?: {
       syncStatus: "synced",
       replyStatus: "pending",
       rating: { in: ratings },
+      ...(opts?.locationIds?.length ? { locationId: { in: opts.locationIds } } : {}),
     },
   });
 
   return { replied, skipped, errors, remaining };
+}
+
+/** Apply per-rating templates to specific pending review ids (bulk inbox action). */
+export async function bulkTemplateReplyToReviews(
+  reviewIds: string[],
+): Promise<{ replied: number; skipped: number; errors: string[] }> {
+  const config = await loadAutoReplyConfig();
+  let replied = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const id of reviewIds) {
+    const review = await db.review.findUnique({
+      where: { id },
+      select: { id: true, rating: true, text: true, replyStatus: true },
+    });
+    if (!review || review.replyStatus !== "pending") {
+      skipped++;
+      continue;
+    }
+
+    const templateText = await loadActiveTemplateForRating(review.rating);
+    if (!templateText) {
+      skipped++;
+      errors.push(`${id}: No active template for ${review.rating}★`);
+      continue;
+    }
+
+    const result = await tryAutoReplyToReview(id, config, templateText, { skipConfigGate: true });
+    if (result.ok) replied++;
+    else if (result.skipped) skipped++;
+    else if (result.error) errors.push(`${id}: ${result.error}`);
+  }
+
+  return { replied, skipped, errors };
 }

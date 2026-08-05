@@ -53,20 +53,33 @@ export async function getClientIdForUser(userId: string): Promise<string | null>
   }
 }
 
+let portalClientIdsCache: { at: number; ids: string[] } | null = null;
+let portalTableReady = false;
+
 /** Client IDs that have a portal login — their locations stay out of the staff workspace. */
 export async function listPortalClientIds(): Promise<string[]> {
+  const now = Date.now();
+  if (portalClientIdsCache && now - portalClientIdsCache.at < 60_000) {
+    return portalClientIdsCache.ids;
+  }
   try {
-    await ensurePortalLinkTable();
+    if (!portalTableReady) {
+      await ensurePortalLinkTable();
+      portalTableReady = true;
+    }
     const rows = await db.$queryRawUnsafe<{ clientId: string }[]>(
       `SELECT DISTINCT "clientId" FROM "ClientPortalLink"`,
     );
-    return rows.map((r) => r.clientId).filter(Boolean);
+    const ids = rows.map((r) => r.clientId).filter(Boolean);
+    portalClientIdsCache = { at: now, ids };
+    return ids;
   } catch {
-    return [];
+    return portalClientIdsCache?.ids ?? [];
   }
 }
 
 export async function setPortalLink(userId: string, clientId: string): Promise<void> {
+  portalClientIdsCache = null;
   await ensurePortalLinkTable();
   const existing = await db.$queryRawUnsafe<{ id: string }[]>(
     `SELECT "id" FROM "ClientPortalLink" WHERE "userId" = $1 LIMIT 1`,

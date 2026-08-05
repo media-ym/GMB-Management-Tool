@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { useAppStore } from "@/lib/store";
 import { useUser } from "@/lib/user-context";
@@ -63,9 +63,10 @@ import {
   Clock, Wand2, ExternalLink, MapPin, Loader2, Search,
   Phone, Globe, Mail, CalendarCheck, Eye,
   Archive, BarChart3, X, AlertTriangle, Megaphone, Layers, TrendingUp,
-  CheckCheck, List as ListIcon, Calendar as CalendarIcon, Inbox, Repeat,
+  CheckCheck, List as ListIcon, Calendar as CalendarIcon, Inbox, Repeat, Bot,
 } from "lucide-react";
 import { PostsCalendar } from "@/components/views/posts-calendar";
+import { AutoPostConfig } from "@/components/views/auto-post-config";
 import { PublishingQueue } from "@/components/views/posts-queue";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
@@ -277,7 +278,7 @@ export function PostsView() {
   const [editingPost, setEditingPost] = React.useState<PostWithLocation | null>(null);
   const [deletingPost, setDeletingPost] = React.useState<PostWithLocation | null>(null);
   const [showAnalytics, setShowAnalytics] = React.useState(true);
-  const [viewMode, setViewMode] = React.useState<"list" | "calendar" | "queue" | "history">("list");
+  const [viewMode, setViewMode] = React.useState<"list" | "calendar" | "queue" | "history" | "auto">("list");
   const [displayLayout, setDisplayLayout] = React.useState<LayoutMode>("grid");
   const [page, setPage] = React.useState(0);
   const [presetScheduledAt, setPresetScheduledAt] = React.useState<Date | null>(null);
@@ -287,6 +288,25 @@ export function PostsView() {
   const [bulkScheduleOpen, setBulkScheduleOpen] = React.useState(false);
   const [bulkScheduleDate, setBulkScheduleDate] = React.useState<Date | null>(null);
   const [bulkBusy, setBulkBusy] = React.useState(false);
+
+  const runAutoPostMut = useMutation({
+    mutationFn: () =>
+      api<{ published: number; skipped: number; failed: number; errors: string[] }>(
+        "/api/posts/auto-post/run",
+        { method: "POST", body: "{}" },
+      ),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["posts"] });
+      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+      toast.success(
+        `Auto-post: ${data.published} published${data.skipped ? `, ${data.skipped} skipped` : ""}${data.failed ? `, ${data.failed} failed` : ""}`,
+      );
+      if (data.errors?.length) toast.error(data.errors.slice(0, 2).join(" · "));
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : "Auto-post run failed");
+    },
+  });
 
   const params = new URLSearchParams();
   appendLocationIdsToParams(params, selectedLocationIds);
@@ -674,7 +694,7 @@ export function PostsView() {
           <ToggleGroup
             type="single"
             value={viewMode}
-            onValueChange={(v) => { if (v) setViewMode(v as "list" | "calendar" | "queue" | "history"); }}
+            onValueChange={(v) => { if (v) setViewMode(v as "list" | "calendar" | "queue" | "history" | "auto"); }}
             variant="outline"
             size="default"
             aria-label="View mode"
@@ -695,6 +715,10 @@ export function PostsView() {
             <ToggleGroupItem value="history" aria-label="Past history" className="shrink-0 px-4 gap-2 h-9">
               <Clock className="size-3.5 shrink-0" />
               <span className="text-xs">History</span>
+            </ToggleGroupItem>
+            <ToggleGroupItem value="auto" aria-label="Daily auto posts" className="shrink-0 px-4 gap-2 h-9">
+              <Bot className="size-3.5 shrink-0" />
+              <span className="text-xs">Auto Posts</span>
             </ToggleGroupItem>
           </ToggleGroup>
 
@@ -932,6 +956,13 @@ export function PostsView() {
           posts={historyPosts}
           isLoading={isLoading}
           onEdit={openEdit}
+        />
+      )}
+
+      {viewMode === "auto" && (
+        <AutoPostConfig
+          onRunNow={() => runAutoPostMut.mutate()}
+          runBusy={runAutoPostMut.isPending}
         />
       )}
 

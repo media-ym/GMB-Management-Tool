@@ -24,6 +24,7 @@ import {
   type AutoReplyConfig,
   type AutoReplyReviewType,
 } from "@/lib/auto-reply";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -356,6 +357,8 @@ export function ReviewsView() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [aiLoadingId, setAiLoadingId] = useState<string | null>(null);
   const [quickTemplateLoadingId, setQuickTemplateLoadingId] = useState<string | null>(null);
+  const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
+  const [bulkReplyBusy, setBulkReplyBusy] = useState(false);
   const [editorText, setEditorText] = useState("");
   // editor side panel tab
   const [editorPanel, setEditorPanel] = useState<EditorPanelTab>("templates");
@@ -556,6 +559,55 @@ export function ReviewsView() {
     onError: (e: unknown) => {
       const msg = e instanceof Error ? e.message : "Failed to delete reply";
       toast.error(msg);
+    },
+  });
+
+  const bulkTemplateReplyMut = useMutation({
+    mutationFn: (reviewIds: string[]) =>
+      api<{ replied: number; skipped: number; errors: string[] }>("/api/reviews/bulk-reply", {
+        method: "POST",
+        body: JSON.stringify({ reviewIds }),
+      }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["reviews"] });
+      qc.invalidateQueries({ queryKey: ["reviews-stats"] });
+      setSelectedReviewIds(new Set());
+      if (data.replied > 0) {
+        toast.success(`Template reply sent to ${data.replied} review(s)`);
+      } else {
+        toast.error("No reviews were replied — check templates for each star rating");
+      }
+      if (data.errors?.length) {
+        toast.error(data.errors.slice(0, 2).join(" · "));
+      }
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : "Bulk reply failed");
+    },
+  });
+
+  const runAutoReplyMut = useMutation({
+    mutationFn: () =>
+      api<{ replied: number; remaining: number; errors: string[] }>("/api/reviews/auto-reply/run", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["reviews"] });
+      qc.invalidateQueries({ queryKey: ["reviews-stats"] });
+      if (data.replied > 0) {
+        toast.success(
+          `Auto-replied to ${data.replied} pending review(s)${data.remaining ? ` · ${data.remaining} still pending` : ""}`,
+        );
+      } else {
+        toast.info("No pending reviews matched your auto-reply rules");
+      }
+      if (data.errors?.length) {
+        toast.error(data.errors.slice(0, 2).join(" · "));
+      }
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : "Auto-reply run failed");
     },
   });
 
@@ -788,6 +840,57 @@ export function ReviewsView() {
     addNoteMut.mutate({ id: activeReviewId, text: text.trim() });
   }
 
+  const pendingOnPage = useMemo(
+    () => pagedReviews.filter((r) => r.replyStatus === "pending"),
+    [pagedReviews],
+  );
+  const selectedCount = selectedReviewIds.size;
+  const allPendingPageSelected =
+    pendingOnPage.length > 0 && pendingOnPage.every((r) => selectedReviewIds.has(r.id));
+
+  function toggleSelectReview(id: string, checked: boolean) {
+    setSelectedReviewIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllPendingOnPage(checked: boolean) {
+    if (!checked) {
+      setSelectedReviewIds((prev) => {
+        const next = new Set(prev);
+        pendingOnPage.forEach((r) => next.delete(r.id));
+        return next;
+      });
+      return;
+    }
+    setSelectedReviewIds((prev) => {
+      const next = new Set(prev);
+      pendingOnPage.forEach((r) => next.add(r.id));
+      return next;
+    });
+  }
+
+  function clearReviewSelection() {
+    setSelectedReviewIds(new Set());
+  }
+
+  async function handleBulkTemplateReply() {
+    if (selectedReviewIds.size === 0) return;
+    setBulkReplyBusy(true);
+    try {
+      await bulkTemplateReplyMut.mutateAsync([...selectedReviewIds]);
+    } finally {
+      setBulkReplyBusy(false);
+    }
+  }
+
+  function handleReplyAllPending() {
+    runAutoReplyMut.mutate();
+  }
+
   const activeReview =
     reviews?.find((r) => r.id === activeReviewId) ?? null;
   const hasActiveFilters =
@@ -974,10 +1077,70 @@ export function ReviewsView() {
                   </div>
 
                   <LayoutToggle value={displayLayout} onChange={setDisplayLayout} />
+
+                  {canReply && inboxStats.pending > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleReplyAllPending}
+                      disabled={runAutoReplyMut.isPending}
+                      className="border-teal-500/40 text-teal-700 dark:text-teal-400"
+                    >
+                      {runAutoReplyMut.isPending ? (
+                        <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <Zap className="size-3.5 mr-1.5" />
+                      )}
+                      Reply all pending
+                    </Button>
+                  )}
                 </div>
               </div>
             </CardContent>
           </Card>
+
+          {canReply && selectedCount > 0 && (
+            <Card className="border-teal-500/30 bg-teal-500/5">
+              <CardContent className="p-3 flex flex-wrap items-center gap-2 justify-between">
+                <span className="text-sm font-medium">
+                  {selectedCount} pending review{selectedCount === 1 ? "" : "s"} selected
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    onClick={handleBulkTemplateReply}
+                    disabled={bulkReplyBusy || bulkTemplateReplyMut.isPending}
+                  >
+                    {(bulkReplyBusy || bulkTemplateReplyMut.isPending) ? (
+                      <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Zap className="size-3.5 mr-1.5" />
+                    )}
+                    Apply template to selected
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={clearReviewSelection}>
+                    Clear selection
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {!isLoading && filtered.length > 0 && canReply && pendingOnPage.length > 0 && (
+            <div className="flex items-center gap-3 text-sm text-muted-foreground -mt-1">
+              <Checkbox
+                checked={allPendingPageSelected}
+                onCheckedChange={(v) => toggleSelectAllPendingOnPage(!!v)}
+                aria-label="Select all pending reviews on this page"
+              />
+              <span>
+                Select pending on this page
+                {selectedCount > 0 && (
+                  <span className="ml-1 text-primary font-medium">· {selectedCount} selected</span>
+                )}
+              </span>
+            </div>
+          )}
 
           {/* Reviews list / grid (independently scrollable) */}
           <div className="max-h-[calc(100vh-26rem)] overflow-y-auto scroll-area pr-1 -mr-1 space-y-3">
@@ -1017,6 +1180,12 @@ export function ReviewsView() {
                       quickTemplateLoading={quickTemplateLoadingId === r.id}
                       hasQuickTemplate={
                         !!resolveQuickReplyTemplate(r.rating, templates, autoReplyConfig)
+                      }
+                      selected={selectedReviewIds.has(r.id)}
+                      onSelectChange={
+                        r.replyStatus === "pending" && canReply
+                          ? (checked) => toggleSelectReview(r.id, checked)
+                          : undefined
                       }
                       onQuickTemplate={() => handleQuickTemplateReply(r)}
                       onAiDraft={(model) => handleAiDraft(r, model)}
@@ -1084,7 +1253,7 @@ export function ReviewsView() {
 
         {/* AUTO REPLIES TAB */}
         <TabsContent value="auto-replies" className="space-y-4">
-          <AutoRepliesConfig />
+          <AutoRepliesConfig onRunPending={() => runAutoReplyMut.mutate()} runPendingBusy={runAutoReplyMut.isPending} />
         </TabsContent>
       </Tabs>
 
@@ -2704,6 +2873,8 @@ function ReviewCard({
   aiLoading,
   quickTemplateLoading,
   hasQuickTemplate,
+  selected = false,
+  onSelectChange,
   onQuickTemplate,
   onAiDraft,
   misaModel,
@@ -2720,6 +2891,8 @@ function ReviewCard({
   aiLoading: boolean;
   quickTemplateLoading: boolean;
   hasQuickTemplate: boolean;
+  selected?: boolean;
+  onSelectChange?: (checked: boolean) => void;
   onQuickTemplate: () => void;
   onReply: () => void;
   onAiDraft: (model?: string) => void;
@@ -2737,6 +2910,15 @@ function ReviewCard({
   const sla = isPending
     ? computeSla(review.createdAt, review.rating)
     : null;
+
+  const selectBox = onSelectChange ? (
+    <Checkbox
+      checked={selected}
+      onCheckedChange={(v) => onSelectChange(!!v)}
+      aria-label={`Select review from ${review.authorName}`}
+      className="mt-1 shrink-0"
+    />
+  ) : null;
 
   const actions = (
     <ReviewCardActions
@@ -2769,6 +2951,7 @@ function ReviewCard({
         <CardContent className="p-3 sm:p-4">
           <div className="flex flex-col lg:flex-row lg:items-start gap-3">
             <div className="flex items-start gap-3 min-w-0 lg:w-[220px] shrink-0">
+              {selectBox}
               <Avatar className="size-9">
                 {review.authorPhoto && (
                   <AvatarImage src={review.authorPhoto} alt={review.authorName} />
@@ -2829,6 +3012,7 @@ function ReviewCard({
     >
       <CardContent className="p-4 space-y-3 flex flex-col h-full">
         <div className="flex items-start gap-3">
+          {selectBox}
           <Avatar className="size-10">
             {review.authorPhoto && (
               <AvatarImage src={review.authorPhoto} alt={review.authorName} />
@@ -3357,7 +3541,13 @@ function ReviewChangeList({
   );
 }
 
-function AutoRepliesConfig() {
+function AutoRepliesConfig({
+  onRunPending,
+  runPendingBusy = false,
+}: {
+  onRunPending?: () => void;
+  runPendingBusy?: boolean;
+}) {
   const user = useUser();
   const qc = useQueryClient();
   const { data: locations } = useLocations();
@@ -3394,7 +3584,14 @@ function AutoRepliesConfig() {
       qc.invalidateQueries({ queryKey: ["review-auto-reply"] });
       qc.invalidateQueries({ queryKey: ["reply-templates"] });
       qc.invalidateQueries({ queryKey: ["review-templates"] });
-      toast.success("Auto reply settings saved");
+      qc.invalidateQueries({ queryKey: ["reviews"] });
+      qc.invalidateQueries({ queryKey: ["reviews-stats"] });
+      const backlog = (data as AutoReplyConfig & { backlogResult?: { replied?: number } }).backlogResult;
+      if (backlog?.replied && backlog.replied > 0) {
+        toast.success(`Auto reply saved · replied to ${backlog.replied} pending review(s)`);
+      } else {
+        toast.success("Auto reply settings saved");
+      }
     },
     onError: (e: unknown) => {
       toast.error(e instanceof Error ? e.message : "Failed to save auto reply");
@@ -3794,9 +3991,24 @@ function AutoRepliesConfig() {
                   <Loader2 className="size-3.5 mr-1.5 animate-spin" /> Saving…
                 </>
               ) : (
-                "Save & Update Auto Replies"
+                "Save & reply to pending"
               )}
             </Button>
+            {onRunPending && (
+              <Button
+                variant="outline"
+                className="gap-1.5 border-teal-500/40 text-teal-700 dark:text-teal-400"
+                onClick={onRunPending}
+                disabled={!canReply || !config.enabled || runPendingBusy}
+              >
+                {runPendingBusy ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Zap className="size-3.5" />
+                )}
+                Reply to pending now
+              </Button>
+            )}
             <Button
               variant="destructive"
               className="gap-1.5"
@@ -3806,6 +4018,10 @@ function AutoRepliesConfig() {
               <Ban className="size-3.5" /> Stop All Review Auto Reply
             </Button>
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            Saving with auto-reply ON applies your per-star templates to all matching pending reviews.
+            New reviews also auto-reply after sync when enabled.
+          </p>
         </TabsContent>
 
         <TabsContent value="ai" className="space-y-4">

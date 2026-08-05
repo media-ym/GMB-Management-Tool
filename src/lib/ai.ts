@@ -185,6 +185,10 @@ export async function aiGeneratePost(opts: {
   type: "whats_new" | "offer" | "event" | "update";
   topic: string;
   model?: string;
+  city?: string;
+  address?: string;
+  keywords?: string[];
+  tone?: "professional" | "friendly" | "local";
 }): Promise<{ title: string; content: string; ctaType: string }> {
   const start = Date.now();
   const typeLabel = {
@@ -194,17 +198,33 @@ export async function aiGeneratePost(opts: {
     update: "Business Update",
   }[opts.type];
 
+  const tone = opts.tone ?? "friendly";
+  const toneGuide = {
+    professional: "Professional, trustworthy, concise.",
+    friendly: "Warm, approachable, conversational.",
+    local: "Hyper-local — mention neighbourhood/city naturally, community-focused.",
+  }[tone];
+
+  const keywordLine =
+    opts.keywords && opts.keywords.length > 0
+      ? `\nWeave these local SEO keywords naturally (do not keyword-stuff): ${opts.keywords.join(", ")}.`
+      : "";
+
   const system = `You are MiSA AI for MyFNG Autocare (multi-brand car service & repair brand across Mumbai, Navi Mumbai, Thane, Pune, India).
 Generate a Google Business Profile ${typeLabel} post.
 
 Rules:
 - Title: under 60 characters, attention-grabbing but honest.
 - Body: 100–180 words, scannable, highlight value to local car owners (Maruti, Hyundai, Honda, Tata, Mahindra, Toyota).
+- Tone: ${toneGuide}
 - CTA type must be one of: book, order, sign_up, call, learn_more.
-- No emojis spam (max 2). No markdown headings. No fake dates.
-- Reference the city/location naturally.`;
+- No emojis spam (max 2). No markdown headings. No fake dates or fake discounts.
+- Reference the city/location naturally.${keywordLine}
+- Do not put phone numbers in the post body.`;
 
   const userMsg = `Location: MyFNG — ${opts.locationName}
+City: ${opts.city ?? "Maharashtra"}
+Area/address: ${opts.address ?? opts.city ?? ""}
 Post type: ${typeLabel}
 Topic/angle: ${opts.topic}
 
