@@ -4,8 +4,14 @@ import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, fail, unauthorized, forbidden } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
 import { buildLocationIdFilter, parseLocationIdsParam } from "@/lib/location-filter";
+import { isBootstrapCompetitor } from "@/lib/places-competitors";
 
 export const dynamic = "force-dynamic";
+
+function roundRating(value: number | null): number | null {
+  if (value == null) return null;
+  return Math.round(value * 10) / 10;
+}
 
 function mapCompetitor(c: {
   id: string;
@@ -35,7 +41,7 @@ function mapCompetitor(c: {
     locationName: c.location?.name ?? "",
     locationCity: c.location?.city ?? "",
     isActive: c.isActive,
-    rating: c.rating,
+    rating: roundRating(c.rating),
     reviewCount: c.reviewCount,
     photoCount: c.photoCount,
     serviceCount: c.serviceCount,
@@ -46,6 +52,7 @@ function mapCompetitor(c: {
     phone: c.phone,
     website: c.website,
     googlePlaceId: c.googlePlaceId ?? null,
+    isBootstrap: isBootstrapCompetitor(c.googlePlaceId),
     rankings: c.rankings.map((r) => ({
       keyword: r.keyword.keyword,
       ranking: r.ranking,
@@ -114,7 +121,7 @@ export async function GET(req: NextRequest) {
     locationCity: location.city,
     isActive: true,
     isYou: true as const,
-    rating: location.avgRating || null,
+    rating: roundRating(location.avgRating) || null,
     reviewCount: location.reviewCount || null,
     photoCount: location._count.photos,
     serviceCount: location._count.services,
@@ -131,7 +138,17 @@ export async function GET(req: NextRequest) {
     description: true,
   };
 
-  return ok({ you, competitors: mapped });
+  const trackedKeywords = await db.keyword.findMany({
+    where: { locationId, status: "active" },
+    select: { keyword: true },
+    orderBy: { keyword: "asc" },
+  });
+
+  return ok({
+    you,
+    competitors: mapped,
+    trackedKeywords: trackedKeywords.map((k) => k.keyword),
+  });
 }
 
 export async function POST(req: NextRequest) {

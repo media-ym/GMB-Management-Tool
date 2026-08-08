@@ -7,6 +7,7 @@ import { extractLocationFromName, resolveLocationAddress, parseGoogleAddress, in
 import { resolveGbpMapUrl } from "@/lib/gbp-profile-utils";
 import { refreshLocationScores } from "@/lib/location-scores";
 import { syncGoogleProductsForLocation } from "@/lib/google-product-sync";
+import { ensureDefaultLocationKeywords } from "@/lib/default-location-keywords";
 
 export const dynamic = "force-dynamic";
 
@@ -190,6 +191,8 @@ export async function POST(req: NextRequest) {
       } catch {
         // Product import is best-effort — location import should still succeed
       }
+
+      await ensureDefaultLocationKeywords({ locationIds: [location.id] });
 
       imported.push({ id: location.id, name: gmb.name, city });
     } catch (e: any) {

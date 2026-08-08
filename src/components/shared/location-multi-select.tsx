@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { LocationSelectSearch, useFilteredLocations } from "@/components/shared/location-single-select";
 
 interface LocationRow {
   id: string;
@@ -31,6 +32,9 @@ export function LocationMultiSelect({
   showClearAll = true,
 }: LocationMultiSelectProps) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filtered = useFilteredLocations(locations, search);
 
   const label = useMemo(() => {
     if (selectedIds.length === 0) return "All locations";
@@ -54,12 +58,20 @@ export function LocationMultiSelect({
   }
 
   function selectAll() {
-    if (!locations?.length) return;
-    onChange(locations.map((l) => l.id));
+    if (!filtered.length) return;
+    const ids = new Set(selectedIds);
+    for (const l of filtered) ids.add(l.id);
+    onChange([...ids]);
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setSearch("");
+      }}
+    >
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -75,10 +87,11 @@ export function LocationMultiSelect({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="w-72 p-2"
+        className="w-72 p-0"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        <div className="space-y-1 max-h-64 overflow-y-auto scroll-area">
+        <LocationSelectSearch value={search} onChange={setSearch} />
+        <div className="space-y-1 max-h-64 overflow-y-auto scroll-area p-2">
           <button
             type="button"
             className={cn(
@@ -89,37 +102,41 @@ export function LocationMultiSelect({
           >
             All locations
           </button>
-          {locations?.map((loc) => {
-            const checked = selectedIds.includes(loc.id);
-            return (
-              <div
-                key={loc.id}
-                role="button"
-                tabIndex={0}
-                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded hover:bg-accent cursor-pointer"
-                onClick={() => setChecked(loc.id, !checked)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setChecked(loc.id, !checked);
-                  }
-                }}
-              >
-                <Checkbox
-                  checked={checked}
-                  onCheckedChange={(value) => setChecked(loc.id, value === true)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="size-3.5 pointer-events-auto"
-                />
-                <span className="truncate flex-1">{loc.name}</span>
-                <span className="text-[10px] text-muted-foreground shrink-0">{loc.city}</span>
-              </div>
-            );
-          })}
+          {filtered.length === 0 ? (
+            <p className="px-2 py-3 text-xs text-muted-foreground text-center">No locations match</p>
+          ) : (
+            filtered.map((loc) => {
+              const checked = selectedIds.includes(loc.id);
+              return (
+                <div
+                  key={loc.id}
+                  role="button"
+                  tabIndex={0}
+                  className="flex items-center gap-2 px-2 py-1.5 text-xs rounded hover:bg-accent cursor-pointer"
+                  onClick={() => setChecked(loc.id, !checked)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setChecked(loc.id, !checked);
+                    }
+                  }}
+                >
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={(value) => setChecked(loc.id, value === true)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="size-3.5 pointer-events-auto"
+                  />
+                  <span className="truncate flex-1">{loc.name}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{loc.city}</span>
+                </div>
+              );
+            })
+          )}
         </div>
 
         {showClearAll && (
-          <div className="mt-2 pt-2 border-t flex items-center gap-1.5">
+          <div className="p-2 border-t flex items-center gap-1.5">
             <Button
               type="button"
               variant="ghost"
@@ -135,10 +152,10 @@ export function LocationMultiSelect({
               variant="ghost"
               size="sm"
               className="h-7 flex-1 text-xs"
-              disabled={!locations?.length || selectedIds.length === locations.length}
+              disabled={!filtered.length}
               onClick={selectAll}
             >
-              Select all
+              Select visible
             </Button>
           </div>
         )}

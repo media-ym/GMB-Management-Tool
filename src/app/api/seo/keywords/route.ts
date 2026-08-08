@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getSessionUser, scopeLocationIds } from "@/lib/session";
+import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, unauthorized, forbidden, fail } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { logAudit } from "@/lib/session";
 import { buildLocationIdFilter, parseLocationIdsParam } from "@/lib/location-filter";
+import { ensureDefaultLocationKeywords } from "@/lib/default-location-keywords";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +17,15 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const locationId = url.searchParams.get("locationId") || undefined;
   const locationIds = parseLocationIdsParam(url.searchParams.get("locationIds"));
-  const where: Record<string, unknown> = {
-    ...buildLocationIdFilter(user, { locationId, locationIds }),
-  };
+  const scopedFilter = buildLocationIdFilter(user, { locationId, locationIds });
+
+  const scoped = scopeLocationIds(user);
+  const bootstrapIds = scoped?.filter((id) => id !== "__none__");
+  await ensureDefaultLocationKeywords(
+    bootstrapIds?.length ? { locationIds: bootstrapIds } : undefined,
+  );
+
+  const where: Record<string, unknown> = { ...scopedFilter };
 
   const keywords = await db.keyword.findMany({
     where,

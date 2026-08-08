@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { LocationSingleSelect } from "@/components/shared/location-single-select";
 import { Loader2, Sparkles, Zap, Ban, Clock, MapPin } from "lucide-react";
 import { toast } from "sonner";
 
@@ -167,32 +168,14 @@ export function AutoPostConfig() {
               <label className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
                 <MapPin className="size-3" /> Test location
               </label>
-              <Select
-                value={testLocationId || undefined}
+              <LocationSingleSelect
+                locations={locationsError ? [] : eligibleLocations}
+                value={testLocationId}
                 onValueChange={setTestLocationId}
-                disabled={!canManage || runMut.isPending}
-              >
-                <SelectTrigger className="h-9 bg-background">
-                  <SelectValue placeholder="Choose one location…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {locationsError ? (
-                    <SelectItem value="__error" disabled>
-                      Could not load locations — refresh the page
-                    </SelectItem>
-                  ) : eligibleLocations.length === 0 ? (
-                    <SelectItem value="__none" disabled>
-                      No verified active locations
-                    </SelectItem>
-                  ) : (
-                    eligibleLocations.map((l) => (
-                      <SelectItem key={l.id} value={l.id}>
-                        {l.name}{l.city ? ` · ${l.city}` : ""}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
+                placeholder={locationsError ? "Could not load locations" : eligibleLocations.length === 0 ? "No verified locations" : "Choose one location…"}
+                triggerClassName="h-9 bg-background"
+                disabled={!canManage || runMut.isPending || locationsError || eligibleLocations.length === 0}
+              />
             </div>
             <div className="flex flex-col sm:flex-row gap-2 sm:items-end shrink-0">
               <Button

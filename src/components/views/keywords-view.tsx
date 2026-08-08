@@ -160,6 +160,7 @@ export function KeywordsView() {
   const [trendCustomRange, setTrendCustomRange] = useState<DurationCustomRange | null>(null);
   const [rankTab, setRankTab] = useState<"city" | "brand">("city");
   const [searchMonths, setSearchMonths] = useState(6);
+  const [rankRefreshing, setRankRefreshing] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -239,6 +240,32 @@ export function KeywordsView() {
     return { top3, top10, avgRank };
   }, [keywords]);
 
+  async function handleRankRefresh() {
+    if (subTab === "searches") {
+      qc.invalidateQueries({ queryKey: ["search-keywords"] });
+      return;
+    }
+    setRankRefreshing(true);
+    try {
+      const body: { locationId?: string; limit?: number } = { limit: 40 };
+      if (selectedLocationIds.length === 1) body.locationId = selectedLocationIds[0];
+      const res = await api<{ refreshed: number; ranked: number; errors?: string[] }>(
+        "/api/seo/refresh",
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      toast.success(`Rank check: ${res.refreshed} keyword(s) · ${res.ranked} in top 20`);
+      if (res.errors?.length) {
+        toast.error(res.errors[0], { duration: 12000 });
+      }
+      qc.invalidateQueries({ queryKey: ["seo-keywords"] });
+      qc.invalidateQueries({ queryKey: ["seo-rankings"] });
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Rank refresh failed");
+    } finally {
+      setRankRefreshing(false);
+    }
+  }
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       <PageHeader
@@ -259,15 +286,15 @@ export function KeywordsView() {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => {
-                if (subTab === "searches") {
-                  qc.invalidateQueries({ queryKey: ["search-keywords"] });
-                } else {
-                  qc.invalidateQueries({ queryKey: ["seo-keywords"] });
-                }
-              }}
+              onClick={handleRankRefresh}
+              disabled={rankRefreshing}
             >
-              <Activity className="size-4 mr-1.5" /> Refresh
+              {rankRefreshing ? (
+                <Loader2 className="size-4 mr-1.5 animate-spin" />
+              ) : (
+                <Activity className="size-4 mr-1.5" />
+              )}
+              {subTab === "searches" ? "Refresh" : "Check ranks"}
             </Button>
           </div>
         }
@@ -334,7 +361,10 @@ export function KeywordsView() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-semibold text-lg">{trendKeyword?.keyword}</p>
-                <p className="text-sm text-muted-foreground">Avg Rank: {trendKeyword?.currentRank ?? "N/A"}</p>
+                <p className="text-sm text-muted-foreground">
+                  Avg Rank: {trendData?.stats?.current ?? trendKeyword?.currentRank ?? "N/A"}
+                  {trendKeyword?.locationCity ? ` · ${trendKeyword.locationCity}` : ""}
+                </p>
               </div>
               <DurationFilter
                 value={trendPeriod}
@@ -346,19 +376,35 @@ export function KeywordsView() {
             </div>
             {trendLoading ? (
               <Skeleton className="h-64 w-full rounded-lg" />
-            ) : (
+            ) : (() => {
+              const chartData = trendData?.history ?? trendKeyword?.rankHistory ?? [];
+              if (chartData.length === 0) {
+                return (
+                  <div className="h-64 flex flex-col items-center justify-center rounded-lg border border-dashed bg-muted/30 text-center px-6">
+                    <LineChartIcon className="size-10 text-muted-foreground/50 mb-3" />
+                    <p className="text-sm font-medium">No rank history yet</p>
+                    <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                      Click <strong>Check ranks</strong> to run a Google Maps rank check.
+                      Enable <strong>Places API (New)</strong> on your Google Cloud project if the check fails.
+                      Run weekly to build a trend line.
+                    </p>
+                  </div>
+                );
+              }
+              return (
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={trendData?.history ?? trendKeyword?.rankHistory ?? []}>
+                  <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                     <XAxis dataKey="date" tickFormatter={(v) => new Date(v).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} className="text-xs" />
                     <YAxis reversed domain={[1, "dataMax + 2"]} className="text-xs" label={{ value: "Rank", angle: -90, position: "insideLeft", className: "text-xs fill-muted-foreground" }} />
-                    <RTooltip contentStyle={{ borderRadius: 8 }} formatter={(value: number) => [`Rank ${value}`, "Position"]} labelFormatter={(l) => new Date(l).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} />
-                    <Line type="monotone" dataKey="rank" stroke="var(--chart-1, #10b981)" strokeWidth={2} dot={false} />
+                    <RTooltip contentStyle={{ borderRadius: 8 }} formatter={(value: number) => [`Rank ${value || "20+"}`, "Position"]} labelFormatter={(l) => new Date(l).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} />
+                    <Line type="monotone" dataKey="rank" stroke="var(--chart-1, #10b981)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-            )}
+              );
+            })()}
           </div>
         </DialogContent>
       </Dialog>

@@ -11,6 +11,7 @@ import { useLocations } from "@/hooks/use-locations";
 import { PageHeader, CardSection } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { LocationSingleSelect } from "@/components/shared/location-single-select";
 import { DateRangeFilter, getAnalyticsDateRangeLabel, type AnalyticsDateRangeKey } from "@/components/shared/date-range-filter";
 import { appendLocationIdsToParams } from "@/lib/location-filter";
 import { appendAnalyticsDateRangeToParams, analyticsDateRangeToDays } from "@/lib/analytics-date-range";
@@ -1373,17 +1374,13 @@ function LocationTab(props: LocationTabProps) {
             </div>
           </div>
           <div className="sm:ml-auto">
-            <Select value={selectedId} onValueChange={(v) => setSelectedLocationIds([v])}>
-              <SelectTrigger size="sm" className="w-[220px] sm:w-[260px]">
-                <Filter className="size-3.5 mr-1.5 text-muted-foreground" />
-                <SelectValue placeholder="Select location" />
-              </SelectTrigger>
-              <SelectContent>
-                {locations.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>{l.name} · {l.city}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LocationSingleSelect
+              locations={locations}
+              value={selectedId}
+              onValueChange={(v) => setSelectedLocationIds([v])}
+              placeholder="Select location"
+              triggerClassName="w-[220px] sm:w-[260px]"
+            />
           </div>
         </CardContent>
       </Card>

@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, fail, unauthorized, forbidden } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { discoverCompetitorsForLocation } from "@/lib/places-competitors";
+import { purgeBootstrapCompetitors } from "@/lib/places-competitors";
 
 export const dynamic = "force-dynamic";
 
@@ -23,23 +23,19 @@ export async function POST(req: NextRequest) {
     const location = await db.location.findUnique({ where: { id: locationId }, select: { id: true } });
     if (!location) return fail("Location not found", 404);
 
-    const result = await discoverCompetitorsForLocation(locationId, {
-      radiusMeters: body.radiusMeters ? Number(body.radiusMeters) : 5000,
-      maxResults: body.maxResults ? Number(body.maxResults) : 12,
-      allowBootstrap: body.allowBootstrap === true,
-    });
+    const purged = await purgeBootstrapCompetitors(locationId);
 
     await logAudit({
       userId: user.id,
       userName: user.name,
-      action: "competitors.discover",
+      action: "competitors.purge_sample",
       entity: "Location",
       entityId: locationId,
-      newValue: result,
+      newValue: { purged },
     });
 
-    return ok(result, result.warning || `Discovered competitors (${result.source})`);
+    return ok({ purged }, purged ? `Removed ${purged} sample competitors` : "No sample competitors found");
   } catch (e: any) {
-    return fail(e.message || "Failed to discover competitors");
+    return fail(e.message || "Failed to remove sample competitors");
   }
 }

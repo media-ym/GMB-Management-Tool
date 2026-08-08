@@ -11,6 +11,7 @@ import { useLocations } from "@/hooks/use-locations";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { LocationSingleSelect } from "@/components/shared/location-single-select";
 import { LayoutToggle, type LayoutMode } from "@/components/shared/layout-toggle";
 import { appendLocationIdsToParams } from "@/lib/location-filter";
 import { Button } from "@/components/ui/button";
@@ -478,18 +479,13 @@ function UploadDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="upload-location">Location</Label>
-            <Select value={locationId || undefined} onValueChange={setLocationId}>
-              <SelectTrigger id="upload-location" className="w-full">
-                <SelectValue placeholder="Select location" />
-              </SelectTrigger>
-              <SelectContent>
-                {locations.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>
-                    {l.name}{l.city ? `, ${l.city}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LocationSingleSelect
+              locations={locations}
+              value={locationId}
+              onValueChange={setLocationId}
+              placeholder="Select location"
+              triggerClassName="w-full"
+            />
           </div>
 
           <div className="space-y-2">

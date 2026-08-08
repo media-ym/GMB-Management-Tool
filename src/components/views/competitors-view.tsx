@@ -59,6 +59,7 @@ interface CompetitorData {
   locationCity: string;
   isActive: boolean;
   isYou?: boolean;
+  isBootstrap?: boolean;
   rating: number | null;
   reviewCount: number | null;
   photoCount: number | null;
@@ -78,6 +79,7 @@ interface CompetitorData {
 interface CompetitorsPayload {
   you: CompetitorData | null;
   competitors: CompetitorData[];
+  trackedKeywords?: string[];
 }
 
 // Extended competitor with computed fields
@@ -116,10 +118,11 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
 }
 
 function enrichCompetitor(c: CompetitorData, isYou: boolean): CompetitorEnriched {
+  const rating = c.rating != null ? Math.round(c.rating * 10) / 10 : 0;
   return {
     ...c,
     isYou,
-    rating: c.rating ?? 0,
+    rating,
     reviews: c.reviewCount ?? 0,
     photos: c.photoCount ?? 0,
     services: c.serviceCount ?? 0,
@@ -153,6 +156,7 @@ export function CompetitorsView() {
   const [visibleCompetitors, setVisibleCompetitors] = useState<Set<string>>(new Set());
   const [discovering, setDiscovering] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [purgingSample, setPurgingSample] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addForm, setAddForm] = useState({
@@ -180,9 +184,12 @@ export function CompetitorsView() {
 
   const competitors = data?.competitors ?? EMPTY_COMPETITORS;
   const youRaw = data?.you ?? null;
+  const hasSampleCompetitors = competitors.some((c) => c.isBootstrap);
 
   const enriched = useMemo(() => {
-    const rivalItems = competitors.map((c) => enrichCompetitor(c, false));
+    const rivalItems = competitors
+      .filter((c) => !c.isBootstrap)
+      .map((c) => enrichCompetitor(c, false));
     const youItem = youRaw ? enrichCompetitor(youRaw, true) : null;
     return youItem ? [youItem, ...rivalItems] : rivalItems;
   }, [competitors, youRaw]);
@@ -213,9 +220,10 @@ export function CompetitorsView() {
 
   const allKeywords = useMemo(() => {
     const kws = new Set<string>();
+    data?.trackedKeywords?.forEach((kw) => kws.add(kw));
     competitors.forEach((c) => c.rankings.forEach((r) => kws.add(r.keyword)));
-    return Array.from(kws);
-  }, [competitors]);
+    return Array.from(kws).sort((a, b) => a.localeCompare(b));
+  }, [competitors, data?.trackedKeywords]);
 
   const lastTracked = useMemo(() => {
     if (!competitors.length) return null;
@@ -224,6 +232,27 @@ export function CompetitorsView() {
     if (!latest) return null;
     return Math.floor((Date.now() - new Date(latest).getTime()) / 86400000);
   }, [competitors]);
+
+  async function handlePurgeSample() {
+    if (!locationId) return;
+    setPurgingSample(true);
+    try {
+      const result = await api<{ purged: number }>("/api/competitors/purge-sample", {
+        method: "POST",
+        body: JSON.stringify({ locationId }),
+      });
+      await qc.invalidateQueries({ queryKey: ["competitors", locationId] });
+      toast.success(
+        result.purged
+          ? `Removed ${result.purged} sample competitor${result.purged === 1 ? "" : "s"}`
+          : "No sample competitors found",
+      );
+    } catch (e: any) {
+      toast.error(e.message || "Failed to remove sample data");
+    } finally {
+      setPurgingSample(false);
+    }
+  }
 
   async function handleDiscover() {
     if (!locationId) return;
@@ -359,7 +388,33 @@ export function CompetitorsView() {
         }
       />
 
-      {competitorsList.length === 0 && (
+      {hasSampleCompetitors && (
+        <Card className="border-amber-300/60 bg-amber-50/50 dark:bg-amber-950/20">
+          <CardContent className="py-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+            <div>
+              <p className="font-medium text-amber-900 dark:text-amber-100">Sample competitors detected</p>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                GoMechanic, Speedy Wheels, etc. are demo placeholders — not real nearby businesses.
+                Set <code className="text-xs">GOOGLE_PLACES_API_KEY</code> in .env and click Discover nearby for live Google results.
+              </p>
+            </div>
+            {canManage && (
+              <div className="flex gap-2 shrink-0">
+                <Button size="sm" variant="outline" onClick={handlePurgeSample} disabled={purgingSample}>
+                  {purgingSample ? <Loader2 className="size-4 mr-1.5 animate-spin" /> : <Trash2 className="size-4 mr-1.5" />}
+                  Remove sample
+                </Button>
+                <Button size="sm" onClick={handleDiscover} disabled={discovering}>
+                  {discovering ? <Loader2 className="size-4 mr-1.5 animate-spin" /> : <Radar className="size-4 mr-1.5" />}
+                  Discover real
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {competitorsList.length === 0 && !hasSampleCompetitors && (
         <Card className="border-dashed">
           <CardContent className="py-10 flex flex-col items-center text-center gap-3">
             <div className="size-12 rounded-full bg-rose-500/10 text-rose-600 flex items-center justify-center">
@@ -504,7 +559,7 @@ export function CompetitorsView() {
                         )} />
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>{c.reviews} Reviews</span>
-                          <span className="font-semibold text-foreground">{c.rating}</span>
+                          <span className="font-semibold text-foreground">{c.rating.toFixed(1)}</span>
                         </div>
                         <div className="space-y-1">
                           {starBreakdown.map((s) => (

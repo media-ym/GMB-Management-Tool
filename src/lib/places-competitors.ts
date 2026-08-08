@@ -33,10 +33,13 @@ export type DiscoveredPlace = {
   distance: number | null;
 };
 
-function placesApiKey(): string | null {
-  const key = process.env.GOOGLE_API_KEY?.trim();
-  return key || null;
-}
+import {
+  formatPlacesApiError,
+  getPlacesApiKey,
+  isPlacesConfigError,
+} from "@/lib/places-api-key";
+
+const LEGACY_NEARBY = "https://maps.googleapis.com/maps/api/place/nearbysearch/json";
 
 export function haversineKm(
   lat1: number,
@@ -100,7 +103,7 @@ export async function searchNearbyCompetitors(
   lng: number,
   opts?: { radiusMeters?: number; maxResults?: number },
 ): Promise<{ places: DiscoveredPlace[]; error?: string; placesDisabled?: boolean }> {
-  const key = placesApiKey();
+  const key = getPlacesApiKey();
   if (!key) {
     return { places: [], error: "GOOGLE_API_KEY is not configured", placesDisabled: true };
   }
@@ -129,10 +132,8 @@ export async function searchNearbyCompetitors(
     const disabled =
       nearby.status === 403 ||
       /SERVICE_DISABLED|not been used|PERMISSION_DENIED/i.test(msg);
-    if (disabled) {
-      return { places: [], error: msg, placesDisabled: true };
-    }
-    // Fallback: text search
+
+    // Fallback: text search (Places New)
     const text = await placesFetch(PLACES_TEXT, {
       method: "POST",
       headers: {
@@ -148,19 +149,36 @@ export async function searchNearbyCompetitors(
         },
       }),
     });
-    if (!text.ok) {
-      const tmsg = text.json?.error?.message || msg;
-      return {
-        places: [],
-        error: tmsg,
-        placesDisabled:
-          text.status === 403 || /SERVICE_DISABLED|not been used|PERMISSION_DENIED/i.test(tmsg),
-      };
+
+    if (text.ok) {
+      const places = ((text.json.places as Record<string, unknown>[]) || [])
+        .map((p) => mapPlace(p, lat, lng))
+        .filter((p): p is DiscoveredPlace => !!p);
+      if (places.length) return { places };
     }
-    const places = ((text.json.places as Record<string, unknown>[]) || [])
-      .map((p) => mapPlace(p, lat, lng))
-      .filter((p): p is DiscoveredPlace => !!p);
-    return { places };
+
+    const textMsg = text.ok ? msg : text.json?.error?.message || msg;
+    const configError = disabled || isPlacesConfigError(textMsg);
+
+    if (configError) {
+      try {
+        const legacy = await searchNearbyLegacy(lat, lng, radius, key);
+        if (legacy.length) return { places: legacy.slice(0, maxResults) };
+      } catch (legacyErr) {
+        const legacyMsg = legacyErr instanceof Error ? legacyErr.message : "Legacy Places failed";
+        return {
+          places: [],
+          error: formatPlacesApiError(textMsg || legacyMsg),
+          placesDisabled: true,
+        };
+      }
+    }
+
+    return {
+      places: [],
+      error: formatPlacesApiError(textMsg),
+      placesDisabled: configError,
+    };
   }
 
   const places = ((nearby.json.places as Record<string, unknown>[]) || [])
@@ -170,8 +188,64 @@ export async function searchNearbyCompetitors(
   return { places };
 }
 
+function mapLegacyPlace(
+  raw: Record<string, unknown>,
+  originLat: number,
+  originLng: number,
+): DiscoveredPlace | null {
+  const id = typeof raw.place_id === "string" ? raw.place_id : null;
+  const name = typeof raw.name === "string" ? raw.name : null;
+  if (!id || !name || isOwnBusiness(name)) return null;
+
+  const geom = raw.geometry as { location?: { lat?: number; lng?: number } } | undefined;
+  const lat = geom?.location?.lat ?? null;
+  const lng = geom?.location?.lng ?? null;
+  const photos = Array.isArray(raw.photos) ? raw.photos.length : null;
+  const types = Array.isArray(raw.types) ? (raw.types as string[]) : [];
+
+  return {
+    googlePlaceId: id,
+    businessName: name,
+    category: types[0]?.replace(/_/g, " ") || "Auto repair shop",
+    address: (raw.formatted_address as string) || (raw.vicinity as string) || null,
+    latitude: lat,
+    longitude: lng,
+    rating: typeof raw.rating === "number" ? raw.rating : null,
+    reviewCount: typeof raw.user_ratings_total === "number" ? raw.user_ratings_total : null,
+    photoCount: photos,
+    phone: null,
+    website: null,
+    distance:
+      lat != null && lng != null ? haversineKm(originLat, originLng, lat, lng) : null,
+  };
+}
+
+async function searchNearbyLegacy(
+  lat: number,
+  lng: number,
+  radiusMeters: number,
+  key: string,
+): Promise<DiscoveredPlace[]> {
+  const url = new URL(LEGACY_NEARBY);
+  url.searchParams.set("location", `${lat},${lng}`);
+  url.searchParams.set("radius", String(radiusMeters));
+  url.searchParams.set("type", "car_repair");
+  url.searchParams.set("key", key);
+
+  const res = await fetch(url);
+  const json = await res.json().catch(() => ({}));
+  const status = json?.status as string | undefined;
+  if (status && status !== "OK" && status !== "ZERO_RESULTS") {
+    throw new Error(json?.error_message || status);
+  }
+
+  return ((json.results as Record<string, unknown>[]) || [])
+    .map((p) => mapLegacyPlace(p, lat, lng))
+    .filter((p): p is DiscoveredPlace => !!p);
+}
+
 export async function enrichPlaceDetails(placeId: string): Promise<Partial<DiscoveredPlace> | null> {
-  const key = placesApiKey();
+  const key = getPlacesApiKey();
   if (!key) return null;
   const id = placeId.replace(/^places\//, "");
   const res = await placesFetch(`${PLACES_DETAIL}/${id}`, {
@@ -304,6 +378,24 @@ export async function upsertCompetitorsForLocation(
   return { created, updated };
 }
 
+/** Remove sample/bootstrap competitors (googlePlaceId prefix local_). */
+export async function purgeBootstrapCompetitors(locationId: string): Promise<number> {
+  const bootstrap = await db.competitor.findMany({
+    where: { locationId, googlePlaceId: { startsWith: "local_" } },
+    select: { id: true },
+  });
+  if (!bootstrap.length) return 0;
+
+  const ids = bootstrap.map((b) => b.id);
+  await db.competitorRanking.deleteMany({ where: { competitorId: { in: ids } } });
+  await db.competitor.deleteMany({ where: { id: { in: ids } } });
+  return ids.length;
+}
+
+export function isBootstrapCompetitor(googlePlaceId: string | null | undefined): boolean {
+  return !!googlePlaceId?.startsWith("local_");
+}
+
 /** Seed CompetitorRanking rows from location keywords (heuristic ranks). */
 export async function seedCompetitorRankings(locationId: string): Promise<number> {
   const keywords = await db.keyword.findMany({
@@ -360,6 +452,7 @@ export async function discoverCompetitorsForLocation(
   updated: number;
   rankingsWritten: number;
   total: number;
+  purged?: number;
   warning?: string;
 }> {
   const location = await db.location.findUnique({
@@ -377,7 +470,7 @@ export async function discoverCompetitorsForLocation(
     throw new Error("Location is missing coordinates — sync the Google profile first");
   }
 
-  const allowBootstrap = opts?.allowBootstrap !== false;
+  const allowBootstrap = opts?.allowBootstrap === true;
   const search = await searchNearbyCompetitors(location.latitude, location.longitude, {
     radiusMeters: opts?.radiusMeters,
     maxResults: opts?.maxResults,
@@ -386,25 +479,31 @@ export async function discoverCompetitorsForLocation(
   let places: Array<DiscoveredPlace & { _serviceCount?: number }> = search.places;
   let source: "places" | "bootstrap" = "places";
   let warning: string | undefined;
+  let purged = 0;
 
   if (!places.length) {
     if (!allowBootstrap) {
-      throw new Error(search.error || "No nearby competitors found");
+      throw new Error(
+        search.error ||
+          "No nearby competitors found. Set GOOGLE_PLACES_API_KEY (server key) and enable Places API (New).",
+      );
     }
     places = buildBootstrapCompetitors(location);
     source = "bootstrap";
-    warning = search.placesDisabled
-      ? "Google Places API is disabled on this project — loaded local market competitors. Enable Places API (New) for live Google results."
-      : search.error
-        ? `Places lookup failed (${search.error}) — loaded local market competitors instead.`
-        : "No Places results — loaded local market competitors.";
+    warning =
+      "Loaded sample competitors for demo — configure GOOGLE_PLACES_API_KEY and run Discover again for real Google results.";
+  } else {
+    purged = await purgeBootstrapCompetitors(locationId);
+    if (purged > 0) {
+      warning = `Removed ${purged} sample competitor${purged === 1 ? "" : "s"} and loaded live Google results.`;
+    }
   }
 
   const { created, updated } = await upsertCompetitorsForLocation(locationId, places);
   const rankingsWritten = await seedCompetitorRankings(locationId);
   const total = await db.competitor.count({ where: { locationId, isActive: true } });
 
-  return { source, created, updated, rankingsWritten, total, warning };
+  return { source, created, updated, rankingsWritten, total, purged, warning };
 }
 
 export async function syncCompetitorsForLocation(locationId: string): Promise<{

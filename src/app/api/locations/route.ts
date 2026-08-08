@@ -7,6 +7,7 @@ import type { LocationWithStats } from "@/lib/types";
 import { extractLocationFromName, inferCityFromAddress, parseGoogleAddress } from "@/lib/location-utils";
 import { getValidAccessToken, googleServiceStatus, getVoiceOfMerchantState, getBusinessProfile } from "@/lib/google-service";
 import { resolveVerificationFromVoiceOfMerchant } from "@/lib/gbp-profile-utils";
+import { ensureDefaultLocationKeywords } from "@/lib/default-location-keywords";
 
 export const dynamic = "force-dynamic";
 
@@ -222,6 +223,8 @@ export async function POST(req: NextRequest) {
     newValue: { name, city, address, locationCode },
     ip: req.headers.get("x-forwarded-for") ?? undefined,
   });
+
+  await ensureDefaultLocationKeywords({ locationIds: [location.id] });
 
   return ok({
     id: location.id,

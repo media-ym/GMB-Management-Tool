@@ -24,6 +24,7 @@ import { useLocations } from "@/hooks/use-locations";
 import { cn } from "@/lib/utils";
 import { PageHeader, CardSection } from "@/components/shared/page-header";
 import { LocationMultiSelect } from "@/components/shared/location-multi-select";
+import { LocationSingleSelect } from "@/components/shared/location-single-select";
 import { appendLocationIdsToParams } from "@/lib/location-filter";
 import { StatCard } from "@/components/shared/stat-card";
 import { Button } from "@/components/ui/button";
@@ -1102,17 +1103,14 @@ function KeywordFormDialog({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>Location (optional)</Label>
-              <Select value={formLocationId} onValueChange={setFormLocationId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="No specific location" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No specific location</SelectItem>
-                  {locations.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <LocationSingleSelect
+                locations={locations}
+                value={formLocationId}
+                onValueChange={setFormLocationId}
+                placeholder="No specific location"
+                noneValue="none"
+                noneLabel="No specific location"
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="city">City (optional)</Label>
