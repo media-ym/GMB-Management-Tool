@@ -706,11 +706,21 @@ export function ReviewsView() {
   // ---- Handlers ----
   async function handleSync() {
     try {
-      toast.loading("Triggering Google sync…", { id: "sync-rev" });
-      await api("/api/dashboard", { method: "POST", body: JSON.stringify({}) });
+      toast.loading("Starting Google sync…", { id: "sync-rev" });
+      const result = await api<{ started?: boolean; alreadyRunning?: boolean; locations?: number }>(
+        "/api/dashboard",
+        { method: "POST", body: JSON.stringify({}) },
+      );
       qc.invalidateQueries();
       qc.invalidateQueries({ queryKey: ["review-changes"] });
-      toast.success("Sync complete.", { id: "sync-rev" });
+      if (result.alreadyRunning) {
+        toast.info("Sync already running — refresh in a few minutes.", { id: "sync-rev" });
+      } else {
+        toast.success(
+          `Sync started for ${result.locations ?? "all"} location(s). Refresh in a few minutes.`,
+          { id: "sync-rev", duration: 6000 },
+        );
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Sync failed";
       toast.error(msg, { id: "sync-rev" });
@@ -3827,7 +3837,7 @@ function AutoRepliesConfig({
                         : "bg-muted",
                     )}
                   >
-                    Short - 200 Chars
+                    Short - 400 Chars
                   </button>
                   <button
                     type="button"
@@ -3839,7 +3849,7 @@ function AutoRepliesConfig({
                         : "bg-muted",
                     )}
                   >
-                    Long - 400 Chars
+                    Long - 1500 Chars
                   </button>
                 </div>
               </div>

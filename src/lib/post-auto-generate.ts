@@ -3,10 +3,12 @@ import { aiGeneratePost } from "@/lib/ai";
 import { publishPostToGoogle } from "@/lib/post-publish";
 import {
   AUTO_POST_SETTING_KEY,
-  AUTO_POST_TOPIC_ANGLES,
+  getIndiaSeasonContext,
   mergeAutoPostConfig,
+  pickSeasonTopicAngle,
   type AutoPostConfig,
 } from "@/lib/auto-post";
+import { createBrandedPostImageUrl } from "@/lib/post-template-image";
 import { listPortalClientIds } from "@/lib/portal-link";
 import type { SessionUser } from "@/lib/types";
 
@@ -74,10 +76,8 @@ export async function getAutomationUser(): Promise<SessionUser> {
 }
 
 function pickTopicAngle(locationId: string, dayKey: string): string {
-  const seed =
-    locationId.split("").reduce((a, c) => a + c.charCodeAt(0), 0) +
-    dayKey.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  return AUTO_POST_TOPIC_ANGLES[seed % AUTO_POST_TOPIC_ANGLES.length];
+  const season = getIndiaSeasonContext();
+  return pickSeasonTopicAngle(locationId, dayKey, season.season);
 }
 
 async function fetchLocationKeywords(locationId: string, city: string, limit: number): Promise<string[]> {
@@ -96,20 +96,23 @@ async function fetchLocationKeywords(locationId: string, city: string, limit: nu
   return rotated.slice(0, limit);
 }
 
-async function pickPostImage(locationId: string): Promise<string | null> {
-  const images = await db.mediaLibrary.findMany({
-    where: {
-      OR: [{ locationId }, { locationId: null }],
-      bucket: { in: ["post-images", "business-photos"] },
-      mimeType: { startsWith: "image/" },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 40,
-    select: { fileUrl: true },
-  });
-  if (images.length === 0) return null;
-  const idx = locationId.charCodeAt(0) % images.length;
-  return images[idx]?.fileUrl ?? null;
+async function buildAutoPostImage(
+  locationId: string,
+  headline: string,
+  subtitle: string,
+): Promise<string | null> {
+  try {
+    const { url } = await createBrandedPostImageUrl({
+      locationId,
+      headline,
+      subtitle,
+      dayKey: todayKeyIST(),
+    });
+    return url;
+  } catch (e: unknown) {
+    console.warn("Branded post image failed:", e instanceof Error ? e.message : e);
+    return null;
+  }
 }
 
 async function alreadyPostedToday(locationId: string): Promise<boolean> {
@@ -125,7 +128,7 @@ async function alreadyPostedToday(locationId: string): Promise<boolean> {
   return count > 0;
 }
 
-async function listEligibleLocations(): Promise<
+export async function listEligibleLocations(): Promise<
   Array<{
     id: string;
     name: string;
@@ -140,7 +143,9 @@ async function listEligibleLocations(): Promise<
     where: {
       status: "active",
       syncStatus: { not: "archived" },
-      ...(portalClientIds.length > 0 ? { clientId: { notIn: portalClientIds } } : {}),
+      ...(portalClientIds.length > 0
+        ? { OR: [{ clientId: null }, { clientId: { notIn: portalClientIds } }] }
+        : {}),
       googleProfiles: { some: { verificationState: "verified" } },
     },
     select: {
@@ -172,6 +177,7 @@ export async function generateAndPublishAutoPostForLocation(
   }
 
   const keywords = await fetchLocationKeywords(location.id, location.city, config.keywordCount);
+  const season = getIndiaSeasonContext();
   const topicAngle = pickTopicAngle(location.id, todayKeyIST());
   const topic =
     keywords.length > 0
@@ -189,17 +195,22 @@ export async function generateAndPublishAutoPostForLocation(
       type: config.postType,
       topic,
       tone: config.tone,
+      seasonContext: season,
     });
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : "AI generation failed" };
   }
 
-  const imageUrl = config.attachImage ? await pickPostImage(location.id) : null;
-  const ctaType = config.ctaType || generated.ctaType;
+  const imageUrl = config.attachImage
+    ? await buildAutoPostImage(location.id, generated.title, season.label)
+    : null;
+  const ctaType = (config.ctaType || generated.ctaType || "call").toLowerCase();
   const ctaUrl =
     ctaType === "call"
       ? null
-      : location.website || undefined;
+      : ctaType === "book"
+        ? location.website || undefined
+        : location.website || undefined;
 
   const pub = await publishPostToGoogle({
     locationId: location.id,
@@ -289,6 +300,25 @@ export async function runDailyAutoPosts(opts?: {
   if (opts?.locationIds?.length) {
     const allowed = new Set(opts.locationIds);
     locations = locations.filter((l) => allowed.has(l.id));
+    if (locations.length === 0) {
+      return {
+        published: 0,
+        skipped: 0,
+        failed: 0,
+        errors: [
+          "Selected location is not eligible (needs verified Google profile and active status).",
+        ],
+      };
+    }
+  }
+
+  if (locations.length === 0) {
+    return {
+      published: 0,
+      skipped: 0,
+      failed: 0,
+      errors: ["No eligible verified locations found for auto-post."],
+    };
   }
 
   let published = 0;

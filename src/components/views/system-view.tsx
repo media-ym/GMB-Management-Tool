@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { useUser } from "@/lib/user-context";
@@ -38,6 +38,7 @@ import {
 } from "recharts";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
+import { CronJobsTab } from "@/components/views/cron-jobs-tab";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types matching the /api/system response
@@ -316,6 +317,12 @@ export function SystemView() {
   const user = useUser();
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState("schema");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab === "cron") setActiveTab("jobs");
+  }, []);
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery<SystemResponse>({
     queryKey: ["system"],
@@ -746,42 +753,11 @@ const BG_JOB_STATUS_META: Record<BackgroundJob["status"], { label: string; cls: 
 };
 
 function JobsTab({ data, isLoading }: { data?: SystemResponse; isLoading: boolean }) {
-  const scheduled = data?.scheduledJobs ?? [];
   const background = data?.backgroundJobs ?? [];
-
-  if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-40 rounded-xl" />
-        <Skeleton className="h-72 rounded-xl" />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
-      {/* Scheduled Jobs */}
-      <CardSection
-        title="Scheduled Jobs"
-        description="Backend cron jobs that drive recurring syncs & notifications"
-        action={
-          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
-            {scheduled.filter((j) => j.isEnabled).length} / {scheduled.length} enabled
-          </Badge>
-        }
-      >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {scheduled.length === 0 ? (
-            <div className="col-span-full text-center text-sm text-muted-foreground py-6">
-              No scheduled jobs configured.
-            </div>
-          ) : (
-            scheduled.map((job) => (
-              <ScheduledJobCard key={job.id} job={job} />
-            ))
-          )}
-        </div>
-      </CardSection>
+      <CronJobsTab />
 
       {/* Background Jobs */}
       <CardSection
@@ -793,6 +769,9 @@ function JobsTab({ data, isLoading }: { data?: SystemResponse; isLoading: boolea
           </Badge>
         }
       >
+        {isLoading ? (
+          <Skeleton className="h-48 rounded-xl" />
+        ) : (
         <div className="rounded-lg border max-h-96 overflow-y-auto scroll-area">
           <div className="overflow-x-auto scroll-area">
             <Table>
@@ -879,56 +858,8 @@ function JobsTab({ data, isLoading }: { data?: SystemResponse; isLoading: boolea
             </Table>
           </div>
         </div>
+        )}
       </CardSection>
-    </div>
-  );
-}
-
-function ScheduledJobCard({ job }: { job: ScheduledJob }) {
-  const [enabled, setEnabled] = useState(job.isEnabled);
-
-  function onToggle(v: boolean) {
-    setEnabled(v);
-    toast.success(`${job.jobName} ${v ? "enabled" : "disabled"}`, {
-      description: "Schedule changes require deployment — backend cron is managed via config.",
-    });
-  }
-
-  return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Clock className="size-4 text-emerald-500 shrink-0" />
-            <h4 className="text-sm font-semibold truncate">{job.jobName}</h4>
-          </div>
-          <Badge variant="outline" className="mt-2 font-mono text-[11px] bg-slate-500/5 text-slate-600 dark:text-slate-300 border-slate-500/20">
-            {job.cronExpression}
-          </Badge>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className={cn("text-[11px] font-medium", enabled ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
-            {enabled ? "Enabled" : "Disabled"}
-          </span>
-          <Switch checked={enabled} onCheckedChange={onToggle} aria-label={`Toggle ${job.jobName}`} />
-        </div>
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-md bg-muted/40 p-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
-            <RotateCw className="size-3" /> Last run
-          </div>
-          <div className="font-medium mt-0.5">{relativeTime(job.lastRun)}</div>
-        </div>
-        <div className="rounded-md bg-muted/40 p-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
-            <CalendarClock className="size-3" /> Next run
-          </div>
-          <div className="font-medium mt-0.5">
-            {job.nextRun ? relativeTime(job.nextRun) : "—"}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

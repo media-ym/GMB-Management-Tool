@@ -2825,6 +2825,8 @@ function SyncTab({ readonly }: { readonly: boolean }) {
                 <SelectItem value="10m">Every 10 minutes</SelectItem>
                 <SelectItem value="15m">Every 15 minutes</SelectItem>
                 <SelectItem value="30m">Every 30 minutes</SelectItem>
+                <SelectItem value="1h">Every hour</SelectItem>
+                <SelectItem value="2h">Every 2 hours</SelectItem>
               </SelectContent>
             </Select>
           </Field>
@@ -2835,6 +2837,7 @@ function SyncTab({ readonly }: { readonly: boolean }) {
                 <SelectItem value="15m">Every 15 minutes</SelectItem>
                 <SelectItem value="30m">Every 30 minutes</SelectItem>
                 <SelectItem value="1h">Every hour</SelectItem>
+                <SelectItem value="2h">Every 2 hours</SelectItem>
               </SelectContent>
             </Select>
           </Field>
@@ -2845,6 +2848,7 @@ function SyncTab({ readonly }: { readonly: boolean }) {
                 <SelectItem value="15m">Every 15 minutes</SelectItem>
                 <SelectItem value="30m">Every 30 minutes</SelectItem>
                 <SelectItem value="1h">Every hour</SelectItem>
+                <SelectItem value="2h">Every 2 hours</SelectItem>
               </SelectContent>
             </Select>
           </Field>

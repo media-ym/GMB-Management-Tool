@@ -142,5 +142,6 @@ export function inferLocationCategory(categoriesJson: string | null | undefined)
 }
 
 export function autoReplyCharLimit(length: AutoReplyLength): number {
-  return length === "short" ? 200 : 400;
+  // Google review replies allow ~4096 chars; long templates were cut at 400.
+  return length === "short" ? 400 : 1500;
 }

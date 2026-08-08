@@ -6,20 +6,33 @@ import { runDailyAutoPosts } from "@/lib/post-auto-generate";
 
 export const dynamic = "force-dynamic";
 
-/** POST /api/posts/auto-post/run — generate + publish now for eligible locations */
-export async function POST() {
+/** POST /api/posts/auto-post/run — generate + publish now { locationId?: string } */
+export async function POST(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
   if (!can(user.role, "posts.manage")) return forbidden();
 
-  const locationIds = scopeLocationIds(user);
+  const body = await req.json().catch(() => ({}));
+  const locationId =
+    typeof body.locationId === "string" && body.locationId.trim()
+      ? body.locationId.trim()
+      : undefined;
+
+  let locationIds: string[] | undefined;
+  try {
+    locationIds = scopeLocationIds(user, locationId);
+  } catch {
+    return forbidden("You cannot run auto-post for this location");
+  }
+
   const result = await runDailyAutoPosts({
     force: true,
-    locationIds,
+    locationIds: locationId ? [locationId] : locationIds,
   });
 
+  const scope = locationId ? "1 location" : "all eligible locations";
   return ok(
     result,
-    `Published ${result.published} post(s)${result.skipped ? ` · ${result.skipped} skipped` : ""}${result.failed ? ` · ${result.failed} failed` : ""}`,
+    `Published ${result.published} post(s) (${scope})${result.skipped ? ` · ${result.skipped} skipped` : ""}${result.failed ? ` · ${result.failed} failed` : ""}`,
   );
 }

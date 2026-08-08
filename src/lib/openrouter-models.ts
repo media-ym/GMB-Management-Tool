@@ -12,6 +12,13 @@ export interface OpenRouterModel {
 
 export const OPENROUTER_MODELS: OpenRouterModel[] = [
   {
+    id: "openrouter/free",
+    label: "Free Router",
+    provider: "OpenRouter",
+    free: true,
+    description: "Auto-picks a working free model",
+  },
+  {
     id: "openai/gpt-oss-20b:free",
     label: "GPT-OSS 20B",
     provider: "OpenAI",
@@ -19,25 +26,25 @@ export const OPENROUTER_MODELS: OpenRouterModel[] = [
     description: "Fast free OpenAI OSS model",
   },
   {
-    id: "tencent/hunyuan-h3:free",
-    label: "Hunyuan H3",
-    provider: "Tencent",
+    id: "nvidia/nemotron-3-nano-30b-a3b:free",
+    label: "Nemotron 3 Nano 30B",
+    provider: "NVIDIA",
     free: true,
-    description: "Tencent Hunyuan free tier",
+    description: "Fast Nemotron 3 Nano, free tier",
   },
   {
-    id: "nvidia/llama-3.1-nemotron-super-49b-v1:free",
-    label: "Nemotron Super 49B",
+    id: "google/gemma-4-26b-a4b-it:free",
+    label: "Gemma 4 26B",
+    provider: "Google",
+    free: true,
+    description: "Google Gemma 4 instruction-tuned, free tier",
+  },
+  {
+    id: "nvidia/nemotron-3-super-120b-a12b:free",
+    label: "Nemotron 3 Super 120B",
     provider: "NVIDIA",
     free: true,
     description: "Strong reasoning, free tier",
-  },
-  {
-    id: "nvidia/llama-3.1-nemotron-nano-30b-v1:free",
-    label: "Nemotron Nano 30B",
-    provider: "NVIDIA",
-    free: true,
-    description: "Faster Nano variant, free tier",
   },
 ];
 

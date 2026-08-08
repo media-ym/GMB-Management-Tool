@@ -197,14 +197,49 @@ If you prefer Nginx, see the [Certbot instructions](https://certbot.eff.org/) an
 
 ## Phase 6: Set Up Cron Jobs (5 min)
 
+Use **Supabase pg_cron** (recommended on your self-hosted Supabase) **or** server `crontab`.
+
+### Option A — Supabase Cron (pg_cron + pg_net)
+
+1. Supabase Dashboard → **Integrations → Cron** — confirm **pg_cron** is **INSTALLED**.
+2. **Database → Extensions** → enable **pg_net** (needed for HTTP calls to your app).
+3. Open **SQL Editor** → paste and run [`supabase/cron-jobs.sql`](../supabase/cron-jobs.sql):
+   - Set `app_url` to `https://gmb.myfng.in`
+   - Set `cron_secret` to the same value as `CRON_SECRET` in production `.env`
+4. **Integrations → Cron → Jobs** tab — you should see jobs named `myfng-sync-all`, etc.
+5. Test once manually in SQL Editor:
+
+```sql
+SELECT net.http_get(
+  url := 'https://gmb.myfng.in/api/cron/sync-all',
+  headers := jsonb_build_object('x-cron-secret', 'YOUR_CRON_SECRET')
+);
+```
+
+Then check **net._http_response** (or app logs) for status 200.
+
+| Job | Schedule | Endpoint |
+|-----|----------|----------|
+| myfng-sync-all | Every 2 hours | `/api/cron/sync-all` |
+| myfng-publish-scheduled | Every 15 min | `/api/cron/publish-scheduled` |
+| myfng-auto-reply-reviews | Every 30 min | `/api/cron/auto-reply-reviews` |
+| myfng-auto-post-daily | Every hour | `/api/cron/auto-post-daily` |
+| myfng-drift-detection | Daily 2 AM UTC | `/api/cron/drift-detection` |
+
+**Note:** Postgres cron uses **UTC** unless the server timezone is changed. For IST-aligned sync, use `30 */2 * * *` (every 2h at :30) or adjust as needed.
+
+Also set **Settings → Sync Schedule → Every 2 hours** in the app so `/api/cron/sync-all` respects the 2h interval internally.
+
+### Option B — Server crontab (alternative)
+
 Open the server crontab (`crontab -e`) and add:
 
 ```bash
 # Daily drift detection at 2:00 AM server time
 0 2 * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/drift-detection
 
-# Full Google sync for all linked locations — every 6 hours
-0 */6 * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/sync-all
+# Full Google sync for all linked locations — every 2 hours
+0 */2 * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/sync-all
 
 # Optional: publish scheduled posts every 15 minutes
 */15 * * * * curl -fsS -H "x-cron-secret: YOUR_CRON_SECRET" https://gmb.myfng.in/api/cron/publish-scheduled
@@ -221,7 +256,7 @@ secret is unset).
 
 Implemented:
 - `/api/cron/drift-detection` — daily profile drift check
-- `/api/cron/sync-all` — full Google sync every 6 hours (reviews, posts, photos, analytics, …)
+- `/api/cron/sync-all` — full Google sync every 2 hours (reviews, posts, photos, analytics, …)
 
 Local / without system crontab:
 ```bash

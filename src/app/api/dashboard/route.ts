@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { getSessionUser, scopeLocationIds, logAudit } from "@/lib/session";
 import { ok, fail, unauthorized, forbidden } from "@/lib/api-response";
 import { can } from "@/lib/permissions";
-import { syncLocationFull, isGoogleOAuthConnected } from "@/lib/google-service";
+import { isGoogleOAuthConnected } from "@/lib/google-service";
+import { isFullSyncRunning, runFullSyncInBackground } from "@/lib/run-full-sync";
 import { parseDateRangeFromSearchParams } from "@/lib/location-filter";
 
 export const dynamic = "force-dynamic";
@@ -110,45 +111,27 @@ export async function POST(req: NextRequest) {
   const locationIds = scopeLocationIds(user, body.locationId);
   const where = locationIds ? { id: { in: locationIds } } : {};
 
-  // Fetch all in-scope locations with their Google Business Profiles
   const locations = await db.location.findMany({
     where,
-    select: { id: true, name: true, googleProfiles: { select: { googleLocationId: true } } },
+    select: { id: true },
   });
 
-  const errors: string[] = [];
-  const syncResults: Record<string, any> = {};
-  const BATCH = 4;
-
-  const linked = locations.filter((loc) => loc.googleProfiles?.[0]);
-  const unlinked = locations.filter((loc) => !loc.googleProfiles?.[0]);
-
-  if (unlinked.length) {
-    await db.location.updateMany({
-      where: { id: { in: unlinked.map((l) => l.id) } },
-      data: { syncStatus: "synced", lastSyncedAt: new Date() },
-    });
-  }
-
-  for (let i = 0; i < linked.length; i += BATCH) {
-    const batch = linked.slice(i, i + BATCH);
-    await Promise.all(
-      batch.map(async (loc) => {
-        const result = await syncLocationFull(loc.id);
-        syncResults[loc.name] = result.synced;
-        if (result.errors.length > 0) errors.push(`${loc.name}: ${result.errors.join(", ")}`);
-      }),
+  if (isFullSyncRunning()) {
+    return ok(
+      { started: false, alreadyRunning: true, locations: locations.length },
+      "Sync is already running — refresh in a few minutes.",
     );
   }
 
-  await logAudit({
-    userId: user.id,
-    userName: user.name,
-    action: "sync.run",
-    entity: "location",
-    newValue: { locationIds: locationIds ?? "all", locationsSynced: locations.length, syncResults, errors: errors.length },
-    ip: req.headers.get("x-forwarded-for") ?? undefined,
-  });
+  const ids = locations.map((l) => l.id);
+  const ip = req.headers.get("x-forwarded-for") ?? undefined;
 
-  return ok({ synced: true, locations: locations.length, syncResults, errors }, `Full sync complete for ${locations.length} location(s)`);
+  void runFullSyncInBackground({ user, locationIds: ids.length ? ids : undefined, ip }).catch(
+    (e) => console.error("[sync] background run failed", e),
+  );
+
+  return ok(
+    { started: true, locations: locations.length },
+    `Sync started for ${locations.length} location(s). Refresh in a few minutes.`,
+  );
 }

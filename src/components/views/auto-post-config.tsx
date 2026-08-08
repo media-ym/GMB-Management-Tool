@@ -17,21 +17,39 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Sparkles, Zap, Ban, Clock } from "lucide-react";
+import { Loader2, Sparkles, Zap, Ban, Clock, MapPin } from "lucide-react";
 import { toast } from "sonner";
 
-export function AutoPostConfig({
-  onRunNow,
-  runBusy = false,
-}: {
-  onRunNow?: () => void;
-  runBusy?: boolean;
-}) {
+interface AutoPostLocation {
+  id: string;
+  name: string;
+  city: string;
+}
+
+export function AutoPostConfig() {
   const user = useUser();
   const qc = useQueryClient();
   const canManage = can(user.role, "posts.manage");
 
   const [config, setConfig] = useState<AutoPostConfig>(() => mergeAutoPostConfig(null));
+  const [testLocationId, setTestLocationId] = useState<string>("");
+
+  const {
+    data: eligibleLocations = [],
+    isLoading: locationsLoading,
+    isError: locationsError,
+  } = useQuery<AutoPostLocation[]>({
+    queryKey: ["auto-post-locations"],
+    queryFn: () => api<AutoPostLocation[]>("/api/posts/auto-post/locations"),
+    staleTime: 60_000,
+    retry: 2,
+  });
+
+  useEffect(() => {
+    if (testLocationId && !eligibleLocations.some((l) => l.id === testLocationId)) {
+      setTestLocationId("");
+    }
+  }, [eligibleLocations, testLocationId]);
 
   const { data: saved, isLoading } = useQuery<AutoPostConfig>({
     queryKey: ["auto-post-config"],
@@ -64,6 +82,38 @@ export function AutoPostConfig({
     },
   });
 
+  const runMut = useMutation({
+    mutationFn: (locationId?: string) =>
+      api<{ published: number; skipped: number; failed: number; errors: string[] }>(
+        "/api/posts/auto-post/run",
+        {
+          method: "POST",
+          body: JSON.stringify(locationId ? { locationId } : {}),
+        },
+      ),
+    onSuccess: (data, locationId) => {
+      qc.invalidateQueries({ queryKey: ["posts"] });
+      qc.invalidateQueries({ queryKey: ["posts-stats"] });
+      const label = locationId
+        ? eligibleLocations.find((l) => l.id === locationId)?.name ?? "location"
+        : "all locations";
+      if (data.published === 0 && data.skipped === 0 && data.failed === 0) {
+        toast.error(
+          data.errors?.[0] ??
+            `Auto-post (${label}): nothing published — check Google verification or try again`,
+        );
+        return;
+      }
+      toast.success(
+        `Auto-post (${label}): ${data.published} published${data.skipped ? `, ${data.skipped} skipped` : ""}${data.failed ? `, ${data.failed} failed` : ""}`,
+      );
+      if (data.errors?.length) toast.error(data.errors.slice(0, 2).join(" · "));
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof Error ? e.message : "Auto-post run failed");
+    },
+  });
+
   function patch(partial: Partial<AutoPostConfig>) {
     setConfig((prev) => ({ ...prev, ...partial }));
   }
@@ -80,7 +130,15 @@ export function AutoPostConfig({
     saveMut.mutate({ ...config, enabled: false });
   }
 
-  if (isLoading) {
+  function handleTestOne() {
+    if (!testLocationId) {
+      toast.error("Pick a location to test");
+      return;
+    }
+    runMut.mutate(testLocationId);
+  }
+
+  if (isLoading || locationsLoading) {
     return <Skeleton className="h-64 rounded-xl" />;
   }
 
@@ -96,30 +154,89 @@ export function AutoPostConfig({
           />
           <span className="text-xs text-muted-foreground">{config.enabled ? "ON" : "OFF"}</span>
         </div>
-        {onRunNow && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-teal-500/40 text-teal-700 dark:text-teal-400"
-            onClick={onRunNow}
-            disabled={!canManage || runBusy}
-          >
-            {runBusy ? (
-              <Loader2 className="size-3.5 mr-1.5 animate-spin" />
-            ) : (
-              <Zap className="size-3.5 mr-1.5" />
-            )}
-            Run now (all locations)
-          </Button>
-        )}
       </div>
+
+      {/* Test run — single location or all */}
+      <Card className="border-teal-500/30 bg-teal-500/5">
+        <CardContent className="p-4 space-y-3">
+          <p className="text-xs font-medium text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
+            <Zap className="size-3.5" /> Test before going live
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="flex-1 min-w-0 space-y-1">
+              <label className="text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                <MapPin className="size-3" /> Test location
+              </label>
+              <Select
+                value={testLocationId || undefined}
+                onValueChange={setTestLocationId}
+                disabled={!canManage || runMut.isPending}
+              >
+                <SelectTrigger className="h-9 bg-background">
+                  <SelectValue placeholder="Choose one location…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {locationsError ? (
+                    <SelectItem value="__error" disabled>
+                      Could not load locations — refresh the page
+                    </SelectItem>
+                  ) : eligibleLocations.length === 0 ? (
+                    <SelectItem value="__none" disabled>
+                      No verified active locations
+                    </SelectItem>
+                  ) : (
+                    eligibleLocations.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {l.name}{l.city ? ` · ${l.city}` : ""}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-end shrink-0">
+              <Button
+                size="sm"
+                className="bg-teal-700 hover:bg-teal-800 text-white h-9"
+                onClick={handleTestOne}
+                disabled={!canManage || runMut.isPending || !testLocationId}
+              >
+                {runMut.isPending && runMut.variables ? (
+                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <Zap className="size-3.5 mr-1.5" />
+                )}
+                Test 1 location
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9 border-teal-500/40"
+                onClick={() => runMut.mutate(undefined)}
+                disabled={!canManage || runMut.isPending}
+              >
+                {runMut.isPending && !runMut.variables ? (
+                  <Loader2 className="size-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <Zap className="size-3.5 mr-1.5" />
+                )}
+                Run all ({eligibleLocations.length})
+              </Button>
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Start with <strong>Test 1 location</strong> — checks AI text, Call button & Google publish.
+            Cron not required for testing.
+          </p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="p-5 space-y-4">
           <p className="text-xs text-muted-foreground">
             MiSA AI creates one SEO-focused Google post per verified location each day and publishes
-            directly to GMB. Uses tracked keywords + location city. Images rotate from your Media
-            library (post-images / business-photos).
+            directly to GMB — <strong>3–4 short paragraphs</strong>, season-aware copy (monsoon / summer /
+            winter), <strong>Call Now</strong> button, branded image (blue / white alternates daily).
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -211,21 +328,21 @@ export function AutoPostConfig({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="call">Call now</SelectItem>
                   <SelectItem value="book">Book</SelectItem>
-                  <SelectItem value="call">Call</SelectItem>
                   <SelectItem value="learn_more">Learn more</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div className="flex flex-col justify-end gap-3">
-              <label className="flex items-center gap-2 text-xs">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Switch
                   checked={config.attachImage}
                   onCheckedChange={(attachImage) => patch({ attachImage })}
                   disabled={!canManage}
                 />
-                Attach image from Media library
+                Attach branded image (blue / white alternates by day)
               </label>
               <label className="flex items-center gap-2 text-xs">
                 <Switch
@@ -252,7 +369,7 @@ export function AutoPostConfig({
             </>
           ) : (
             <>
-              <Sparkles className="size-3.5 mr-1.5" /> Save & publish now
+              <Sparkles className="size-3.5 mr-1.5" /> Save settings
             </>
           )}
         </Button>
@@ -268,13 +385,11 @@ export function AutoPostConfig({
       <Card className="bg-purple-50/50 dark:bg-purple-900/10 border-purple-200 dark:border-purple-900/50">
         <CardContent className="p-4 text-xs text-muted-foreground space-y-1">
           <p>
-            <strong className="text-foreground">Cron (production):</strong> add{" "}
-            <code className="text-[10px] bg-muted px-1 rounded">
-              0 * * * * curl -H &quot;x-cron-secret: $CRON_SECRET&quot;
-              https://gmb.myfng.in/api/cron/auto-post-daily
-            </code>
+            <strong className="text-foreground">Cron:</strong> Supabase job{" "}
+            <code className="text-[10px] bg-muted px-1 rounded">myfng-auto-post-daily</code> runs
+            hourly and publishes at your IST hour. Manage in System → Jobs.
           </p>
-          <p>Runs once per day at the IST hour you select. Use &quot;Run now&quot; for immediate test.</p>
+          <p>Test with one location first, then enable ON for daily cron.</p>
         </CardContent>
       </Card>
     </div>

@@ -118,6 +118,7 @@ export function intervalToCronHint(ms: number): string {
   if (mins <= 15) return "*/15 * * * *";
   if (mins <= 30) return "*/30 * * * *";
   if (mins <= 60) return "0 * * * *";
+  if (mins <= 120) return "0 */2 * * *";
   if (mins <= 360) return "0 */6 * * *";
   return "0 2 * * *";
 }
@@ -129,9 +130,9 @@ export async function getSmtpConfig(): Promise<SmtpConfig> {
 export async function getSyncConfig(): Promise<SyncConfig> {
   return (
     (await getSettingValue<SyncConfig>("sync")) ?? {
-      reviewsInterval: "30m",
-      businessInfoInterval: "1h",
-      postsInterval: "30m",
+      reviewsInterval: "2h",
+      businessInfoInterval: "2h",
+      postsInterval: "2h",
       analyticsInterval: "daily",
       retryAttempts: 3,
       retryDelay: 60,

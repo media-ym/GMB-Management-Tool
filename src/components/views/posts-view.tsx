@@ -289,25 +289,6 @@ export function PostsView() {
   const [bulkScheduleDate, setBulkScheduleDate] = React.useState<Date | null>(null);
   const [bulkBusy, setBulkBusy] = React.useState(false);
 
-  const runAutoPostMut = useMutation({
-    mutationFn: () =>
-      api<{ published: number; skipped: number; failed: number; errors: string[] }>(
-        "/api/posts/auto-post/run",
-        { method: "POST", body: "{}" },
-      ),
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["posts"] });
-      qc.invalidateQueries({ queryKey: ["posts-stats"] });
-      toast.success(
-        `Auto-post: ${data.published} published${data.skipped ? `, ${data.skipped} skipped` : ""}${data.failed ? `, ${data.failed} failed` : ""}`,
-      );
-      if (data.errors?.length) toast.error(data.errors.slice(0, 2).join(" · "));
-    },
-    onError: (e: unknown) => {
-      toast.error(e instanceof Error ? e.message : "Auto-post run failed");
-    },
-  });
-
   const params = new URLSearchParams();
   appendLocationIdsToParams(params, selectedLocationIds);
   if (statusFilter !== "all") params.set("status", statusFilter);
@@ -960,10 +941,7 @@ export function PostsView() {
       )}
 
       {viewMode === "auto" && (
-        <AutoPostConfig
-          onRunNow={() => runAutoPostMut.mutate()}
-          runBusy={runAutoPostMut.isPending}
-        />
+        <AutoPostConfig />
       )}
 
       {/* Editor dialog */}

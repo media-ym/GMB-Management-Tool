@@ -90,7 +90,7 @@ export async function openRouterChat(
 
   throw new Error(
     errors.length
-      ? `No free model available (${errors[errors.length - 1]})`
+      ? `No free model available (${errors[0]})`
       : "No free model available",
   );
 }

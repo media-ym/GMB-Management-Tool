@@ -176,6 +176,27 @@ Write the Google review reply now. Output ONLY the reply text.`;
   }
 }
 
+import type { IndiaSeasonContext } from "./auto-post";
+
+function ensurePostParagraphs(text: string, min = 3, max = 4): string {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  let paras = normalized.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  if (paras.length >= min) return paras.slice(0, max).join("\n\n");
+
+  const sentences =
+    normalized.replace(/\n+/g, " ").match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) ?? [normalized];
+  const cleaned = sentences.map((s) => s.trim()).filter(Boolean);
+  if (cleaned.length < min) return normalized;
+
+  const target = Math.min(max, Math.max(min, Math.ceil(cleaned.length / 2)));
+  const perPara = Math.max(1, Math.ceil(cleaned.length / target));
+  paras = [];
+  for (let i = 0; i < cleaned.length; i += perPara) {
+    paras.push(cleaned.slice(i, i + perPara).join(" ").trim());
+  }
+  return paras.slice(0, max).join("\n\n");
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // AI: Google Post generation
 // ────────────────────────────────────────────────────────────────────────────
@@ -189,6 +210,7 @@ export async function aiGeneratePost(opts: {
   address?: string;
   keywords?: string[];
   tone?: "professional" | "friendly" | "local";
+  seasonContext?: IndiaSeasonContext;
 }): Promise<{ title: string; content: string; ctaType: string }> {
   const start = Date.now();
   const typeLabel = {
@@ -210,16 +232,26 @@ export async function aiGeneratePost(opts: {
       ? `\nWeave these local SEO keywords naturally (do not keyword-stuff): ${opts.keywords.join(", ")}.`
       : "";
 
+  const season = opts.seasonContext;
+  const seasonLine = season
+    ? `\nCurrent season in India (IST): ${season.label} — ${season.monthName} ${season.year}.
+${season.guidance}
+${season.avoid}`
+    : "";
+
   const system = `You are MiSA AI for MyFNG Autocare (multi-brand car service & repair brand across Mumbai, Navi Mumbai, Thane, Pune, India).
 Generate a Google Business Profile ${typeLabel} post.
 
 Rules:
 - Title: under 60 characters, attention-grabbing but honest.
-- Body: 100–180 words, scannable, highlight value to local car owners (Maruti, Hyundai, Honda, Tata, Mahindra, Toyota).
+- Body: 100–180 words total, split into EXACTLY 3 or 4 paragraphs.
+- Paragraph format: separate each paragraph with a blank line (double newline). Each paragraph should be 2–4 sentences.
+- Never write the body as one single block — always 3 or 4 distinct paragraphs.
 - Tone: ${toneGuide}
 - CTA type must be one of: book, order, sign_up, call, learn_more.
 - No emojis spam (max 2). No markdown headings. No fake dates or fake discounts.
-- Reference the city/location naturally.${keywordLine}
+- Reference the city/location naturally.${keywordLine}${seasonLine}
+- Match the current season accurately — do not mention the wrong season or weather.
 - Do not put phone numbers in the post body.`;
 
   const userMsg = `Location: MyFNG — ${opts.locationName}
@@ -227,9 +259,11 @@ City: ${opts.city ?? "Maharashtra"}
 Area/address: ${opts.address ?? opts.city ?? ""}
 Post type: ${typeLabel}
 Topic/angle: ${opts.topic}
+${season ? `Season reminder: ${season.label} (${season.monthName})` : ""}
 
 Respond as STRICT JSON only:
-{"title": "...", "content": "...", "ctaType": "book|order|sign_up|call|learn_more"}`;
+{"title": "...", "content": "...", "ctaType": "book|order|sign_up|call|learn_more"}
+The "content" field must contain 3 or 4 paragraphs separated by \\n\\n (blank lines).`;
 
   try {
     const { content, tokens, model } = await complete({ system, user: userMsg, model: opts.model });
@@ -237,7 +271,7 @@ Respond as STRICT JSON only:
     try { parsed = JSON.parse(content.replace(/```json|```/g, "").trim()); } catch { parsed = { title: opts.topic.slice(0, 60), content: sanitize(content, 1200), ctaType: "learn_more" }; }
     const result = {
       title: sanitize(parsed.title ?? opts.topic.slice(0, 60), 80),
-      content: sanitize(parsed.content ?? "", 1200),
+      content: ensurePostParagraphs(sanitize(parsed.content ?? "", 1200)),
       ctaType: parsed.ctaType ?? "learn_more",
     };
     await logAI({
