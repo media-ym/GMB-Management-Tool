@@ -18,13 +18,11 @@ import { createClient } from "@supabase/supabase-js";
 import { PrismaClient } from "@prisma/client";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
-  process.env.SUPABASE_SECRET_KEY?.trim();
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const password = process.env.SEED_PASSWORD || "MyFNG@2025";
 
 if (!url || !serviceKey) {
-  console.error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY)");
+  console.error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   process.exit(1);
 }
 

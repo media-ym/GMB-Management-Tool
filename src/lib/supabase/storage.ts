@@ -1,10 +1,10 @@
 import { createAdminClient } from "./admin";
-import { getSupabaseServiceRoleKey, getSupabaseUrl, isSupabaseConfigured } from "./env";
+import { getSupabaseUrl, isSupabaseConfigured } from "./env";
 
 export const MEDIA_BUCKET = "business-photos";
 
 export function isSupabaseStorageConfigured(): boolean {
-  return isSupabaseConfigured() && Boolean(getSupabaseServiceRoleKey());
+  return isSupabaseConfigured() && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
 export async function uploadMediaFile(opts: {

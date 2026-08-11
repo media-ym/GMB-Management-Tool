@@ -1,34 +1,6 @@
 /** Shared Supabase env helpers. Throws only when a caller requires the value. */
 
-/** Self-hosted Supabase v2 uses sb_publishable_* / sb_secret_*; legacy uses JWT anon/service keys. */
-export function getSupabaseAnonKey(): string | undefined {
-  return (
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ||
-    process.env.SUPABASE_PUBLISHABLE_KEY?.trim() ||
-    undefined
-  );
-}
-
-export function getSupabaseServiceRoleKey(): string | undefined {
-  return (
-    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
-    process.env.SUPABASE_SECRET_KEY?.trim() ||
-    undefined
-  );
-}
-
 export function getSupabaseUrl(): string | undefined {
-  // Browser on HTTPS: use same-origin /supabase proxy (next.config rewrites → Kong)
-  if (typeof window !== "undefined") {
-    const browserUrl = process.env.NEXT_PUBLIC_SUPABASE_BROWSER_URL?.trim();
-    if (browserUrl) return browserUrl.replace(/\/$/, "");
-
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
-    if (appUrl && window.location.protocol === "https:") {
-      return `${appUrl.replace(/\/$/, "")}/supabase`;
-    }
-  }
-
   // Server: prefer direct Kong URL (no loop through our own /supabase proxy)
   if (typeof window === "undefined") {
     const internal =
@@ -36,6 +8,14 @@ export function getSupabaseUrl(): string | undefined {
     if (internal) return internal.replace(/\/$/, "");
   }
   return process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") || undefined;
+}
+
+export function getSupabaseAnonKey(): string | undefined {
+  return process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || undefined;
+}
+
+export function getSupabaseServiceRoleKey(): string | undefined {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY || undefined;
 }
 
 export function isSupabaseConfigured(): boolean {

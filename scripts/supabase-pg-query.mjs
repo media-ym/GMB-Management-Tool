@@ -9,12 +9,10 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-const key =
-  process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
-  process.env.SUPABASE_SECRET_KEY?.trim();
+const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!url || !key) {
-  console.error("Need NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY)");
+  console.error("Need NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
   process.exit(1);
 }
 

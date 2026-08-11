@@ -21,8 +21,7 @@
     "gmb:chrome-login": "node scripts/setup-gmb-chrome-login.mjs",
     "cron:sync": "node scripts/run-sync-all.mjs",
     "cron:sync:loop": "node scripts/cron-sync-loop.mjs",
-    "supabase:bootstrap-users": "node scripts/supabase-bootstrap-users.mjs",
-    "supabase:setup": "node --env-file=.env scripts/self-hosted-supabase-setup.mjs"
+    "supabase:bootstrap-users": "node scripts/supabase-bootstrap-users.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
