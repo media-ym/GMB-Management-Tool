@@ -62,6 +62,12 @@ bun run db:push
 echo "  Seeding initial data..."
 bunx tsx prisma/seed.ts || echo "  (seed skipped or already applied)"
 
+# Link Supabase Auth users when configured
+if grep -qE '^(SUPABASE_SECRET_KEY|SUPABASE_SERVICE_ROLE_KEY)=' .env 2>/dev/null; then
+  echo "  Bootstrapping Supabase Auth users..."
+  node --env-file=.env scripts/supabase-bootstrap-users.mjs || echo "  (auth bootstrap skipped)"
+fi
+
 # ─── 7. Build production bundle ──────────────────────────────────────────────
 echo ""
 echo "[7/7] Building production bundle..."
