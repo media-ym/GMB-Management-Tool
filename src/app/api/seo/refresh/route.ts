@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}));
   const locationId = typeof body.locationId === "string" ? body.locationId : undefined;
-  const limit = typeof body.limit === "number" ? body.limit : 40;
+  const limit = typeof body.limit === "number" ? body.limit : undefined;
 
   const scoped = scopeLocationIds(user, locationId);
   let locationIds: string[] | undefined;
@@ -38,8 +38,11 @@ export async function POST(req: NextRequest) {
     return fail("No keywords found to refresh. Add keywords first.", 400);
   }
 
+  // Single location: check all its keywords (typically 25)
+  const effectiveLimit = limit ?? (locationId ? Math.min(keywordCount, 100) : 40);
+
   try {
-    const result = await refreshKeywordRankings({ locationIds, limit });
+    const result = await refreshKeywordRankings({ locationIds, limit: effectiveLimit });
     const now = new Date();
 
     await logAudit({
@@ -54,7 +57,7 @@ export async function POST(req: NextRequest) {
     const msg =
       result.checked > 0
         ? `Checked ${result.checked} keyword(s) · ${result.ranked} ranked in top 20`
-        : "No ranks checked — ensure locations have latitude/longitude and GOOGLE_API_KEY is set";
+        : "No ranks checked — set GOOGLE_PLACES_API_KEY (server key, no referrer lock) in .env and click Check ranks";
 
     return ok(
       {

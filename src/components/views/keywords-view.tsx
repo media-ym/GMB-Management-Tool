@@ -193,6 +193,26 @@ export function KeywordsView() {
     enabled: subTab !== "searches",
   });
 
+  const rankStatusUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    appendLocationIdsToParams(params, selectedLocationIds);
+    const qs = params.toString();
+    return qs ? `/api/seo/rank-status?${qs}` : "/api/seo/rank-status";
+  }, [selectedLocationIds]);
+
+  const { data: rankStatus } = useQuery<{
+    keywordCount: number;
+    rankedKeywords: number;
+    needsRankCheck: boolean;
+    hasPlacesKey: boolean;
+    usingDedicatedKey: boolean;
+    lastCheckedAt: string | null;
+  }>({
+    queryKey: ["seo-rank-status", selectedLocationIds],
+    queryFn: () => api(rankStatusUrl),
+    enabled: subTab !== "searches",
+  });
+
   const {
     data: gbpSearchData,
     isLoading: gbpSearchLoading,
@@ -259,6 +279,7 @@ export function KeywordsView() {
       }
       qc.invalidateQueries({ queryKey: ["seo-keywords"] });
       qc.invalidateQueries({ queryKey: ["seo-rankings"] });
+      qc.invalidateQueries({ queryKey: ["seo-rank-status"] });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Rank refresh failed");
     } finally {
@@ -342,7 +363,21 @@ export function KeywordsView() {
         </div>
       ) : (
         <>
-          {subTab === "ranking" && <RankingDashboard keywords={keywords ?? []} searchQuery={searchQuery} setSearchQuery={setSearchQuery} setTrendKeyword={setTrendKeyword} rankTab={rankTab} setRankTab={setRankTab} activeLocationId={activeLocationId} locations={locations ?? []} />}
+          {subTab === "ranking" && (
+            <RankingDashboard
+              keywords={keywords ?? []}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              setTrendKeyword={setTrendKeyword}
+              rankTab={rankTab}
+              setRankTab={setRankTab}
+              activeLocationId={activeLocationId}
+              locations={locations ?? []}
+              rankStatus={rankStatus}
+              onCheckRanks={handleRankRefresh}
+              rankRefreshing={rankRefreshing}
+            />
+          )}
           {subTab === "traffic" && <TrafficAnalysis keywords={keywords ?? []} />}
           {subTab === "researcher" && <KeywordResearcher locations={locations ?? []} activeLocationId={activeLocationId} />}
         </>
@@ -533,6 +568,7 @@ function GbpSearchesPanel({
 
 function RankingDashboard({
   keywords, searchQuery, setSearchQuery, setTrendKeyword, rankTab, setRankTab, activeLocationId, locations,
+  rankStatus, onCheckRanks, rankRefreshing,
 }: {
   keywords: KeywordData[];
   searchQuery: string;
@@ -542,6 +578,15 @@ function RankingDashboard({
   setRankTab: (t: "city" | "brand") => void;
   activeLocationId: string | "all";
   locations: { id: string; name: string; city: string }[];
+  rankStatus?: {
+    needsRankCheck: boolean;
+    hasPlacesKey: boolean;
+    usingDedicatedKey: boolean;
+    rankedKeywords: number;
+    keywordCount: number;
+  };
+  onCheckRanks: () => void;
+  rankRefreshing: boolean;
 }) {
   const intentDistribution = useMemo(() => {
     const counts: Record<IntentType, number> = { branded: 0, navigational: 0, transactional: 0, informational: 0 };
@@ -639,6 +684,36 @@ function RankingDashboard({
 
   return (
     <div className="space-y-6">
+      {rankStatus?.needsRankCheck && keywords.length > 0 && (
+        <Card className="border-amber-300/60 bg-amber-50/50 dark:bg-amber-950/20">
+          <CardContent className="py-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+            <div>
+              <p className="font-medium text-amber-900 dark:text-amber-100">
+                Rank data not loaded yet
+              </p>
+              <p className="text-sm text-muted-foreground mt-0.5 max-w-2xl">
+                {keywords.length} keyword{keywords.length === 1 ? "" : "s"} tracked, but no Google Maps rank snapshots yet.
+                Click <strong>Check ranks</strong> to fetch live positions.
+                {!rankStatus.usingDedicatedKey && (
+                  <>
+                    {" "}
+                    Add <code className="text-xs">GOOGLE_PLACES_API_KEY</code> in <code className="text-xs">.env</code> — a server key with no HTTP-referrer restriction (Places API New enabled).
+                  </>
+                )}
+              </p>
+            </div>
+            <Button size="sm" onClick={onCheckRanks} disabled={rankRefreshing} className="shrink-0">
+              {rankRefreshing ? (
+                <Loader2 className="size-4 mr-1.5 animate-spin" />
+              ) : (
+                <Activity className="size-4 mr-1.5" />
+              )}
+              Check ranks now
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-3">
         {/* Keywords Tracked - Donut */}
